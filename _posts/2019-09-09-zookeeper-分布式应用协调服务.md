@@ -3,7 +3,8 @@ layout:     post
 title:      zookeeper-分布式应用协调服务
 subtitle:   zookeeper-分布式应用协调服务
 date:       2019-09-09
-author:     Lij
+author:     DoraAiDreamer
+category:   大数据
 header-img: img/post-bg-kuaidi.jpg
 catalog: true
 tags:

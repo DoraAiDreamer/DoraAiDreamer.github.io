@@ -1,0 +1,312 @@
+---
+layout: page
+title: "vLLM 教程"
+permalink: /vllm/
+description: "vLLM 0.21.0 源码解读 · 中文系列"
+header-img: "img/post-bg-universe.jpg"
+---
+
+{% assign repo = "https://github.com/DoraAiDreamer/vllm-0.21.0-chinese-tutorial/blob/master/docs/overview" %}
+{% assign repo_root = "https://github.com/DoraAiDreamer/vllm-0.21.0-chinese-tutorial" %}
+
+<style>
+/* ===== vLLM 专栏卡片 ===== */
+.vllm-hero {
+    background: linear-gradient(135deg, #f2f8fa 0%, #e8f3f6 100%);
+    border: 1px solid #d6e8ee;
+    border-radius: 8px;
+    padding: 22px 26px;
+    margin-bottom: 12px;
+}
+.vllm-hero h2 { margin-top: 0; font-size: 24px; color: #006377; }
+.vllm-hero p { color: #4a6b73; margin: 8px 0 16px; line-height: 1.7; }
+.vllm-btn {
+    display: inline-block;
+    background: #0085a1;
+    color: #fff !important;
+    border-radius: 5px;
+    padding: 8px 18px;
+    margin-right: 10px;
+    font-size: 14px;
+    text-decoration: none !important;
+    transition: background .2s;
+}
+.vllm-btn:hover { background: #006377; }
+.vllm-btn.ghost { background: #fff; color: #0085a1 !important; border: 1px solid #0085a1; }
+.vllm-btn.ghost:hover { background: #f2f8fa; }
+
+.vllm-section { margin-top: 34px; }
+.vllm-section-title {
+    font-size: 19px;
+    font-weight: 600;
+    color: #404040;
+    border-bottom: 2px solid #eee;
+    padding-bottom: 8px;
+    margin-bottom: 16px;
+}
+.vllm-section-title .sub { font-size: 13px; font-weight: 400; color: #999; margin-left: 8px; }
+.vllm-card-col { margin-bottom: 16px; }
+a.vllm-card {
+    display: block;
+    height: 100%;
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    padding: 14px 18px;
+    color: #404040;
+    transition: all .2s ease;
+}
+a.vllm-card:hover,
+a.vllm-card:focus {
+    border-color: #0085a1;
+    box-shadow: 0 4px 14px rgba(0, 133, 161, .15);
+    color: #0085a1;
+    text-decoration: none;
+    transform: translateY(-2px);
+}
+.vllm-card-title {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.4;
+    margin: 0 0 6px;
+}
+.vllm-card-title .ext { color: #b3c4c9; font-weight: 400; font-size: 13px; }
+a.vllm-card:hover .ext { color: #0085a1; }
+.vllm-card-desc {
+    font-size: 13px;
+    font-weight: 300;
+    line-height: 1.5;
+    color: #808080;
+    margin: 0;
+}
+.vllm-card-path {
+    display: block;
+    font-size: 11px;
+    color: #b0b0b0;
+    font-family: Menlo, Monaco, Consolas, monospace;
+    margin-top: 8px;
+    word-break: break-all;
+}
+</style>
+
+<div class="vllm-hero">
+    <h2>🚀 vLLM 0.21.0 源码解读（中文系列）</h2>
+    <p>
+        基于 <strong>vLLM v0.21.0</strong> 源码，系统梳理 LLM 推理与服务框架的架构设计与核心实现：
+        PagedAttention、连续批处理、V1 引擎、调度与 KV Cache、模型执行、torch.compile 编译、
+        分布式并行、OpenAI 兼容 API Server、可观测性，以及 Qwen / DeepSeek / GLM 等实战排错。
+        建议先读<strong>「系统架构总览」</strong>，再按主题深入。
+    </p>
+    <a class="vllm-btn" href="{{ repo_root }}" target="_blank" rel="noopener">📦 GitHub 仓库</a>
+    <a class="vllm-btn ghost" href="{{ repo }}/INDEX.md" target="_blank" rel="noopener">📑 完整目录索引</a>
+</div>
+
+<div class="vllm-section">
+    <h3 class="vllm-section-title">🧭 总览 <span class="sub">先建立整体认知</span></h3>
+    <div class="row">
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/00_系统架构总览.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">vLLM 系统架构总览 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">分层架构、进程模型、核心组件、完整请求时序、KV/批处理/编译/并行数据流（建议先读）</p>
+                <span class="vllm-card-path">docs/overview/00_系统架构总览.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/README.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">项目结构总览 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">顶层目录与 vllm/ 各子包说明</p>
+                <span class="vllm-card-path">docs/overview/README.md</span>
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="vllm-section">
+    <h3 class="vllm-section-title">🧯 入门与排错 <span class="sub">getting-started/</span></h3>
+    <div class="row">
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/getting-started/02_llm_startup_guide.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">LLM 启动与部署指南 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">启动方式、参数传递、重要参数、陌生模型部署</p>
+                <span class="vllm-card-path">getting-started/02_llm_startup_guide.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/getting-started/03a_qwen_troubleshooting.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">Qwen 系列排错 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">Qwen 系列模型部署常见问题与解决</p>
+                <span class="vllm-card-path">getting-started/03a_qwen_troubleshooting.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/getting-started/03b_deepseek_troubleshooting.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">DeepSeek 系列排错 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">DeepSeek 系列模型部署常见问题与解决</p>
+                <span class="vllm-card-path">getting-started/03b_deepseek_troubleshooting.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/getting-started/03c_glm_minimax_troubleshooting.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">GLM / MiniMax 系列排错 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">GLM / MiniMax 系列模型部署常见问题与解决</p>
+                <span class="vllm-card-path">getting-started/03c_glm_minimax_troubleshooting.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/getting-started/03d_hardware_troubleshooting.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">NVIDIA GPU / 昇腾 910B 排错 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">硬件相关部署常见问题与排错</p>
+                <span class="vllm-card-path">getting-started/03d_hardware_troubleshooting.md</span>
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="vllm-section">
+    <h3 class="vllm-section-title">⚙️ V1 引擎核心 <span class="sub">vllm/v1/</span></h3>
+    <div class="row">
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/core/01_engine_core.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">V1 引擎核心 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">vllm/v1/engine/（AsyncLLM、EngineCore、ZMQ）</p>
+                <span class="vllm-card-path">core/01_engine_core.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/core/02_scheduler_kv_cache.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">调度与 KV Cache <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">vllm/v1/core/（Scheduler、KVCacheManager、PagedAttention）</p>
+                <span class="vllm-card-path">core/02_scheduler_kv_cache.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/core/03_attention_backends.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">注意力后端 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">vllm/v1/attention/ 各注意力后端实现</p>
+                <span class="vllm-card-path">core/03_attention_backends.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/core/04_worker_model_runner.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">Worker 与模型运行器 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">vllm/v1/worker/（GPUWorker、GPUModelRunner）</p>
+                <span class="vllm-card-path">core/04_worker_model_runner.md</span>
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="vllm-section">
+    <h3 class="vllm-section-title">🧱 模型与层 <span class="sub">vllm/model_executor/</span></h3>
+    <div class="row">
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/models/05_model_executor_layers.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">模型执行与层 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">layers/（并行 Linear、Attention、MoE、Norm、RoPE、SSM、Pooler）</p>
+                <span class="vllm-card-path">models/05_model_executor_layers.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/models/06_model_implementations.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">模型实现 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">models/（ModelRegistry、Supports* 协议、290+ 模型）</p>
+                <span class="vllm-card-path">models/06_model_implementations.md</span>
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="vllm-section">
+    <h3 class="vllm-section-title">🚀 性能、编译与分布式 <span class="sub">compilation / distributed</span></h3>
+    <div class="row">
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/performance/07_compilation.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">编译管线 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">vllm/compilation/：torch.compile 分段后端、Inductor pass、CUDA Graph</p>
+                <span class="vllm-card-path">performance/07_compilation.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/distributed/08_distributed.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">分布式推理 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">TP/PP/EP/DP/CP、通信组、KV/EC connector、EPLB、权重传输</p>
+                <span class="vllm-card-path">distributed/08_distributed.md</span>
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="vllm-section">
+    <h3 class="vllm-section-title">🌐 服务化 · API Server <span class="sub">vllm/entrypoints/</span></h3>
+    <div class="row">
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/serving/api-server-01-启动与架构.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">之一：启动与架构总览 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">API Server 的启动流程与整体架构</p>
+                <span class="vllm-card-path">serving/api-server-01-启动与架构.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/serving/api-server-02-请求流水线.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">之二：请求处理流水线 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">请求从接入到推理的完整处理流水线</p>
+                <span class="vllm-card-path">serving/api-server-02-请求流水线.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/serving/api-server-03-openai-接口.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">之三：OpenAI 接口实现 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">OpenAI 兼容 API 的实现细节</p>
+                <span class="vllm-card-path">serving/api-server-03-openai-接口.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/serving/api-server-04-批处理与扩展.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">之四：批处理与扩展服务 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">批处理机制与扩展服务能力</p>
+                <span class="vllm-card-path">serving/api-server-04-批处理与扩展.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/serving/api-server-05-配置与部署.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">之五：配置与部署 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">服务配置项与生产部署</p>
+                <span class="vllm-card-path">serving/api-server-05-配置与部署.md</span>
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="vllm-section">
+    <h3 class="vllm-section-title">📈 可观测性 <span class="sub">logging / tracing</span></h3>
+    <div class="row">
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/observability/04_logging_system.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">vLLM 日志系统详解 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">日志格式、输出目录、KV Cache 监控、Prometheus/OTel 指标</p>
+                <span class="vllm-card-path">observability/04_logging_system.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/observability/tracing/tracing-01-架构与公共API.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">Tracing 之一：架构与公共 API <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">vllm/tracing/ 架构与公共 API</p>
+                <span class="vllm-card-path">observability/tracing/tracing-01-架构与公共API.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/observability/tracing/tracing-02-otel后端实现.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">Tracing 之二：OpenTelemetry 后端实现 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">OTel 后端的具体实现</p>
+                <span class="vllm-card-path">observability/tracing/tracing-02-otel后端实现.md</span>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 vllm-card-col">
+            <a class="vllm-card" href="{{ repo }}/observability/tracing/tracing-03-上下文传播与埋点实践.md" target="_blank" rel="noopener">
+                <h4 class="vllm-card-title">Tracing 之三：上下文传播与埋点实践 <span class="ext">↗</span></h4>
+                <p class="vllm-card-desc">上下文传播与实际埋点实践</p>
+                <span class="vllm-card-path">observability/tracing/tracing-03-上下文传播与埋点实践.md</span>
+            </a>
+        </div>
+    </div>
+</div>

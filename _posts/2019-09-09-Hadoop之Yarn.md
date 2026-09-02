@@ -3,7 +3,8 @@ layout:     post
 title:      Hadoop之Yarn
 subtitle:   Hadoop之Yarn
 date:       2019-09-09
-author:     Lij
+author:     DoraAiDreamer
+category:   大数据
 header-img: img/post-bg-kuaidi.jpg
 catalog: true
 tags:

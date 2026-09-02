@@ -3,7 +3,8 @@ layout:     post
 title:      Wireshark分析tcp协议
 subtitle:   Wireshark 分析tcp 协议
 date:       2019-09-28
-author:     Lij
+author:     DoraAiDreamer
+category:   网络与安全
 header-img: img/post-bg-coffee.jpeg
 catalog: true
 tags:

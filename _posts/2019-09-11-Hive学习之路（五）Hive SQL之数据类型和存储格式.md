@@ -3,7 +3,8 @@ layout:     post
 title:      Hive学习之路 （五）Hive SQL之数据类型和存储格式
 subtitle:   Hive SQL之数据类型和存储格式
 date:       2019-09-09
-author:     Lij
+author:     DoraAiDreamer
+category:   大数据
 header-img: img/post-bg-map.jpeg
 catalog: true
 tags:

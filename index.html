@@ -3,40 +3,147 @@ layout: page
 description: "Thinking will not overcome fear but action will."
 ---
 
-{% for post in paginator.posts %}
-<div class="post-preview">
-    <a href="{{ post.url | prepend: site.baseurl }}">
-        <h2 class="post-title">
-            {{ post.title }}
-        </h2>
-        {% if post.subtitle %}
-        <h3 class="post-subtitle">
-            {{ post.subtitle }}
-        </h3>
-        {% endif %}
-        <div class="post-content-preview">
-            {{ post.content | strip_html | truncate:200 }}
-        </div>
-    </a>
-    <p class="post-meta">
-        Posted by {% if post.author %}{{ post.author }}{% else %}{{ site.title }}{% endif %} on {{ post.date | date: "%B %-d, %Y" }}
-    </p>
-</div>
-<hr>
-{% endfor %}
+<style>
+/* ===== 分类卡片首页 ===== */
+.cat-section { margin-top: 36px; }
+.cat-section:first-of-type { margin-top: 10px; }
+.cat-section-title {
+    font-size: 22px;
+    font-weight: 600;
+    color: #404040;
+    border-bottom: 2px solid #eee;
+    padding-bottom: 10px;
+    margin-bottom: 18px;
+}
+.cat-icon { margin-right: 6px; }
+.cat-count {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 400;
+    color: #fff;
+    background: #0085a1;
+    border-radius: 10px;
+    padding: 1px 10px;
+    margin-left: 10px;
+    vertical-align: middle;
+}
+.cat-card-col { margin-bottom: 18px; }
+a.cat-card {
+    display: block;
+    height: 100%;
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    padding: 16px 18px 12px;
+    color: #404040;
+    transition: all .2s ease;
+}
+a.cat-card:hover,
+a.cat-card:focus {
+    border-color: #0085a1;
+    box-shadow: 0 4px 14px rgba(0, 133, 161, .15);
+    color: #0085a1;
+    text-decoration: none;
+    transform: translateY(-2px);
+}
+.cat-card-title {
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.4;
+    margin: 0 0 8px;
+}
+.cat-card-subtitle {
+    font-size: 13px;
+    font-weight: 300;
+    line-height: 1.5;
+    color: #808080;
+    margin: 0 0 10px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.cat-card-meta { font-size: 12px; color: #999; }
+.cat-card-date {
+    margin-right: 8px;
+    font-family: 'Lora', 'Times New Roman', serif;
+    font-style: italic;
+}
+.cat-card-tag {
+    display: inline-block;
+    background: #f2f8fa;
+    color: #0085a1;
+    border-radius: 3px;
+    padding: 1px 7px;
+    margin: 0 5px 4px 0;
+    font-size: 11px;
+}
+/* vLLM 专栏推荐横幅 */
+a.vllm-banner {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: linear-gradient(135deg, #0085a1 0%, #006377 100%);
+    border-radius: 8px;
+    padding: 18px 24px;
+    margin-bottom: 8px;
+    color: #fff;
+    transition: all .2s ease;
+}
+a.vllm-banner:hover,
+a.vllm-banner:focus {
+    color: #fff;
+    text-decoration: none;
+    box-shadow: 0 6px 18px rgba(0, 99, 119, .35);
+    transform: translateY(-2px);
+}
+.vllm-banner-icon { font-size: 34px; line-height: 1; }
+.vllm-banner-text strong { display: block; font-size: 17px; margin-bottom: 4px; }
+.vllm-banner-text span { font-size: 13px; font-weight: 300; opacity: .92; }
+.vllm-banner-arrow { margin-left: auto; font-size: 22px; opacity: .85; }
+</style>
 
-<!-- Pager -->
-{% if paginator.total_pages > 1 %}
-<ul class="pager">
-    {% if paginator.previous_page %}
-    <li class="previous">
-        <a href="{{ paginator.previous_page_path | prepend: site.baseurl | replace: '//', '/' }}">&larr; Newer Posts</a>
-    </li>
-    {% endif %}
-    {% if paginator.next_page %}
-    <li class="next">
-        <a href="{{ paginator.next_page_path | prepend: site.baseurl | replace: '//', '/' }}">Older Posts &rarr;</a>
-    </li>
-    {% endif %}
-</ul>
-{% endif %}
+{% comment %} 大类顺序与图标；文章通过 front matter 的 category 字段归类 {% endcomment %}
+{% assign cat_list = "大数据|Java 面试|机器学习|网络与安全|工具与其他" | split: "|" %}
+{% assign icon_list = "📊|☕|🤖|🔒|🛠️" | split: "|" %}
+
+<a class="vllm-banner" href="{{ site.baseurl }}/vllm/">
+    <div class="vllm-banner-icon">🚀</div>
+    <div class="vllm-banner-text">
+        <strong>vLLM 0.21.0 源码解读 · 中文系列</strong>
+        <span>架构总览 / V1 引擎 / PagedAttention / 分布式 / API Server · 共 24 篇</span>
+    </div>
+    <div class="vllm-banner-arrow">→</div>
+</a>
+
+{% for cat in cat_list %}
+{% assign posts = site.categories[cat] | sort: "date" | reverse %}
+{% assign icon = icon_list[forloop.index0] %}
+<section class="cat-section" id="{{ cat }}">
+    <h2 class="cat-section-title">
+        <span class="cat-icon">{{ icon }}</span>{{ cat }}
+        <span class="cat-count">{{ posts | size }} 篇</span>
+    </h2>
+    <div class="row">
+        {% for post in posts %}
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 cat-card-col">
+            <a class="cat-card" href="{{ post.url | prepend: site.baseurl }}">
+                <h3 class="cat-card-title">{{ post.title }}</h3>
+                {% assign sub = post.subtitle | strip %}
+                {% if sub != "" %}
+                <p class="cat-card-subtitle">{{ post.subtitle }}</p>
+                {% else %}
+                <p class="cat-card-subtitle">{{ post.excerpt | strip_html | strip_newlines | truncate: 48 }}</p>
+                {% endif %}
+                <div class="cat-card-meta">
+                    <span class="cat-card-date">{{ post.date | date: "%Y-%m-%d" }}</span>
+                    {% for tag in post.tags limit:3 %}
+                    <span class="cat-card-tag">{{ tag }}</span>
+                    {% endfor %}
+                </div>
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endfor %}

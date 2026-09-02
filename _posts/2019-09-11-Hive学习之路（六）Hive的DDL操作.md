@@ -3,7 +3,8 @@ layout:     post
 title:      Hive学习之路 （六）Hive的DDL操作
 subtitle:   Hive的DDL操作
 date:       2019-09-09
-author:     Lij
+author:     DoraAiDreamer
+category:   大数据
 header-img: img/post-bg-map.jpeg
 catalog: true
 tags:
