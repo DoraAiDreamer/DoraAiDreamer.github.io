@@ -1,0 +1,12 @@
+{
+  "files.associations": {
+    "*.astro": "astro"
+  },
+  "editor.formatOnSave": true,
+  "[astro]": {
+    "editor.defaultFormatter": "astro-build.astro-vscode"
+  },
+  "[markdown]": {
+    "editor.wordWrap": "on"
+  }
+}
