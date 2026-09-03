@@ -1,0 +1,157 @@
+---
+layout: page
+permalink: /inference/view/
+header-img: "img/post-bg-universe.jpg"
+---
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+<style>
+  #inf-doc { font-size: 16px; line-height: 1.8; color: #333; }
+  #inf-doc h1, #inf-doc h2, #inf-doc h3, #inf-doc h4 { color: #222; margin: 1.4em 0 .6em; font-weight: 600; }
+  #inf-doc h1 { font-size: 1.9em; border-bottom: 2px solid #eee; padding-bottom: .3em; }
+  #inf-doc h2 { font-size: 1.5em; border-bottom: 1px solid #eee; padding-bottom: .25em; }
+  #inf-doc h3 { font-size: 1.25em; }
+  #inf-doc p { margin: .9em 0; }
+  #inf-doc a { color: #0085a1; }
+  #inf-doc code { background: #f4f6f8; border-radius: 3px; padding: 2px 6px; font-size: .9em;
+                  font-family: Menlo, Monaco, Consolas, monospace; color: #c7254e; }
+  #inf-doc pre { background: #f6f8fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 14px 16px;
+                 overflow-x: auto; line-height: 1.5; }
+  #inf-doc pre code { background: none; padding: 0; color: #24292e; font-size: 13.5px; }
+  #inf-doc table { border-collapse: collapse; width: 100%; margin: 1.2em 0; display: block; overflow-x: auto; }
+  #inf-doc th, #inf-doc td { border: 1px solid #d0d7de; padding: 8px 12px; text-align: left; }
+  #inf-doc th { background: #f0f4f6; }
+  #inf-doc tr:nth-child(2n) { background: #fafbfc; }
+  #inf-doc blockquote { border-left: 4px solid #0085a1; background: #f2f8fa; margin: 1em 0;
+                        padding: .6em 1em; color: #456; border-radius: 0 4px 4px 0; }
+  #inf-doc blockquote p { margin: .3em 0; }
+  #inf-doc img { max-width: 100%; }
+  .inf-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 10px;
+             font-size: 14px; color: #888; }
+  .inf-bar a { color: #0085a1; }
+  .inf-status { padding: 40px 0; text-align: center; color: #999; }
+  .inf-error { background: #fdf2f2; border: 1px solid #f0c0c0; border-radius: 6px; padding: 20px; color: #a33; }
+</style>
+
+<div class="inf-bar">
+  <a href="/inference/">← 返回推理加速专栏</a>
+  <span id="inf-crumb" style="color:#bbb"></span>
+  <span style="margin-left:auto">
+    <a id="inf-github" href="#" target="_blank" rel="noopener">在 GitHub 查看原文 ↗</a>
+  </span>
+</div>
+<div id="inf-status" class="inf-status">⏳ 正在从仓库加载文章…</div>
+<article id="inf-doc" style="display:none"></article>
+
+{% raw %}
+<script>
+(function () {
+  var REPO = 'DoraAiDreamer/vllm-0.21.0-chinese-tutorial';
+  var BRANCH = 'master';
+  var DOC_ROOT = 'docs/overview/';
+  var RAW_BASE = 'https://raw.githubusercontent.com/' + REPO + '/' + BRANCH + '/' + DOC_ROOT;
+  var RAW_ROOT = 'https://raw.githubusercontent.com/' + REPO + '/' + BRANCH + '/';
+  var BLOB_BASE = 'https://github.com/' + REPO + '/blob/' + BRANCH + '/';
+
+  var statusEl = document.getElementById('inf-status');
+  var docEl = document.getElementById('inf-doc');
+  var crumbEl = document.getElementById('inf-crumb');
+  var ghEl = document.getElementById('inf-github');
+
+  function fail(msg) {
+    statusEl.style.display = 'block';
+    statusEl.className = 'inf-error';
+    statusEl.innerHTML = '⚠️ ' + msg;
+    docEl.style.display = 'none';
+  }
+
+  // 把相对链接解析为仓库内的绝对路径（相对 docs/overview/）
+  function resolve(src, href) {
+    if (/^https?:\/\//i.test(href)) return { external: href };
+    if (href.charAt(0) === '#') return { anchor: href };
+    var parts = href.split('#');
+    var pathPart = parts[0], hash = parts[1] ? '#' + parts[1] : '';
+    var base = (DOC_ROOT + src).split('/');
+    base.pop();
+    pathPart.split('/').forEach(function (seg) {
+      if (seg === '' || seg === '.') return;
+      if (seg === '..') base.pop();
+      else base.push(seg);
+    });
+    return { repoPath: base.join('/'), hash: hash };
+  }
+
+  var src = new URLSearchParams(location.search).get('src') || '';
+  // 安全校验：只允许 docs/overview 下的 .md，且解析后不能逃逸
+  var safe = /^[A-Za-z0-9_\-./%()一-龥]+\.md$/i.test(src);
+  var escaped = /(^|\/)\.\.(\/|$)/.test(src);
+  if (!src || !safe || escaped) {
+    fail('文章参数无效。请从<a href="/inference/">推理加速专栏</a>进入。');
+    return;
+  }
+
+  var repoPath = DOC_ROOT + src;
+  crumbEl.textContent = '/ ' + src;
+  ghEl.href = BLOB_BASE + repoPath;
+
+  var url = RAW_BASE + src.split('/').map(encodeURIComponent).join('/');
+
+  fetch(url)
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    })
+    .then(function (md) {
+      // 标题
+      var m = md.match(/^#\s+(.+)$/m);
+      if (m) document.title = m[1].trim() + ' · 推理加速专栏';
+
+      marked.setOptions({ gfm: true, breaks: false });
+      var rawHtml = marked.parse(md);
+      docEl.innerHTML = DOMPurify.sanitize(rawHtml);
+
+      // 重写链接：overview 内 .md → 站内查看器；其他仓库文件 → GitHub；外链新标签
+      docEl.querySelectorAll('a[href]').forEach(function (a) {
+        var r = resolve(src, a.getAttribute('href'));
+        if (r.external) {
+          a.target = '_blank'; a.rel = 'noopener';
+        } else if (r.anchor) {
+          a.href = r.anchor;
+        } else if (r.repoPath) {
+          if (r.repoPath.indexOf(DOC_ROOT) === 0 && /\.md$/i.test(r.repoPath)) {
+            var rel = r.repoPath.slice(DOC_ROOT.length);
+            a.href = '/inference/view/?src=' + encodeURIComponent(rel) + (r.hash || '');
+          } else {
+            a.href = BLOB_BASE + r.repoPath;
+            a.target = '_blank'; a.rel = 'noopener';
+          }
+        }
+      });
+
+      // 图片（overview 目前无图，兜底处理）
+      docEl.querySelectorAll('img[src]').forEach(function (img) {
+        var r = resolve(src, img.getAttribute('src'));
+        if (r.repoPath) img.src = RAW_ROOT + r.repoPath;
+      });
+
+      // 代码高亮
+      docEl.querySelectorAll('pre code').forEach(function (el) {
+        try { hljs.highlightElement(el); } catch (e) {}
+      });
+
+      statusEl.style.display = 'none';
+      docEl.style.display = 'block';
+      window.scrollTo(0, 0);
+    })
+    .catch(function (e) {
+      fail('文章加载失败（' + (e.message || e) + '）。<br>可前往 GitHub 查看原文：' +
+           '<a href="' + BLOB_BASE + repoPath + '" target="_blank" rel="noopener">' +
+           BLOB_BASE + repoPath + '</a>');
+    });
+})();
+</script>
+{% endraw %}

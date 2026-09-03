@@ -104,14 +104,14 @@ a.vllm-banner:focus {
 </style>
 
 {% comment %} 大类顺序与图标；文章通过 front matter 的 category 字段归类 {% endcomment %}
-{% assign cat_list = "大数据|Java 面试|机器学习|网络与安全|工具与其他" | split: "|" %}
-{% assign icon_list = "📊|☕|🤖|🔒|🛠️" | split: "|" %}
+{% assign cat_list = "机器学习|大数据|Java 面试|网络与安全|工具与其他" | split: "|" %}
+{% assign icon_list = "🤖|📊|☕|🔒|🛠️" | split: "|" %}
 
-<a class="vllm-banner" href="{{ site.baseurl }}/vllm/">
-    <div class="vllm-banner-icon">🚀</div>
+<a class="vllm-banner" href="{{ site.baseurl }}/inference/">
+    <div class="vllm-banner-icon">⚡</div>
     <div class="vllm-banner-text">
-        <strong>vLLM 0.21.0 源码解读 · 中文系列</strong>
-        <span>架构总览 / V1 引擎 / PagedAttention / 分布式 / API Server · 共 24 篇</span>
+        <strong>大模型怎么做到又快又省？· 推理加速实战</strong>
+        <span>vLLM 源码精讲 · PagedAttention / KV Cache / 分布式 / API Server · 24 篇站内直接读</span>
     </div>
     <div class="vllm-banner-arrow">→</div>
 </a>
