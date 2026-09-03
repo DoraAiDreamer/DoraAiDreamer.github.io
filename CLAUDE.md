@@ -4,43 +4,41 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A personal **Jekyll blog** deployed on GitHub Pages (`DoraAiDreamer.github.io`, user site — pushing to `master` triggers GitHub's Jekyll build). Content is Chinese-language tech/interview-prep posts (Java, big data, ML, networking). The site is built on the **Hux Blog** theme (huxpro), carried through the ckjcode/BY blog boilerplate. Branding has been rebranded to **DoraAiDreamer** (site title, SEO, email `doraaidreamer@foxmail.com`, GitHub links, PWA manifest, and post `author:`).
+Personal tech blog built with **Astro 5** (migrated from Jekyll in Sep 2026). Chinese-language notes with heavy inline-SVG figures and an interactive inference column. Deploys to GitHub Pages via GitHub Actions (`master` → Actions build → Pages).
 
 ## Commands
 
 ```bash
-jekyll serve          # local dev server at http://127.0.0.1:4000 with live rebuild (hard-refresh browser)
-jekyll build          # writes generated site to _site/
-jekyll build --destination /tmp/xxx   # verify build without touching committed _site/
-grunt                 # legacy asset build (see caveat below) — effectively unused
-npm run watch         # grunt watch + static server on :8020 + jekyll serve -w
-npm run push          # git push origin master --tag (deploys via GitHub Pages)
+npm install
+npm run dev       # http://localhost:4321, HMR
+npm run build     # static output to dist/
+npm run preview
 ```
 
-There is **no Gemfile**; Jekyll must be installed manually. On macOS system Ruby 2.6, the current (Ruby 3+-only) gem versions of `ffi`, `i18n`, `public_suffix` fail to install — pin `ffi -v 1.16.3`, `i18n -v 1.14.8`, `public_suffix -v 5.1.1` first, then `jekyll -v 3.9.5`, `jekyll-paginate`, `jekyll-theme-slate`, `kramdown-parser-gfm` (all `--user-install`). Config is Jekyll 3-era (`plugins:` key, kramdown + rouge, GFM input).
+Node 22. No Ruby/Gem toolchain (that was the old Jekyll site).
 
 ## Architecture
 
-- **`_posts/`** — published articles. Markdown files named `YYYY-MM-DD-slug.md` (Chinese titles fine) with YAML front matter: `layout: post`, `title`, `subtitle`, `date`, `author`, `category`, `header-img`, `catalog: true` (enables the auto-generated side table-of-contents), and `tags:` (drives the tag cloud on `tags.html` and the chips on homepage cards).
-- **Categories** — every post has a `category:` front-matter field, one of five: `大数据` (12), `Java 面试` (8), `机器学习` (5), `网络与安全` (4), `工具与其他` (4). These group the homepage cards via `site.categories[cat]`. To add a category, add the `category:` value to the post AND register it in the `cat_list`/`icon_list` arrays at the top of `index.html` (order and emoji there control section order).
-- **Homepage** — `index.html` no longer uses the paginator; it renders a **card per post grouped by category** (Bootstrap grid, 2-up on desktop). Card subtitle falls back to the post excerpt when `subtitle` is blank. Card styles are defined inline in a `<style>` block at the top of `index.html`.
-- **`_postsBackups/`** — archive of the original theme author's old posts. Jekyll does **not** render it (only `_posts/` is published); treat as cold storage.
-- **`_layouts/`** — `default.html` (chrome: includes `nav.html`, `head.html`, `footer.html`), `post.html` (article + optional side catalog, Gitalk/Disqus hooks, AnchorJS), `page.html`, `keynote.html` (HTML5 slide-deck layout for presentation posts).
-- **`_includes/`** — `head.html` (CSS/CDN includes, PWA manifest, MathJax), `nav.html`, `footer.html` (JS includes).
-- **Source file organization (pages grouped into module folders)** — convention pages stay at root: `index.html` (home: category cards + inference banner), `about.html`, `tags.html` (tag cloud), `404.html`, `offline.html`, `feed.xml`. Rich multi-figure chapter/column pages live in subfolders but render to clean top-level URLs via explicit `permalink:` front matter (Jekyll renders any .html with front matter in any non-`_` subfolder; the permalink overrides output path; links/nav use URLs not file paths):
-  - `chapters/` — the 图解系列 guide hubs: `llm.html` → `/llm/` (图解大模型), `ml.html` → `/ml/` (图解机器学习).
-  - `columns/` — themed columns: `inference.html` → `/inference/` (推理加速实战 landing), `inference_view.html` → `/inference/view/` (markdown viewer), `vllm.html` → `/vllm/` (no-title redirect stub to `/inference/` for old links).
-  - **To add a new module page**: put it in `chapters/` or `columns/` and set `permalink: /your-url/`. Any page with a `title:` in front matter auto-appears in the nav (`nav.html` iterates `site.pages`, which includes subfolder pages); the viewer and the redirect stub omit `title` on purpose so they don't show up there.
-  - Posts stay **flat** in `_posts/` (Jekyll convention); their "module" is the `category:` front-matter field consumed by the homepage cards, not a folder.
-- **推理加速专栏 (inference column)** — content lives in the external repo [DoraAiDreamer/vllm-0.21.0-chinese-tutorial](https://github.com/DoraAiDreamer/vllm-0.21.0-chinese-tutorial) (branch `master`, Chinese vLLM source-walkthrough under `docs/overview/`) and is **not** copied into the blog. `inference.html` is a card index whose cards link to `/inference/view/?src=<repo-relative-path>`. `inference_view.html` is a thin shell: client-side JS fetches the Markdown at runtime from `raw.githubusercontent.com/.../docs/overview/<src>` (CORS `*`), renders it with marked + DOMPurify + highlight.js (all CDN), and rewrites relative `.md` links to other in-blog viewer pages (non-overview links go to GitHub blob). New articles are added by adding a card in `inference.html`; the viewer needs no per-article file. The raw URL root and `DOC_ROOT` are hardcoded in the viewer's `{% raw %}` JS block. Raw fetches bypass the service worker (only whitelisted hosts are intercepted).
-- **`_config.yml`** is the feature switchboard: sidebar, `featured-tags`, RSS, Gitalk/Disqus comments, Baidu/Google Analytics, AnchorJS, friends links, PWA/service worker. Comments and analytics are currently commented out.
-- **PWA** — `sw.js` (precache + runtime cache with a hostname whitelist; bump `PRECACHE` version when cached assets change), `pwa/manifest.json`, enabled by `service-worker: true` in `_config.yml`.
+- **Content collections** — `src/content.config.ts` defines the `blog` collection with a zod schema. Valid `category` values live in the schema enum (`大模型 / 机器学习 / 大数据 / 网络与安全 / 工具与其他`); an invalid category or missing front-matter field fails the build. Posts are `src/content/blog/<slug>.md` (filename = slug; URL `/blog/<slug>/`). Front matter: `title`, `subtitle?`, `date`, `author?`, `category`, `tags[]`.
+- **Pages** (`src/pages/`):
+  - `index.astro` — homepage; groups posts by category (a `cats` array drives order/icon/description/anchor) and renders cards. 大模型 and 机器学习 sections also inject chapter/column entry cards.
+  - `blog/[slug].astro` — dynamic post page (renders markdown; `toc` enabled).
+  - `llm.astro` / `ml.astro` — the 图解大模型 / 图解机器学习 chapter hubs (inline SVG figures + tables).
+  - `inference.astro` — 推理加速 column landing (24 cards linking to the viewer).
+  - `inference/view.astro` — markdown viewer: client-side JS fetches raw Markdown at runtime from `raw.githubusercontent.com/DoraAiDreamer/vllm-0.21.0-chinese-tutorial/...` and renders with marked + DOMPurify + highlight.js (CDN). Content stays in that repo, not copied.
+- **Layout** (`src/layouts/BaseLayout.astro`) — three-column doc layout: left = topic/category sidebar (hardcoded `sideGroups`), center = content, right = `PageTOC` (rendered only when `toc={true}`). Nav includes the `DoraemonLogo` SVG.
+- **Components** (`src/components/`):
+  - `DoraemonLogo.astro` — inline SVG Doraemon avatar for the nav.
+  - `TemperatureIsland.astro` — interactive softmax/temperature demo (client `<script>`, scoped styles); an Astro "island" (only page loading it ships JS).
+  - `PageTOC.astro` — builds right-hand TOC from h2/h3 with IntersectionObserver scroll-spy.
+  - `ThemeToggle.astro` — dark/light toggle (persists to localStorage; `is:inline` anti-FOUC script in BaseLayout head).
+- **Styling** — `src/styles/global.css` only. CSS custom properties on `:root` for light / `[data-theme="dark"]` for dark (plus `prefers-color-scheme`). Shiki `github-dark` via `astro.config.mjs`.
+- **Images** — `public/img/`; migrated posts reference absolute `/img/...` paths (relative `img/`, `../img/` were normalized).
 
-## Gotchas
+## Conventions & gotchas
 
-- **`permalink` is pinned to date-based (`/:year/:month/:day/:title/`) on purpose.** Jekyll's `pretty` preset expands to `/:categories/:year/:month/:day/:title/`, so the moment posts carry a `category:` field their URLs would gain a `/%E5%A4%A7%E6%95%B0%E6%8D%AE/`-style prefix and every existing link would break. Do not switch back to `pretty`.
-- **Posts must have valid YAML front matter to be published.** A few legacy posts were missing it (one had a stray opening ` ``` ` fence before the `---`); Jekyll silently skips files with no front matter, so a post that doesn't appear usually means its header is malformed.
-- **Liquid chokes on `{{ }}` inside post content** (e.g. LaTeX like `{{(x-\mu)^2 \over ...}}`); it's interpreted as a Liquid tag and emits a syntax warning / drops the expression. Write such math with single braces or wrap in `{% raw %}`…`{% endraw %}`.
-- **The Grunt asset pipeline is stale and does not feed the site.** Templates load `css/hux-blog.min.css` and `js/hux-blog.min.js`, but `Gruntfile.js` builds `by-blog.*` from `less/by-blog.less` (derived from `package.json` `name: "by-blog"`) — a file that doesn't exist. To change site styles/scripts, edit `css/hux-blog.css` / `js/hux-blog.js` and their `.min.*` counterparts directly (or fix the names in `package.json`/Gruntfile first). `less/hux-blog.less` is the theme LESS source but is not wired to the served CSS.
-- **Build artifacts and dependencies are committed**: `_site/`, `node_modules/`, and `.jekyll-cache/` are tracked in git because `.gitignore` is effectively empty. Never treat `_site/` as source — GitHub Pages rebuilds from the Jekyll sources regardless.
-- `exclude:` in `_config.yml` lists `less`, `node_modules`, etc. from the Jekyll build; keep tooling files out of `_posts/` so they aren't published.
+- Front-matter string values are double-quoted in generated posts (titles contain half-width colons that break unquoted YAML).
+- Figures in chapters/posts are inline `<svg>` inside `<figure>` + `<figcaption>`; keep SVG well-formed XML and avoid stray `{ }` (Astro template syntax) inside raw markup.
+- Right TOC (`PageTOC`) and left sidebar auto-hide on narrow screens (<1080px / <820px).
+- Category counts/order on the homepage derive from the collection + `cats` array; add a category in BOTH `content.config.ts` (enum) and the `cats`/`sideGroups` lists to surface it.
+- Deploy: push to `master`; the Actions workflow builds `dist/` and deploys. Requires repo Settings → Pages → Source = "GitHub Actions" (one-time).

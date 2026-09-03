@@ -1,0 +1,73 @@
+---
+// 可交互小组件：temperature 如何改变下一个词的概率分布
+// 固定几个候选词的 logits（模型原始打分），拖动温度实时看 softmax 变化
+const tokens = [
+  { word: '很', logit: 3.2 },
+  { word: '真', logit: 2.1 },
+  { word: '不', logit: 1.3 },
+  { word: '太', logit: 0.4 },
+];
+---
+
+<div class="temp-island">
+  <p class="tip">给定前缀「今天天气___」，模型对下一个词的原始打分（logits）是固定的。
+     拖动 <b>temperature</b> 看概率分布如何变化：</p>
+  <div class="ctrl">
+    <label>temperature = <b id="t-val">1.0</b></label>
+    <input id="t-slider" type="range" min="0.2" max="2.5" step="0.1" value="1.0" />
+    <span class="ends"><i>低=确定</i><i>高=随机</i></span>
+  </div>
+  <div class="bars" data-logits={JSON.stringify(tokens.map(t => t.logit))}
+       data-words={JSON.stringify(tokens.map(t => t.word))}>
+    {tokens.map(t => (
+      <div class="bar-row">
+        <span class="w">{t.word}</span>
+        <span class="track"><span class="fill"></span></span>
+        <span class="pct">–</span>
+      </div>
+    ))}
+  </div>
+</div>
+
+<style>
+  .temp-island { border: 1px solid var(--border); background: var(--surface); border-radius: 16px;
+                 padding: 22px 24px; margin: 1.6em 0; box-shadow: var(--shadow); }
+  .tip { font-size: 14px; color: var(--text-soft); margin: 0 0 16px; }
+  .ctrl { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; font-size: 14px; color: var(--text); }
+  .ctrl input[type=range] { flex: 1; min-width: 180px; accent-color: var(--accent); }
+  .ends { display: flex; justify-content: space-between; width: 100%; font-size: 12px; color: var(--muted); font-style: italic; }
+  .bar-row { display: flex; align-items: center; gap: 12px; margin: 9px 0; }
+  .bar-row .w { width: 3em; font-size: 18px; color: var(--text); }
+  .bar-row .track { flex: 1; background: var(--surface-2); border-radius: 8px; height: 24px; position: relative; overflow: hidden; }
+  .bar-row .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+                   background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 8px; transition: width .25s ease; }
+  .bar-row .pct { width: 4.5em; text-align: right; font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 700; font-size: 14px; }
+</style>
+
+<script>
+  function softmax(logits: number[], t: number) {
+    const scaled = logits.map((z) => z / t);
+    const max = Math.max(...scaled);
+    const exps = scaled.map((z) => Math.exp(z - max));
+    const sum = exps.reduce((a, b) => a + b, 0);
+    return exps.map((e) => e / sum);
+  }
+  const root = document.querySelector<HTMLElement>('.bars')!;
+  const logits = JSON.parse(root.dataset.logits!) as number[];
+  const words = JSON.parse(root.dataset.words!) as string[];
+  const slider = document.getElementById('t-slider') as HTMLInputElement;
+  const tval = document.getElementById('t-val')!;
+  const rows = [...root.querySelectorAll<HTMLElement>('.bar-row')];
+
+  function render() {
+    const t = parseFloat(slider.value);
+    tval.textContent = t.toFixed(1);
+    const probs = softmax(logits, t);
+    rows.forEach((row, i) => {
+      row.querySelector<HTMLElement>('.fill')!.style.width = `${probs[i] * 100}%`;
+      row.querySelector<HTMLElement>('.pct')!.textContent = `${(probs[i] * 100).toFixed(1)}%`;
+    });
+  }
+  slider.addEventListener('input', render);
+  render();
+</script>

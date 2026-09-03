@@ -1,0 +1,89 @@
+---
+import '../styles/global.css';
+import ThemeToggle from '../components/ThemeToggle.astro';
+import PageTOC from '../components/PageTOC.astro';
+import DoraemonLogo from '../components/DoraemonLogo.astro';
+
+const { title, description, toc = false } = Astro.props;
+const path = Astro.url.pathname;
+
+const sideGroups = [
+  {
+    title: '图解章节',
+    items: [
+      { label: '📘 图解大模型', href: '/llm/', match: '/llm/' },
+      { label: '📗 图解机器学习', href: '/ml/', match: '/ml/' },
+    ],
+  },
+  {
+    title: '专栏',
+    items: [
+      { label: '⚡ 推理加速实战', href: '/inference/', match: '/inference/' },
+    ],
+  },
+  {
+    title: '文章分类',
+    items: [
+      { label: '🧠 大模型', href: '/#llm' },
+      { label: '🤖 机器学习', href: '/#ml' },
+      { label: '📊 大数据', href: '/#bigdata' },
+      { label: '🔒 网络与安全', href: '/#netsec' },
+      { label: '🛠️ 工具与其他', href: '/#tools' },
+    ],
+  },
+];
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <title>{title ? `${title} · DoraAiDreamer` : 'DoraAiDreamer · 技术博客'}</title>
+    <script is:inline>
+      (function () {
+        const t = localStorage.getItem('theme') ||
+          (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = t;
+      })();
+    </script>
+  </head>
+  <body>
+    <nav class="nav">
+      <div class="nav-inner">
+        <a class="brand" href="/">
+          <DoraemonLogo size={34} />
+          <span>DoraAiDreamer</span>
+        </a>
+        <span class="nav-spacer"></span>
+        <a class="navlink" href="/">首页</a>
+        <a class="navlink" href="/llm/">图解大模型</a>
+        <a class="navlink" href="/inference/">推理加速</a>
+        <ThemeToggle />
+      </div>
+    </nav>
+
+    <div class={`doc-layout ${toc ? 'has-toc' : ''}`}>
+      <aside class="sidenav">
+        {sideGroups.map((g) => (
+          <div class="side-group">
+            <div class="side-title">{g.title}</div>
+            {g.items.map((it) => (
+              <a
+                class:list={['side-link', { active: it.match && path.startsWith(it.match), soon: it.soon }]}
+                href={it.href}
+                aria-disabled={it.soon ? 'true' : undefined}
+              >
+                {it.label}{it.soon && <em>即将</em>}
+              </a>
+            ))}
+          </div>
+        ))}
+      </aside>
+
+      <main class="doc-main"><slot /></main>
+      {toc && <PageTOC />}
+    </div>
+  </body>
+</html>

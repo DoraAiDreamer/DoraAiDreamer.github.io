@@ -1,0 +1,50 @@
+---
+// 右侧页面目录：自动提取正文 h2/h3，滚动时高亮当前章节
+---
+<aside class="tocbar">
+  <div class="toc-title">本页目录</div>
+  <nav id="toc-nav"></nav>
+</aside>
+
+<script>
+  function slug(s: string) {
+    return s.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^\w一-龥-]/g, '');
+  }
+  const article = document.querySelector('article.post');
+  const nav = document.getElementById('toc-nav')!;
+  const tocbar = document.querySelector('.tocbar') as HTMLElement;
+  if (!article) { tocbar.style.display = 'none'; }
+  else {
+    const heads = [...article.querySelectorAll('h2, h3')] as HTMLElement[];
+    if (!heads.length) { tocbar.style.display = 'none'; }
+    const links: { a: HTMLAnchorElement; el: HTMLElement }[] = [];
+    const ul = document.createElement('ul');
+    ul.className = 'toc-list';
+    heads.forEach((h) => {
+      const id = h.id || slug(h.textContent || '');
+      h.id = id;
+      const li = document.createElement('li');
+      li.className = h.tagName === 'H3' ? 'toc-h3' : 'toc-h2';
+      const a = document.createElement('a');
+      a.href = `#${id}`;
+      a.textContent = h.textContent || '';
+      a.onclick = (e) => { e.preventDefault();
+        h.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        history.replaceState(null, '', `#${id}`);
+      };
+      li.appendChild(a); ul.appendChild(li); links.push({ a, el: h });
+    });
+    nav.appendChild(ul);
+
+    const setActive = (el: HTMLElement) => {
+      links.forEach(({ a, el: x }) => a.classList.toggle('active', x === el));
+    };
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => { if (e.isIntersecting) setActive(e.target as HTMLElement); });
+      },
+      { rootMargin: '-80px 0px -70% 0px' }
+    );
+    heads.forEach((h) => io.observe(h));
+  }
+</script>

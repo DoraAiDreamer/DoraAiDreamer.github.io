@@ -1,0 +1,23 @@
+---
+---
+<button class="theme-btn" id="theme-toggle" aria-label="切换深色模式" title="切换深色 / 浅色">
+  <span id="theme-icon">🌙</span>
+</button>
+
+<script>
+  const btn = document.getElementById('theme-toggle')!;
+  const icon = document.getElementById('theme-icon')!;
+  const root = document.documentElement;
+
+  const apply = (theme: string) => {
+    root.dataset.theme = theme;
+    icon.textContent = theme === 'dark' ? '☀️' : '🌙';
+    localStorage.setItem('theme', theme);
+  };
+  const current = () =>
+    root.dataset.theme ||
+    (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+
+  apply(current());
+  btn.addEventListener('click', () => apply(current() === 'dark' ? 'light' : 'dark'));
+</script>

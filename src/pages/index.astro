@@ -1,0 +1,102 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+const posts = (await getCollection('blog')).sort(
+  (a, b) => b.data.date.valueOf() - a.data.date.valueOf()
+);
+
+// 分类：顺序、图标、一句话描述、锚点（供左侧专题目录跳转）
+const cats = [
+  { key: '大模型',   icon: '🧠', anchor: 'llm',      desc: 'Transformer、自注意力与大模型推理——本站招牌图解系列' },
+  { key: '机器学习', icon: '🤖', anchor: 'ml',       desc: '周志华《机器学习》西瓜书笔记与数学基础' },
+  { key: '大数据',   icon: '📊', anchor: 'bigdata',  desc: 'Hadoop 生态与 Hive 数仓系统学习笔记' },
+  { key: '网络与安全', icon: '🔒', anchor: 'netsec', desc: 'TCP 协议、密码学与网络安全' },
+  { key: '工具与其他', icon: '🛠️', anchor: 'tools', desc: '效率工具、工程方法与拓展阅读（含本站用 Astro 重写的实践）' },
+];
+const fmt = (d: Date) => d.toISOString().slice(0, 10);
+---
+
+<BaseLayout title="首页" description="Astro 迁移 demo">
+  <header class="hero">
+    <div class="kicker">DORAIDREAMER · 技术博客</div>
+    <h1>把大模型、推理与机器学习<br/>用图讲明白</h1>
+    <p>大数据 · Java · 机器学习 · 大模型源码与推理加速——一份持续更新、重图解、可交互的学习笔记。</p>
+  </header>
+
+  <a class="banner" href="/inference/">
+    <div class="ico">⚡</div>
+    <div>
+      <b>大模型怎么做到又快又省？· 推理加速实战</b>
+      <span>vLLM 源码精讲 · PagedAttention / KV Cache / 分布式 · 24 篇站内直接读</span>
+    </div>
+    <div class="arrow">→</div>
+  </a>
+
+  {cats.map(({ key, icon, anchor, desc }) => {
+    const items = posts.filter((p) => p.data.category === key);
+    if (items.length === 0 && key !== '大模型') return null;
+    return (
+      <section class="cat-section" id={anchor}>
+        <h2 class="cat-title">
+          <span>{icon}</span> {key}
+          <span class="cat-count">{items.length} 篇</span>
+        </h2>
+        <p class="cat-desc">{desc}</p>
+        <div class="grid">
+          {items.map((p) => (
+            <a class="card" href={`/blog/${p.id}/`}>
+              <div class="card-top">
+                <span class="card-ico">{icon}</span>
+                <span class="card-kind">博客</span>
+              </div>
+              <h3>{p.data.title}</h3>
+              <p>{p.data.subtitle ?? p.data.category}</p>
+              <div class="meta">
+                <span style="margin-right:8px">🗓 {fmt(p.data.date)}</span>
+                {p.data.tags.slice(0, 3).map((t) => <span class="tag">{t}</span>)}
+              </div>
+              <span class="go">阅读全文 →</span>
+            </a>
+          ))}
+          {key === '大模型' && (
+            <>
+              <a class="card" href="/llm/">
+                <div class="card-top">
+                  <span class="card-ico">📖</span>
+                  <span class="card-kind">图解章节</span>
+                </div>
+                <h3>图解大模型</h3>
+                <p>自回归、自注意力、训练到推理——用图 + 可交互组件讲清 Transformer 如何预测下一个词</p>
+                <div class="meta"><span class="tag ext">含交互演示</span><span class="tag ext">Transformer</span></div>
+                <span class="go">进入章节 →</span>
+              </a>
+              <a class="card" href="/inference/">
+                <div class="card-top">
+                  <span class="card-ico">⚡</span>
+                  <span class="card-kind">专栏</span>
+                </div>
+                <h3>推理加速实战</h3>
+                <p>大模型怎么又快又省？vLLM 源码精读 · PagedAttention / KV Cache / 分布式 · 24 篇</p>
+                <div class="meta"><span class="tag ext">专栏</span><span class="tag ext">vLLM</span></div>
+                <span class="go">进入专栏 →</span>
+              </a>
+            </>
+          )}
+          {key === '机器学习' && (
+            <a class="card" href="/ml/">
+              <div class="card-top">
+                <span class="card-ico">📊</span>
+                <span class="card-kind">图解章节</span>
+              </div>
+              <h3>图解机器学习</h3>
+              <p>工作流 / 过拟合 / 偏差方差 / 梯度下降——7 张图 + 代码讲清核心思想</p>
+              <div class="meta"><span class="tag ext">配图</span><span class="tag ext">入门</span></div>
+              <span class="go">进入章节 →</span>
+            </a>
+          )}
+        </div>
+      </section>
+    );
+  })}
+</BaseLayout>

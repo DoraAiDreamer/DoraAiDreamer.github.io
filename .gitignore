@@ -1,6 +1,5 @@
-# Created by .ignore support plugin (hsz.mobi)
-
-# Jekyll build / cache (generated locally; GitHub Pages rebuilds from source)
-.sass-cache/
-.jekyll-cache/
-_site/
+node_modules/
+dist/
+.astro/
+*.log
+.DS_Store

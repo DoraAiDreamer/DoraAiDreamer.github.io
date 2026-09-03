@@ -1,0 +1,161 @@
+---
+title: "Hive学习之路 （二）HIVE安装"
+subtitle: "HIVE安装-mac"
+date: 2019-09-09
+author: "DoraAiDreamer"
+category: "大数据"
+tags:
+  - "大数据"
+  - "Hive"
+---
+
+#### Hive的安装模式
+##### 1 安装
+
+>brew install hive
+
+安装位置：/usr/local/Cellar/hive/
+
+##### 2 环境变量
+
+**注：先运行：hive --help  如果正确输出说明环境变量已经配置好了；直接跳过本步骤；**  
+修改的是当前用户 vim ~/.bash_profile
+
+>export HIVE_HOME=/usr/local/Cellar/hive/2.3.1  
+>export PATH="$HIVE_HOME/bin:$PATH"
+
+source ~/.bash_profile
+
+#### 3 在mysql中为hive 创建用户,及初始化数据库
+以下在mysql 中操作，注意：这里创建的用户名是 hadoop, 密码 mysql.  
+
+第一行：创建数据库
+
+第二、三行 创建用户，赋予权限
+
+第四行 权限生效
+
+>create database hive;  
+>CREATE USER  'hadoop'@'%'  IDENTIFIED BY 'mysql';  
+>GRANT ALL PRIVILEGES ON  *.* TO 'hadoop'@'%' WITH GRANT OPTION;  
+>flush privileges;  
+
+##### 修改hive配置文件 , 我的配置文件位置在 /usr/local/Cellar/hive/2.3.1/libexec/conf
+>vim hive-site.xml 
+
+文件内容如下：
+
+    <?xml version="1.0" encoding="UTF-8" standalone="no"?>              
+    <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+    <configuration>
+    <property>
+            <--连接mysql的账号-->
+            <name>javax.jdo.option.ConnectionUserName</name>
+            <value>hadoop</value>
+        </property>
+        <property>
+            <--连接mysql的密码-->
+            <name>javax.jdo.option.ConnectionPassword</name>
+            <value>mysql</value>
+        </property>
+        <property>
+            <--连接mysql的URL-->
+            <name>javax.jdo.option.ConnectionURL</name>mysql
+            <value>jdbc:mysql://localhost:3306/hive</value>
+        </property>
+        <property>
+            <--mysql驱动程序；注意mysql的版本；mysql8以上不支持该驱动写法。需要改为com.mysql.cj.jdbc.Drive-->
+            <name>javax.jdo.option.ConnectionDriverName</name>
+            <value>com.mysql.jdbc.Driver</value>
+        </property>
+    </configuration>
+
+
+加入 MySQL 驱动包（mysql-connector-java-5.1.40-bin.jar）该 jar 包放置在 hive 的根路径下的 lib 目录(注意驱动包的版本与mysql需要保持一致)
+
+##### 5 hive 初始化 mysql 中的数据库hive
+
+>$HIVE_HOME/bin/schematool -dbType msyql -initSchema
+
+##### 6 启动Hive 的 Metastore Server服务进程
+
+>$HIVE_HOME/bin/hive --service metastore &
+
+##### 7 登录hive客户端
+
+**注意：前提是hadoop已启动**
+（进入Hadoop的bin目录，操作命令如下：start-all.sh）
+
+$HIVE_HOME/bin/ hive 
+
+或者
+
+$HIVE_HOME/bin/ hive --service cli
+
+
+#### 基本使用
+
+现有一个文件student.txt，将其存入hive中，student.txt数据格式如下：  
+>            95002,刘晨,女,19,IS  
+>            95017,王风娟,女,18,IS  
+>            95018,王一,女,19,IS  
+>            95013,冯伟,男,21,CS  
+>            95014,王小丽,女,19,CS  
+>            95019,邢小丽,女,19,IS  
+>            95020,赵钱,男,21,IS  
+>            95003,王敏,女,22,MA  
+>            95004,张立,男,19,IS  
+>            95012,孙花,女,20,CS  
+>            95010,孔小涛,男,19,CS  
+>            95005,刘刚,男,18,MA  
+>            95006,孙庆,男,23,CS  
+>            95007,易思玲,女,19,MA  
+>            95008,李娜,女,18,CS  
+>            95021,周二,男,17,MA  
+>            95022,郑明,男,20,MA  
+>            95001,李勇,男,20,CS  
+>            95011,包小柏,男,18,MA   
+>            95009,梦圆圆,女,18,MA  
+>            95015,王君,男,18,MA  
+
+
+##### 1、创建一个数据库myhive
+
+>hive> create database myhive;  
+>OK
+>Time taken: 7.847 seconds  
+>hive> 
+
+
+##### 2、使用新的数据库myhive
+
+>hive> use myhive;  
+>OK  
+>Time taken: 0.047 seconds  
+>hive>   
+
+##### 3、查看当前正在使用的数据库
+>hive> select current_database();  
+>OK  
+>myhive  
+>Time taken: 0.728 seconds, Fetched: 1 row(s)  
+>hive>   
+
+##### 4、在数据库myhive创建一张student表
+>hive> create table student(id int, name string, sex string, age int, department string) row format delimited fields terminated by ",";
+
+
+##### 5、往表中加载数据
+
+>hive> load data local inpath "/home/hadoop/student.txt" into table student;
+
+##### 6、查询数据
+
+>hive> select * from student;
+
+##### 7、查看表结构
+
+>hive> desc student;
+>hive> desc extended student;CREATE USER
+>hive> desc formatted student;
+
