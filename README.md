@@ -10,7 +10,7 @@
 
 ## 📚 博客内容
 
-目前共 **34** 篇文章，分为 5 个分类。
+目前共 **34** 篇文章，分为 6 个分类（另设图解章节与专栏）。
 
 ### 📊 大数据（12 篇）
 
@@ -41,14 +41,19 @@ Hadoop 生态与 Hive 数仓的系统学习笔记。
   - [合辑（IO · 并发 · Web）](https://doraaidreamer.github.io/2020/01/06/面试专题-一-Java知识整理/)
 - **[经典算法题整理](https://doraaidreamer.github.io/2019/10/13/经典算法题整理-%28分治,动态规划,贪心,搜索%29/)**：分治、动态规划、贪心、搜索
 
-### 🤖 机器学习（6 篇）
+### 🧠 大模型（1 篇 · 含图解章节与专栏）
+
+- **图解章节**：📖 [图解大模型](https://doraaidreamer.github.io/llm/)——自回归、自注意力、训练到推理，配图讲清 Transformer
+- **博客文章**：
+  - [图解 Transformer：一口气搞懂大模型的骨架](https://doraaidreamer.github.io/2026/09/03/图解Transformer-从Self-Attention到LLaMA/)（架构图 + PyTorch 实现，GPT-2 与 LLaMA 对照）
+- **专栏**：⚡ [推理加速实战](https://doraaidreamer.github.io/inference/)——大模型怎么又快又省？vLLM 源码精读 24 篇（见下方专栏介绍）
+
+### 🤖 机器学习（5 篇）
 
 📊 入门导读：[图解机器学习](https://doraaidreamer.github.io/ml/)（工作流 / 过拟合 / 偏差方差 / 梯度下降，7 张图 + 代码讲直觉）。
 
-以周志华《机器学习》（西瓜书）读书笔记、数学基础，以及大模型原理为主。
+以周志华《机器学习》（西瓜书）读书笔记与数学基础为主。
 
-- **深度学习 / 大模型**：
-  - [图解 Transformer：一口气搞懂大模型的骨架](https://doraaidreamer.github.io/2026/09/03/图解Transformer-从Self-Attention到LLaMA/)（架构图 + PyTorch 实现，GPT-2 与 LLaMA 对照）
 - **西瓜书读书笔记**：
   - [第一章 · 绪论](https://doraaidreamer.github.io/2019/09/09/机器学习-第一章-绪论/)
   - [第二章 · 模型评估与选择](https://doraaidreamer.github.io/2019/09/09/机器学习-第二章-模型评估与选择/)

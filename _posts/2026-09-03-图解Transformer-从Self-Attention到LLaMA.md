@@ -4,7 +4,7 @@ title:      图解 Transformer：一口气搞懂大模型的骨架
 subtitle:   不背公式——跟着 GPT-2 和 LLaMA 的真实数据流，用图、表和 PyTorch 把 Self-Attention 讲明白
 date:       2026-09-03
 author:     DoraAiDreamer
-category:   机器学习
+category:   大模型
 header-img: img/post-bg-universe.jpg
 catalog: true
 tags:

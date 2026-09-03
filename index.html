@@ -104,8 +104,8 @@ a.vllm-banner:focus {
 </style>
 
 {% comment %} 大类顺序与图标；文章通过 front matter 的 category 字段归类 {% endcomment %}
-{% assign cat_list = "机器学习|大数据|Java 面试|网络与安全|工具与其他" | split: "|" %}
-{% assign icon_list = "🤖|📊|☕|🔒|🛠️" | split: "|" %}
+{% assign cat_list = "大模型|机器学习|大数据|Java 面试|网络与安全|工具与其他" | split: "|" %}
+{% assign icon_list = "🧠|🤖|📊|☕|🔒|🛠️" | split: "|" %}
 
 <a class="vllm-banner" href="{{ site.baseurl }}/inference/">
     <div class="vllm-banner-icon">⚡</div>
@@ -144,6 +144,22 @@ a.vllm-banner:focus {
             </a>
         </div>
         {% endfor %}
+        {% if cat == "大模型" %}
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 cat-card-col">
+            <a class="cat-card" href="{{ site.baseurl }}/llm/">
+                <h3 class="cat-card-title">📖 图解大模型 <span class="cat-card-tag">章节</span></h3>
+                <p class="cat-card-subtitle">自回归、自注意力、训练到推理——用图讲清 Transformer 如何预测下一个词</p>
+                <div class="cat-card-meta"><span class="cat-card-tag">章节导读</span><span class="cat-card-tag">Transformer</span></div>
+            </a>
+        </div>
+        <div class="col-lg-6 col-md-6 col-sm-12 col-xs-12 cat-card-col">
+            <a class="cat-card" href="{{ site.baseurl }}/inference/">
+                <h3 class="cat-card-title">⚡ 推理加速实战 <span class="cat-card-tag">专栏</span></h3>
+                <p class="cat-card-subtitle">大模型怎么又快又省？vLLM 源码精读 · PagedAttention / KV Cache / 分布式 · 24 篇</p>
+                <div class="cat-card-meta"><span class="cat-card-tag">专栏</span><span class="cat-card-tag">vLLM</span></div>
+            </a>
+        </div>
+        {% endif %}
     </div>
 </section>
 {% endfor %}
