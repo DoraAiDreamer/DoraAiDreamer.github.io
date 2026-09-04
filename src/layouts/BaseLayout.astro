@@ -1,37 +1,61 @@
 ---
 import '../styles/global.css';
+import 'katex/dist/katex.min.css';
 import ThemeToggle from '../components/ThemeToggle.astro';
 import PageTOC from '../components/PageTOC.astro';
 import DoraemonLogo from '../components/DoraemonLogo.astro';
+import { getCollection } from 'astro:content';
 
-const { title, description, toc = false } = Astro.props;
-const path = Astro.url.pathname;
+const { title, description, toc = false, category = null } = Astro.props;
+// 规范化当前路径：去掉 /index.html 和尾部 /，便于与菜单项匹配
+const norm = (s: string) => s.replace(/\/index\.html$/, '').replace(/\/$/, '') || '/';
+const path = norm(Astro.url.pathname);
 
-const sideGroups = [
-  {
-    title: '图解章节',
-    items: [
-      { label: '📘 图解大模型', href: '/llm/', match: '/llm/' },
-      { label: '📗 图解机器学习', href: '/ml/', match: '/ml/' },
-    ],
-  },
-  {
-    title: '专栏',
-    items: [
-      { label: '⚡ 推理加速实战', href: '/inference/', match: '/inference/' },
-    ],
-  },
-  {
-    title: '文章分类',
-    items: [
-      { label: '🧠 大模型', href: '/#llm' },
-      { label: '🤖 机器学习', href: '/#ml' },
-      { label: '📊 大数据', href: '/#bigdata' },
-      { label: '🔒 网络与安全', href: '/#netsec' },
-      { label: '🛠️ 工具与其他', href: '/#tools' },
-    ],
-  },
-];
+type NavItem = { label: string; href: string; match?: string; soon?: boolean };
+
+// 文章页：左侧显示「同分类的文章列表」；其它页：显示专栏 + 全站分类
+const allPosts = (await getCollection('blog')).sort(
+  (a, b) => b.data.date.valueOf() - a.data.date.valueOf()
+);
+const catIcon: Record<string, string> = {
+  '大模型': '🧠', '机器学习': '🤖', '大数据': '📊', '网络与安全': '🔒', '工具与其他': '🛠️',
+};
+const sameCatPosts = category
+  ? allPosts.filter((p) => p.data.category === category)
+  : [];
+
+const sideGroups: { title: string; items: NavItem[] }[] = category
+  ? [
+      {
+        title: `${catIcon[category] ?? '📚'} ${category}（共 ${sameCatPosts.length} 篇）`,
+        items: [
+          { label: '⌂ 返回首页', href: '/' },
+          ...sameCatPosts.map((p) => ({
+            label: p.data.title,
+            href: `/blog/${p.id}/`,
+            match: `/blog/${p.id}/`,
+          })),
+        ],
+      },
+    ]
+  : [
+      {
+        title: '专栏',
+        items: [
+          { label: '⚡ 推理加速实战', href: '/inference/', match: '/inference/' },
+        ],
+      },
+      {
+        title: '文章分类',
+        items: [
+          { label: '🧠 大模型', href: '/#llm' },
+          { label: '🤖 机器学习', href: '/#ml' },
+          { label: '📊 大数据', href: '/#bigdata' },
+          { label: '🔒 网络与安全', href: '/#netsec' },
+          { label: '🛠️ 工具与其他', href: '/#tools' },
+        ],
+      },
+    ];
 ---
 
 <!doctype html>
@@ -52,6 +76,7 @@ const sideGroups = [
   <body>
     <nav class="nav">
       <div class="nav-inner">
+        <button id="sidebar-toggle" class="sidebar-btn" aria-label="收起/展开左侧目录" title="收起/展开左侧目录">☰</button>
         <a class="brand" href="/">
           <DoraemonLogo size={34} />
           <span>DoraAiDreamer</span>
@@ -71,7 +96,7 @@ const sideGroups = [
             <div class="side-title">{g.title}</div>
             {g.items.map((it) => (
               <a
-                class:list={['side-link', { active: it.match && path.startsWith(it.match), soon: it.soon }]}
+                class:list={['side-link', { active: it.match && path === norm(it.match), soon: it.soon }]}
                 href={it.href}
                 aria-disabled={it.soon ? 'true' : undefined}
               >
@@ -85,5 +110,38 @@ const sideGroups = [
       <main class="doc-main"><slot /></main>
       {toc && <PageTOC />}
     </div>
+
+    <script is:inline>
+      (function () {
+        const root = document.documentElement;
+        // 初始化（默认展开，记忆用户选择）
+        if (localStorage.getItem('sidebar') === 'closed') root.dataset.sidebar = 'closed';
+        const btn = document.getElementById('sidebar-toggle');
+        if (btn) {
+          const render = () => { btn.textContent = root.dataset.sidebar === 'closed' ? '☰' : '✕'; };
+          render();
+          btn.addEventListener('click', () => {
+            if (root.dataset.sidebar === 'closed') { delete root.dataset.sidebar; localStorage.setItem('sidebar', 'open'); }
+            else { root.dataset.sidebar = 'closed'; localStorage.setItem('sidebar', 'closed'); }
+            render();
+          });
+        }
+      })();
+      // 表格外包一层 wrapper 负责横向滚动（表格保持 table 显示以便居中）
+      document.querySelectorAll('.post table').forEach((t) => {
+        if (t.parentElement?.classList.contains('table-wrap')) return;
+        const wrap = document.createElement('div');
+        wrap.className = 'table-wrap';
+        t.parentNode?.insertBefore(wrap, t);
+        wrap.appendChild(t);
+      });
+      // 左侧导航：按当前 URL 高亮（客户端匹配，dev/build 都可靠）
+      const cur = location.pathname.replace(/\/index\.html$/, '').replace(/\/$/, '') || '/';
+      document.querySelectorAll('.sidenav .side-link').forEach((a) => {
+        const href = (a.getAttribute('href') || '').replace(/\/$/, '') || '/';
+        if (href !== '/' && cur.startsWith(href)) a.classList.add('active');
+        if (href === '/' && cur === '/') a.classList.add('active');
+      });
+    </script>
   </body>
 </html>

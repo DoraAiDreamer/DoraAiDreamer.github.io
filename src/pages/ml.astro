@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import NormFigure from '../components/NormFigure.astro';
 ---
 
 <BaseLayout title="图解机器学习" description="不堆公式——用挑西瓜、打靶、蒙眼下山的例子和 7 张图，讲清机器学习到底在学什么" toc={true}>
@@ -145,29 +146,30 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
 <figure>
 <svg viewBox="0 0 640 215" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
-  <!-- 欠拟合 -->
+  <!-- 6 个数据点的坐标（三格共用同一批点，只是 x 平移）：整体随 x 上升、带噪声 -->
+  <!-- 欠拟合：一条直线，跟不上弯曲趋势 -->
   <g>
     <rect x="8" y="8" width="200" height="170" rx="10" fill="#fafcfe" stroke="#d6e8ee"/>
     <text x="108" y="28" font-size="13" font-weight="bold" fill="#b14a4a" text-anchor="middle">欠拟合（太简单）</text>
-    <line x1="35" y1="140" x2="185" y2="70" stroke="#e67e7e" stroke-width="2.5"/>
-    <circle cx="55" cy="120" r="5" fill="#5aa7c7"/><circle cx="80" cy="135" r="5" fill="#5aa7c7"/><circle cx="100" cy="95" r="5" fill="#5aa7c7"/><circle cx="125" cy="115" r="5" fill="#5aa7c7"/><circle cx="145" cy="80" r="5" fill="#5aa7c7"/><circle cx="165" cy="95" r="5" fill="#5aa7c7"/>
-    <text x="108" y="165" font-size="11" fill="#888" text-anchor="middle">一条直线，学不到弯曲规律</text>
+    <line x1="55" y1="130" x2="165" y2="95" stroke="#e67e7e" stroke-width="2.5" stroke-linecap="round"/>
+    <circle cx="55" cy="120" r="5" fill="#5aa7c7"/><circle cx="80" cy="135" r="5" fill="#5aa7c7"/><circle cx="100" cy="100" r="5" fill="#5aa7c7"/><circle cx="125" cy="112" r="5" fill="#5aa7c7"/><circle cx="145" cy="82" r="5" fill="#5aa7c7"/><circle cx="165" cy="92" r="5" fill="#5aa7c7"/>
+    <text x="108" y="165" font-size="11" fill="#888" text-anchor="middle">一条直线，跟不上弯曲趋势</text>
   </g>
-  <!-- 恰好 -->
+  <!-- 恰到好处：平滑曲线穿过点群中部，抓住上升趋势 -->
   <g>
     <rect x="220" y="8" width="200" height="170" rx="10" fill="#fafcfe" stroke="#d6e8ee"/>
     <text x="320" y="28" font-size="13" font-weight="bold" fill="#2e8b57" text-anchor="middle">恰到好处</text>
-    <path d="M40,140 Q110,70 180,60 T395,75" fill="none" stroke="#7eb98b" stroke-width="2.5" transform="translate(-208,0)"/>
-    <circle cx="267" cy="120" r="5" fill="#5aa7c7"/><circle cx="292" cy="135" r="5" fill="#5aa7c7"/><circle cx="312" cy="95" r="5" fill="#5aa7c7"/><circle cx="337" cy="115" r="5" fill="#5aa7c7"/><circle cx="357" cy="80" r="5" fill="#5aa7c7"/><circle cx="377" cy="95" r="5" fill="#5aa7c7"/>
-    <text x="320" y="165" font-size="11" fill="#888" text-anchor="middle">平滑曲线，抓住趋势不纠结噪声</text>
+    <path d="M267,128 Q292,122 312,108 T357,88 Q370,84 377,88" fill="none" stroke="#7eb98b" stroke-width="2.8" stroke-linecap="round"/>
+    <circle cx="267" cy="120" r="5" fill="#5aa7c7"/><circle cx="292" cy="135" r="5" fill="#5aa7c7"/><circle cx="312" cy="100" r="5" fill="#5aa7c7"/><circle cx="337" cy="112" r="5" fill="#5aa7c7"/><circle cx="357" cy="82" r="5" fill="#5aa7c7"/><circle cx="377" cy="92" r="5" fill="#5aa7c7"/>
+    <text x="320" y="165" font-size="11" fill="#888" text-anchor="middle">平滑曲线，抓住趋势、忽略噪声</text>
   </g>
-  <!-- 过拟合 -->
+  <!-- 过拟合：折线强行穿过每一个点（含噪声） -->
   <g>
     <rect x="432" y="8" width="200" height="170" rx="10" fill="#fafcfe" stroke="#d6e8ee"/>
     <text x="532" y="28" font-size="13" font-weight="bold" fill="#b14a4a" text-anchor="middle">过拟合（背答案）</text>
-    <path d="M475,120 L482,100 L490,135 L497,70 L510,118 L520,60 L530,100 L540,55 L552,108 L562,75 L572,98 L582,80" fill="none" stroke="#e67e7e" stroke-width="2.5"/>
-    <circle cx="477" cy="120" r="5" fill="#5aa7c7"/><circle cx="492" cy="135" r="5" fill="#5aa7c7"/><circle cx="510" cy="95" r="5" fill="#5aa7c7"/><circle cx="535" cy="115" r="5" fill="#5aa7c7"/><circle cx="555" cy="80" r="5" fill="#5aa7c7"/><circle cx="575" cy="95" r="5" fill="#5aa7c7"/>
-    <text x="532" y="165" font-size="11" fill="#888" text-anchor="middle">扭曲穿过每个点，新数据反而差</text>
+    <path d="M477,120 L492,135 L510,100 L535,112 L555,82 L575,92" fill="none" stroke="#e67e7e" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="477" cy="120" r="5" fill="#5aa7c7"/><circle cx="492" cy="135" r="5" fill="#5aa7c7"/><circle cx="510" cy="100" r="5" fill="#5aa7c7"/><circle cx="535" cy="112" r="5" fill="#5aa7c7"/><circle cx="555" cy="82" r="5" fill="#5aa7c7"/><circle cx="575" cy="92" r="5" fill="#5aa7c7"/>
+    <text x="532" y="165" font-size="11" fill="#888" text-anchor="middle">生硬穿过每个点，新数据反而差</text>
   </g>
 </svg>
 <figcaption>图 4：欠拟合是「没学会」，过拟合是「学死了」。目标是中间那条抓住规律、忽略噪声的平滑曲线。</figcaption>
@@ -290,7 +292,42 @@ print(w, b)        # 约 w≈1.96, b≈0.06 → 房价 ≈ 2×面积</code></pre
 <tr><td><b>微积分</b></td><td>梯度下降靠求导告诉参数往哪调</td><td>梯度 = 损失对每个参数的偏导</td></tr>
 </table>
 
-<p>神经网络/大模型本质上是「<b>巨大的线性代数 + 一点点非线性激活</b>」，想深入可以看本站的 <a href="/2026/09/03/图解Transformer-从Self-Attention到LLaMA/">图解 Transformer</a>——它就是把这些线性变换层层堆叠、用反向传播（梯度下降的多层版本）训练出来的。</p>
+<p>神经网络/大模型本质上是「<b>巨大的线性代数 + 一点点非线性激活</b>」，想深入可以看本站的 <a href="/llm/">图解大模型</a>——它就是把这些线性变换层层堆叠、用反向传播（梯度下降的多层版本）训练出来的。</p>
+
+<h2>10. 归一化：让数值稳定的关键</h2>
+
+<p><b>归一化（Normalization）</b>把特征或激活值统一到一个稳定的尺度，是经典机器学习和深度学习都离不开的基础操作。</p>
+
+<p><b>为什么需要？</b> 不同特征的量纲可能差很多倍（比如「身高 1.7 米」和「收入 170000 元」），数值大的特征会在距离/梯度计算中压过其他特征；神经网络里，信号逐层相乘叠加，激活值容易<b>爆炸（越来越大）</b>或<b>消失（越来越小）</b>，让训练不稳、收敛变慢。归一化把数据拉回「同一把尺子」上。</p>
+
+<NormFigure />
+
+<h3>10.1 常见的归一化方法</h3>
+<table>
+<tr><th>方法</th><th>公式 / 做法</th><th>统计的 μ、σ 来自</th><th>典型用途</th></tr>
+<tr><td><b>Min-Max</b></td><td><code>x′ = (x − min) / (max − min)</code></td><td>数据集最大最小值</td><td>缩放到 [0,1]，无严格分布假设；对异常值敏感</td></tr>
+<tr><td><b>标准化 Z-score</b></td><td><code>x′ = (x − μ) / σ</code></td><td>训练集均值 μ、标准差 σ</td><td>最常用；变成均值 0、方差 1，对线性模型/距离法通用</td></tr>
+<tr><td><b>BatchNorm</b></td><td><code>x̂ = (x − μ<sub>B</sub>)/√(σ<sub>B</sub>²+ε) · γ + β</code></td><td>一个 batch 内、<b>同一特征列</b>跨样本</td><td>CNN/图像网络；依赖 batch，训练/推理统计量不同（用移动平均）</td></tr>
+<tr><td><b>LayerNorm</b></td><td><code>x̂ = (x − μ)/√(σ²+ε) · γ + β</code></td><td><b>单个样本内部</b>跨所有特征</td><td>RNN/Transformer/NLP；不依赖 batch，适合变长序列</td></tr>
+<tr><td><b>RMSNorm</b></td><td><code>x̂ = x / √(mean(x²)+ε) · γ</code></td><td>单样本内部的均方根（不减均值）</td><td>LLaMA/Qwen/DeepSeek 等现代 LLM</td></tr>
+</table>
+
+<p>其中 <b>μ</b> 是均值、<b>σ</b> 是标准差、<b>ε</b> 是防除零的小量（如 1e-6），<b>γ（缩放）和 β（平移）</b> 是可学习参数，让模型保留表达能力而非被强行固定。</p>
+
+<h3>10.2 数学直觉：为什么这样算</h3>
+<p><b>标准化（Z-score）</b>先减均值把分布「居中」到 0，再除以标准差让每个维度的尺度都为 1：</p>
+<pre><code>μ = (1/n) Σᵢ xᵢ          σ = √( (1/n) Σᵢ (xᵢ − μ)² )
+x̂ᵢ = (xᵢ − μ) / (σ + ε)      // 变换后 E[x̂] = 0,  Var[x̂] = 1</code></pre>
+<p><b>LayerNorm</b> 对每个样本（如每个 token 的向量）单独沿特征维做这件事；<b>RMSNorm</b> 发现「减均值」作用很小、真正起稳定作用的是缩放，于是省掉居中，只用均方根 <code>RMS(x) = √( (1/d)Σ xᵢ² )</code> 来归一化——计算更快、参数更少、效果几乎不掉。这就是现代大模型几乎全用 RMSNorm 的原因。</p>
+
+<h3>10.3 工业界的实际做法</h3>
+<ul>
+<li><b>特征工程</b>：表格数据常用 Z-score 标准化或 Min-Max；<b>μ、σ 只在训练集上统计</b>，再套用到验证/测试（不能偷看测试分布）。</li>
+<li><b>网络结构</b>：CNN 多用 BatchNorm；Transformer/LLM 用 <b>LayerNorm / RMSNorm</b>，并采用 <b>Pre-Norm</b>（先归一化再进子层）+ <b>残差连接</b>，让几十上百层也能稳定训练。</li>
+<li><b>推理工程</b>：<code>eps</code> 取值、归一化的融合 kernel（fused layernorm）、用 RMSNorm 省算力，都是工业落地时会关注的点。</li>
+</ul>
+
+<p>归一化在 Transformer 里的具体位置和 RMSNorm 的逐行实现，见 <a href="/llm/">图解大模型</a> 第 3 步 Transformer Block 的归一化部分。</p>
 
 <h2>📖 深入阅读：本站学习笔记</h2>
 

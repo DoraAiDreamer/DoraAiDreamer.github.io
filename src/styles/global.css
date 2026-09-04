@@ -156,12 +156,16 @@ a:hover { color: var(--accent-2); }
 .post a { border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
 .post a:hover { border-bottom-color: var(--accent); }
 
+/* 表格：外层 wrapper 负责横向滚动；表格保持 table 显示以居中 */
+.table-wrap { overflow-x: auto; margin: 1.4em 0; }
 .post table {
-  border-collapse: separate; border-spacing: 0; width: 100%; margin: 1.4em 0; font-size: 14.5px;
-  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
-  display: block; overflow-x: auto;
+  border-collapse: separate; border-spacing: 0; width: 100%; margin: 0 auto; font-size: 14.5px;
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden; text-align: center;
 }
-.post th, .post td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+.post th, .post td {
+  padding: 10px 14px; text-align: center; vertical-align: middle;
+  border-bottom: 1px solid var(--border);
+}
 .post th { background: var(--surface-2); font-weight: 700; white-space: nowrap; }
 .post tr:last-child td { border-bottom: none; }
 .post tr:nth-child(2n) td { background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
@@ -232,7 +236,10 @@ a:hover { color: var(--accent-2); }
   display: block; padding: 5px 0 5px 14px; font-size: 13px; color: var(--muted);
   border-left: 2px solid transparent; margin-left: -1px; line-height: 1.5;
 }
-.toc-list li.toc-h3 a { padding-left: 28px; font-size: 12.5px; }
+.toc-list li.toc-h1 a { font-size: 13.5px; font-weight: 700; color: var(--text-soft); }
+.toc-list li.toc-h1 a.active { color: var(--accent); }
+.toc-list li.toc-h2 a { padding-left: 26px; }
+.toc-list li.toc-h3 a { padding-left: 40px; font-size: 12.5px; }
 .toc-list a:hover { color: var(--accent); }
 .toc-list a.active { color: var(--accent); border-left-color: var(--accent); font-weight: 700; }
 
@@ -258,3 +265,26 @@ a:hover { color: var(--accent-2); }
 .card .go { opacity: 0; transform: translateX(-4px); transition: all .2s; color: var(--accent);
             font-weight: 700; }
 .card:hover .go { opacity: 1; transform: translateX(0); }
+
+/* KaTeX 公式：窄屏可横向滚动，不溢出 */
+.katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+.katex { font-size: 1.05em; }
+
+/* ============ 左侧目录收起 ============ */
+.sidebar-btn {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-soft);
+  width: 34px; height: 34px; border-radius: 8px; cursor: pointer; font-size: 15px;
+  display: grid; place-items: center; transition: all .2s; margin-right: 2px;
+}
+.sidebar-btn:hover { border-color: var(--accent); color: var(--accent); }
+:root[data-sidebar="closed"] .sidenav { display: none; }
+:root[data-sidebar="closed"] .doc-layout { grid-template-columns: minmax(0,1fr) 210px; }
+:root[data-sidebar="closed"] .doc-layout:not(.has-toc) { grid-template-columns: minmax(0,1fr); }
+@media (max-width: 820px) {
+  /* 窄屏本就隐藏侧栏：直接不显示按钮，避免无意义切换 */
+  .sidebar-btn { display: none; }
+}
+
+/* 左侧：同分类文章列表（较长时滚动） */
+.sidenav { max-height: calc(100vh - 120px); overflow-y: auto; }
+.side-link.active { background: var(--accent-soft); color: var(--accent); font-weight: 700; border-left-color: var(--accent); }

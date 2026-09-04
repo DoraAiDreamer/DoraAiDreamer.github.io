@@ -1,0 +1,92 @@
+---
+// Scaled Dot-Product Attention 计算流程，配色与总览图/Block 图一致
+---
+<figure>
+  <svg viewBox="0 0 600 470" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="af-ar" markerWidth="9" markerHeight="9" refX="5.5" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"></path>
+      </marker>
+      <filter id="af-shadow" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#0b2a3a" flood-opacity="0.10"></feDropShadow>
+      </filter>
+    </defs>
+
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+
+      <!-- 顶部输入：Q / K（紫）· V（绿） -->
+      <rect x="56"  y="16" width="128" height="52" rx="13" fill="#eef2ff" stroke="#7c9cf0" stroke-width="1.6" filter="url(#af-shadow)"></rect>
+      <text x="120" y="40" font-size="15" font-weight="bold" fill="#4255c4" text-anchor="middle">Q 查询</text>
+      <text x="120" y="58" font-size="11" fill="#8b95d8" text-anchor="middle">[n, d] 我想找什么</text>
+
+      <rect x="236" y="16" width="128" height="52" rx="13" fill="#eef2ff" stroke="#7c9cf0" stroke-width="1.6" filter="url(#af-shadow)"></rect>
+      <text x="300" y="40" font-size="15" font-weight="bold" fill="#4255c4" text-anchor="middle">K 键</text>
+      <text x="300" y="58" font-size="11" fill="#8b95d8" text-anchor="middle">[n, d] 能被什么匹配</text>
+
+      <rect x="416" y="16" width="128" height="52" rx="13" fill="#e6faf5" stroke="#3ec6a0" stroke-width="1.6" filter="url(#af-shadow)"></rect>
+      <text x="480" y="40" font-size="15" font-weight="bold" fill="#159070" text-anchor="middle">V 值</text>
+      <text x="480" y="58" font-size="11" fill="#6fbfa3" text-anchor="middle">[n, d] 真正的信息</text>
+
+      <!-- Q、K 汇入第一步 -->
+      <path d="M120,68 Q120,84 200,92" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#af-ar)"></path>
+      <path d="M300,68 L300,90" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#af-ar)"></path>
+
+      <!-- 步骤卡：通用结构，编号圆点 + 标题 + shape -->
+      <!-- 1 MatMul Q·Kᵀ（紫） -->
+      <rect x="130" y="94" width="340" height="50" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5" filter="url(#af-shadow)"></rect>
+      <circle cx="160" cy="119" r="13" fill="#7c9cf0"></circle>
+      <text x="160" y="124" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">1</text>
+      <text x="186" y="116" font-size="14.5" font-weight="bold" fill="#1f2937">MatMul：Q · Kᵀ</text>
+      <text x="186" y="134" font-size="11" fill="#94a3b8">每个词对每个词的相关性分数</text>
+      <text x="448" y="124" font-size="11.5" fill="#8b95d8" font-family="Menlo,Monaco,monospace" text-anchor="end">[n, n]</text>
+
+      <line x1="300" y1="146" x2="300" y2="162" stroke="#94a3b8" stroke-width="2" marker-end="url(#af-ar)"></line>
+
+      <!-- 2 Scale（青） -->
+      <rect x="130" y="166" width="340" height="50" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5" filter="url(#af-shadow)"></rect>
+      <circle cx="160" cy="191" r="13" fill="#0e87a6"></circle>
+      <text x="160" y="196" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">2</text>
+      <text x="186" y="188" font-size="14.5" font-weight="bold" fill="#1f2937">Scale：÷ √d_k</text>
+      <text x="186" y="206" font-size="11" fill="#94a3b8">缩放，防止点积过大把 softmax 推饱和</text>
+      <text x="448" y="196" font-size="11.5" fill="#5b8a96" font-family="Menlo,Monaco,monospace" text-anchor="end">[n, n]</text>
+
+      <line x1="300" y1="218" x2="300" y2="234" stroke="#94a3b8" stroke-width="2" marker-end="url(#af-ar)"></line>
+
+      <!-- 3 Mask（琥珀） -->
+      <rect x="130" y="238" width="340" height="50" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5" filter="url(#af-shadow)"></rect>
+      <circle cx="160" cy="263" r="13" fill="#e6a23c"></circle>
+      <text x="160" y="268" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">3</text>
+      <text x="186" y="260" font-size="14.5" font-weight="bold" fill="#1f2937">Mask（因果掩码）</text>
+      <text x="186" y="278" font-size="11" fill="#94a3b8">把「未来」位置置为 −∞，只能看过去</text>
+      <text x="448" y="268" font-size="11.5" fill="#b97a1f" font-family="Menlo,Monaco,monospace" text-anchor="end">[n, n]</text>
+
+      <line x1="300" y1="290" x2="300" y2="306" stroke="#94a3b8" stroke-width="2" marker-end="url(#af-ar)"></line>
+
+      <!-- 4 Softmax（紫） -->
+      <rect x="130" y="310" width="340" height="50" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5" filter="url(#af-shadow)"></rect>
+      <circle cx="160" cy="335" r="13" fill="#7c9cf0"></circle>
+      <text x="160" y="340" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">4</text>
+      <text x="186" y="332" font-size="14.5" font-weight="bold" fill="#1f2937">Softmax</text>
+      <text x="186" y="350" font-size="11" fill="#94a3b8">每行归一化成和为 1 的注意力权重</text>
+      <text x="448" y="340" font-size="11.5" fill="#8b95d8" font-family="Menlo,Monaco,monospace" text-anchor="end">[n, n]</text>
+
+      <line x1="300" y1="362" x2="300" y2="378" stroke="#94a3b8" stroke-width="2" marker-end="url(#af-ar)"></line>
+
+      <!-- 5 MatMul · V（绿，输出） -->
+      <rect x="130" y="382" width="340" height="54" rx="12" fill="#f0fbf7" stroke="#3ec6a0" stroke-width="2" filter="url(#af-shadow)"></rect>
+      <circle cx="160" cy="409" r="13" fill="#3ec6a0"></circle>
+      <text x="160" y="414" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">5</text>
+      <text x="186" y="404" font-size="14.5" font-weight="bold" fill="#159070">MatMul：权重 · V</text>
+      <text x="186" y="422" font-size="11" fill="#6fbfa3">按权重聚合各词信息，得到输出</text>
+      <text x="448" y="413" font-size="11.5" fill="#159070" font-family="Menlo,Monaco,monospace" text-anchor="end">[n, d]</text>
+
+      <!-- V 沿右侧高亮汇入第 5 步 -->
+      <path d="M480,68 L480,409 L472,409" fill="none" stroke="#3ec6a0" stroke-width="2.4" stroke-dasharray="7,5" marker-end="url(#af-ar)"></path>
+      <text x="494" y="240" font-size="11.5" fill="#159070" text-anchor="middle" transform="rotate(90 494 240)">V 参与最后的加权聚合</text>
+
+      <!-- 输出箭头 -->
+      <line x1="300" y1="438" x2="300" y2="456" stroke="#3ec6a0" stroke-width="2.4" marker-end="url(#af-ar)"></line>
+      <text x="318" y="456" font-size="12.5" font-weight="bold" fill="#159070">输出（上下文向量）</text>
+    </g>
+  </svg>
+</figure>

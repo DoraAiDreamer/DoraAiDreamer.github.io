@@ -1,0 +1,51 @@
+---
+// 量化数轴示意图：浮点数「吸附」到最近的整数台阶（INT4 对称量化）
+---
+<figure>
+  <svg viewBox="0 0 600 232" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="q-ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"></path>
+      </marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="300" y="20" font-size="13" font-weight="bold" fill="#0c5f74" text-anchor="middle">定点量化（INT4）：浮点数「吸附」到最近的整数台阶</text>
+
+      {/* 浮点轴 */}
+      <text x="40" y="58" font-size="11.5" fill="#475569" font-weight="bold">浮点值</text>
+      <line x1="96" y1="62" x2="556" y2="62" stroke="#cbd5e1" stroke-width="1.5"></line>
+      <g stroke="#cbd5e1" stroke-width="1">
+        {Array.from({ length: 14 }).map((_, i) => (
+          <line x1={120 + i * 30} y1="58" x2={120 + i * 30} y2="66"></line>
+        ))}
+      </g>
+      <circle cx="205" cy="62" r="5" fill="#0e87a6"></circle>
+      <text x="205" y="84" font-size="10" fill="#0e87a6" text-anchor="middle">w = 0.137</text>
+
+      {/* 吸附箭头 */}
+      <line x1="205" y1="92" x2="240" y2="118" stroke="#e6a23c" stroke-width="2" stroke-dasharray="4,3" marker-end="url(#q-ar)"></line>
+      <text x="176" y="108" font-size="10" fill="#b5791f">量化 round(w/s)</text>
+
+      {/* 整数轴 */}
+      <text x="40" y="132" font-size="11.5" fill="#475569" font-weight="bold">整数 q</text>
+      <line x1="96" y1="136" x2="556" y2="136" stroke="#94a3b8" stroke-width="1.5"></line>
+      {Array.from({ length: 16 }).map((_, i) => {
+        const q = -8 + i;
+        const x = 120 + i * 29;
+        const isZero = q === 0;
+        return (
+          <g>
+            <line x1={x} y1="130" x2={x} y2="142" stroke={isZero ? '#0e87a6' : '#94a3b8'} stroke-width={isZero ? '2' : '1'}></line>
+            <text x={x} y="156" font-size="9" fill={isZero ? '#0e87a6' : '#64748b'} text-anchor="middle" font-weight={isZero ? 'bold' : 'normal'}>{q}</text>
+          </g>
+        );
+      })}
+      <circle cx="240" cy="136" r="6" fill="#e6a23c" stroke="#fff" stroke-width="1.5"></circle>
+      <text x="240" y="178" font-size="10" fill="#b5791f" text-anchor="middle" font-weight="bold">吸附到 q=2</text>
+
+      {/* 反量化 */}
+      <line x1="240" y1="186" x2="240" y2="204" stroke="#3fa664" stroke-width="2" marker-end="url(#q-ar)"></line>
+      <text x="300" y="226" font-size="11" fill="#159070" text-anchor="middle">反量化：ŵ = s·q = 0.0625 × 2 = 0.125（接近原始 0.137，误差约 0.012）</text>
+    </g>
+  </svg>
+</figure>

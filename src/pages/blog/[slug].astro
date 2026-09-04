@@ -12,7 +12,7 @@ const { Content } = await render(post);
 const fmt = post.data.date.toISOString().slice(0, 10);
 ---
 
-<BaseLayout title={post.data.title} description={post.data.subtitle ?? post.data.title} toc={true}>
+<BaseLayout title={post.data.title} description={post.data.subtitle ?? post.data.title} toc={true} category={post.data.category}>
   <article class="post">
     <h1>{post.data.title}</h1>
     {post.data.subtitle && <p class="sub">{post.data.subtitle}</p>}

@@ -1,0 +1,95 @@
+---
+// AWQ（激活感知权重量化）原理示意图：
+// 少数通道对应大激活（显著权重），直接量化会被压坏；
+// AWQ 先对重要通道做缩放（权重放大 s、激活缩小 1/s），量化时它们落在更密的台阶上。
+---
+<figure>
+  <svg viewBox="0 0 600 470" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="aw-ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"></path>
+      </marker>
+      <filter id="aw-shadow" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#0b2a3a" flood-opacity="0.10"></feDropShadow>
+      </filter>
+    </defs>
+
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="300" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">AWQ：保护「对应大激活的重要权重通道」</text>
+
+      <!-- ============ 上：普通量化（重要通道被压坏） ============ -->
+      <text x="150" y="56" font-size="12.5" font-weight="bold" fill="#b14a4a" text-anchor="middle">✗ 直接量化 INT4</text>
+
+      <!-- 通道列：3 个普通 + 1 个重要（红色高亮） -->
+      {[0, 1, 2].map((c) => (
+        <g>
+          <rect x={70 + c * 56} y="70" width="40" height="120" rx="6" fill="#eef2f8" stroke="#c3cff5" stroke-width="1.2"></rect>
+          {[0, 1, 2, 3].map((r) => (
+            <rect x={80 + c * 56} y={80 + r * 27} width="20" height="16" rx="3" fill="#b9c6ee"></rect>
+          ))}
+        </g>
+      ))}
+      <!-- 重要通道（对应大激活）：权重条画得更高/更长表示显著 -->
+      <rect x="238" y="70" width="40" height="120" rx="6" fill="#fdeceb" stroke="#e67e7e" stroke-width="1.6"></rect>
+      {[0, 1, 2, 3].map((r) => (
+        <rect x={246} y={80 + r * 27} width="24" height="16" rx="3" fill="#e67e7e"></rect>
+      ))}
+      <text x="258" y="206" font-size="10" fill="#b14a4a" text-anchor="middle" font-weight="bold">重要通道（大激活）</text>
+      <text x="150" y="206" font-size="10" fill="#8b95d8" text-anchor="middle">普通通道</text>
+
+      <!-- 量化后：重要通道被压成几个台阶（红叉表示误差大） -->
+      <line x1="300" y1="130" x2="330" y2="130" stroke="#b14a4a" stroke-width="2" marker-end="url(#aw-ar)"></line>
+      <text x="315" y="120" font-size="10" fill="#b14a4a" text-anchor="middle">量化</text>
+
+      <g>
+        {[0, 1, 2].map((c) => (
+          <rect x={360 + c * 44} y="70" width="32" height="120" rx="6" fill="#f4f6f9" stroke="#d8dee6" stroke-width="1.2"></rect>
+        ))}
+        <rect x={360 + 3 * 44} y="70" width="32" height="120" rx="6" fill="#fdeceb" stroke="#e67e7e" stroke-width="1.4"></rect>
+        <!-- 重要通道被压成粗糙台阶、误差大 -->
+        {[0, 1, 2, 3].map((r) => (
+          <rect x={370 + 3 * 44} y={82 + r * 27} width="14" height="12" rx="2" fill="#f0b0ae"></rect>
+        ))}
+        <text x="376 + 66" y="206" font-size="10" fill="#b14a4a" text-anchor="middle"></text>
+        <text x="466" y="226" font-size="10.5" fill="#b14a4a" text-anchor="middle" font-weight="bold">重要通道被粗糙台阶压坏 ✗</text>
+        <text x="466" y="241" font-size="9.5" fill="#94a3b8" text-anchor="middle">量化误差被大激活放大 → 输出偏差大</text>
+      </g>
+
+      <!-- 分隔 -->
+      <line x1="40" y1="258" x2="560" y2="258" stroke="#e4e9f0" stroke-width="1.5" stroke-dasharray="5,5"></line>
+
+      <!-- ============ 下：AWQ（先缩放保护） ============ -->
+      <text x="150" y="288" font-size="12.5" font-weight="bold" fill="#2e8b57" text-anchor="middle">✓ AWQ：先缩放，再量化</text>
+
+      <!-- 原始同色通道 -->
+      <rect x="238" y="302" width="40" height="120" rx="6" fill="#fdeceb" stroke="#e67e7e" stroke-width="1.6"></rect>
+      {[0, 1, 2, 3].map((r) => (
+        <rect x={246} y={312 + r * 27} width="24" height="16" rx="3" fill="#e67e7e"></rect>
+      ))}
+      <text x="258" y="438" font-size="10" fill="#b14a4a" text-anchor="middle" font-weight="bold">重要通道权重 w</text>
+
+      <!-- 缩放：权重 ×s 放大，激活 ÷s 缩小（数学等价） -->
+      <line x1="300" y1="362" x2="330" y2="362" stroke="#2e8b57" stroke-width="2" marker-end="url(#aw-ar)"></line>
+      <text x="315" y="352" font-size="10" fill="#159070" text-anchor="middle">per-channel</text>
+      <text x="315" y="378" font-size="9.5" fill="#94a3b8" text-anchor="middle">w×s，x÷s</text>
+
+      <!-- 缩放后：权重被放大，在量化台阶里分得更细 -->
+      <rect x={360 + 3 * 44} y="302" width="32" height="120" rx="6" fill="#eafaf4" stroke="#3ec6a0" stroke-width="1.6"></rect>
+      {[0, 1, 2, 3].map((r) => (
+        <rect x={366 + 3 * 44} y={310 + r * 27} width="22" height="18" rx="3" fill="#3ec6a0"></rect>
+      ))}
+      <text x="466" y="446" font-size="10.5" fill="#159070" text-anchor="middle" font-weight="bold">重要权重被放大 → 量化台阶更细、更准 ✓</text>
+      <text x="466" y="461" font-size="9.5" fill="#94a3b8" text-anchor="middle">激活相应缩小，数学结果不变；普通通道几乎不动</text>
+
+      <!-- 左上普通通道补色（下半） -->
+      {[0, 1, 2].map((c) => (
+        <g>
+          <rect x={70 + c * 56} y="302" width="40" height="120" rx="6" fill="#eef2f8" stroke="#c3cff5" stroke-width="1.2"></rect>
+          {[0, 1, 2, 3].map((r) => (
+            <rect x={80 + c * 56} y={312 + r * 27} width="20" height="16" rx="3" fill="#b9c6ee"></rect>
+          ))}
+        </g>
+      ))}
+    </g>
+  </svg>
+</figure>

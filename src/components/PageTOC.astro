@@ -15,7 +15,9 @@
   const tocbar = document.querySelector('.tocbar') as HTMLElement;
   if (!article) { tocbar.style.display = 'none'; }
   else {
-    const heads = [...article.querySelectorAll('h2, h3')] as HTMLElement[];
+    let heads = [...article.querySelectorAll('h1, h2, h3')] as HTMLElement[];
+    // 第一个 h1 是文章/页面大标题，不算章节，跳过
+    if (heads.length && heads[0].tagName === 'H1') heads = heads.slice(1);
     if (!heads.length) { tocbar.style.display = 'none'; }
     const links: { a: HTMLAnchorElement; el: HTMLElement }[] = [];
     const ul = document.createElement('ul');
@@ -24,7 +26,7 @@
       const id = h.id || slug(h.textContent || '');
       h.id = id;
       const li = document.createElement('li');
-      li.className = h.tagName === 'H3' ? 'toc-h3' : 'toc-h2';
+      li.className = h.tagName === 'H3' ? 'toc-h3' : (h.tagName === 'H2' ? 'toc-h2' : 'toc-h1');
       const a = document.createElement('a');
       a.href = `#${id}`;
       a.textContent = h.textContent || '';

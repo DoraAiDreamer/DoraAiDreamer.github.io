@@ -8,8 +8,8 @@ const posts = (await getCollection('blog')).sort(
 
 // 分类：顺序、图标、一句话描述、锚点（供左侧专题目录跳转）
 const cats = [
-  { key: '大模型',   icon: '🧠', anchor: 'llm',      desc: 'Transformer、自注意力与大模型推理——本站招牌图解系列' },
-  { key: '机器学习', icon: '🤖', anchor: 'ml',       desc: '周志华《机器学习》西瓜书笔记与数学基础' },
+  { key: '大模型',   icon: '🧠', anchor: 'llm',      desc: '图解大模型 / Transformer / 自注意力与推理——招牌图解系列' },
+  { key: '机器学习', icon: '🤖', anchor: 'ml',       desc: '西瓜书笔记、归一化等数学基础与图解' },
   { key: '大数据',   icon: '📊', anchor: 'bigdata',  desc: 'Hadoop 生态与 Hive 数仓系统学习笔记' },
   { key: '网络与安全', icon: '🔒', anchor: 'netsec', desc: 'TCP 协议、密码学与网络安全' },
   { key: '工具与其他', icon: '🛠️', anchor: 'tools', desc: '效率工具、工程方法与拓展阅读（含本站用 Astro 重写的实践）' },
@@ -35,7 +35,7 @@ const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
   {cats.map(({ key, icon, anchor, desc }) => {
     const items = posts.filter((p) => p.data.category === key);
-    if (items.length === 0 && key !== '大模型') return null;
+    if (items.length === 0) return null;
     return (
       <section class="cat-section" id={anchor}>
         <h2 class="cat-title">
@@ -59,42 +59,6 @@ const fmt = (d: Date) => d.toISOString().slice(0, 10);
               <span class="go">阅读全文 →</span>
             </a>
           ))}
-          {key === '大模型' && (
-            <>
-              <a class="card" href="/llm/">
-                <div class="card-top">
-                  <span class="card-ico">📖</span>
-                  <span class="card-kind">图解章节</span>
-                </div>
-                <h3>图解大模型</h3>
-                <p>自回归、自注意力、训练到推理——用图 + 可交互组件讲清 Transformer 如何预测下一个词</p>
-                <div class="meta"><span class="tag ext">含交互演示</span><span class="tag ext">Transformer</span></div>
-                <span class="go">进入章节 →</span>
-              </a>
-              <a class="card" href="/inference/">
-                <div class="card-top">
-                  <span class="card-ico">⚡</span>
-                  <span class="card-kind">专栏</span>
-                </div>
-                <h3>推理加速实战</h3>
-                <p>大模型怎么又快又省？vLLM 源码精读 · PagedAttention / KV Cache / 分布式 · 24 篇</p>
-                <div class="meta"><span class="tag ext">专栏</span><span class="tag ext">vLLM</span></div>
-                <span class="go">进入专栏 →</span>
-              </a>
-            </>
-          )}
-          {key === '机器学习' && (
-            <a class="card" href="/ml/">
-              <div class="card-top">
-                <span class="card-ico">📊</span>
-                <span class="card-kind">图解章节</span>
-              </div>
-              <h3>图解机器学习</h3>
-              <p>工作流 / 过拟合 / 偏差方差 / 梯度下降——7 张图 + 代码讲清核心思想</p>
-              <div class="meta"><span class="tag ext">配图</span><span class="tag ext">入门</span></div>
-              <span class="go">进入章节 →</span>
-            </a>
-          )}
         </div>
       </section>
     );

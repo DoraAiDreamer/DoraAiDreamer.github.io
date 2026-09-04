@@ -4,7 +4,7 @@ import { glob } from 'astro/loaders';
 // 文章集合：front matter 用 schema 强约束（这就是 Astro 管分类/标签的方式，
 // 不用再手写 Liquid 循环，类型错误在构建时就能发现）
 const blog = defineCollection({
-  loader: glob({ pattern: '**/*.md', base: './src/content/blog' }),
+  loader: glob({ pattern: '**/*.{md,mdx}', base: './src/content/blog' }),
   schema: z.object({
     title: z.string(),
     subtitle: z.string().optional(),
