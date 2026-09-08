@@ -1,0 +1,53 @@
+---
+// Kimi K2.5：MoonViT-3D（早期视觉融合）→ MLP 投影 → Kimi K2 MoE 语言骨干
+---
+<figure>
+  <svg viewBox="0 0 600 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="km-ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#0e87a6"></path>
+      </marker>
+      <filter id="km-shadow" x="-20%" y="-20%" width="140%" height="160%">
+        <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#0b2a3a" flood-opacity="0.10"></feDropShadow>
+      </filter>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="300" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">Kimi K2.5：视觉原生融合 + Kimi K2 MoE 骨干</text>
+
+      {/* 输入：图/视频 */}
+      <rect x="30" y="120" width="92" height="56" rx="10" fill="#f0f9fc" stroke="#7ec3d8" filter="url(#km-shadow)"></rect>
+      <text x="76" y="144" font-size="11" font-weight="bold" fill="#334155" text-anchor="middle">图像 / 视频</text>
+      <text x="76" y="162" font-size="9.5" fill="#64748b" text-anchor="middle">任意分辨率 · 多帧</text>
+
+      {/* MoonViT-3D */}
+      <line x1="122" y1="148" x2="150" y2="148" stroke="#0e87a6" stroke-width="2" marker-end="url(#km-ar)"></line>
+      <rect x="152" y="104" width="118" height="88" rx="11" fill="#0f9d68" filter="url(#km-shadow)"></rect>
+      <text x="211" y="130" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">MoonViT-3D</text>
+      <text x="211" y="148" font-size="9.5" fill="#d6f3e9" text-anchor="middle">NaViT 打包（任意分辨率）</text>
+      <text x="211" y="164" font-size="9.5" fill="#d6f3e9" text-anchor="middle">4 帧编为一个时空体</text>
+      <text x="211" y="180" font-size="9.5" fill="#d6f3e9" text-anchor="middle">→ 约 4× 时间压缩</text>
+
+      {/* MLP 桥 */}
+      <line x1="270" y1="148" x2="298" y2="148" stroke="#0e87a6" stroke-width="2" marker-end="url(#km-ar)"></line>
+      <rect x="300" y="124" width="74" height="48" rx="9" fill="#fdf3ec" stroke="#e6a23c" filter="url(#km-shadow)"></rect>
+      <text x="337" y="146" font-size="11" font-weight="bold" fill="#b5791f" text-anchor="middle">MLP</text>
+      <text x="337" y="162" font-size="9" fill="#b5791f" text-anchor="middle">视觉→语言</text>
+
+      {/* K2 MoE 骨干：视觉和文本 token 全程混排（早期融合）*/}
+      <line x1="374" y1="148" x2="402" y2="148" stroke="#0e87a6" stroke-width="2" marker-end="url(#km-ar)"></line>
+      <rect x="404" y="92" width="150" height="112" rx="11" fill="#0e87a6" filter="url(#km-shadow)"></rect>
+      <text x="479" y="116" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">Kimi K2 MoE 骨干</text>
+      <rect x="420" y="128" width="60" height="18" rx="5" fill="#7ec3d8"></rect>
+      <text x="450" y="141" font-size="9" fill="#fff" text-anchor="middle">视觉 token</text>
+      <rect x="482" y="128" width="60" height="18" rx="5" fill="#b9c6ee"></rect>
+      <text x="512" y="141" font-size="9" fill="#fff" text-anchor="middle">文本 token</text>
+      <text x="479" y="166" font-size="9.5" fill="#dff3f9" text-anchor="middle">预训练全程恒定比例混排</text>
+      <text x="479" y="182" font-size="9.5" fill="#dff3f9" text-anchor="middle">（早期视觉融合）</text>
+      <text x="479" y="198" font-size="9.5" fill="#dff3f9" text-anchor="middle">MoE 稀疏激活</text>
+
+      {/* Agent Swarm 侧注 */}
+      <text x="300" y="248" font-size="10.5" fill="#5b7a86" text-anchor="middle">理解之外，Agent Swarm 把任务动态拆成可并行的子智能体并发执行（视觉编程 / 长文档 / 多步推理）</text>
+      <text x="300" y="270" font-size="9.5" fill="#94a3b8" text-anchor="middle">（示意结构，依据 Kimi K2.5 公开技术报告）</text>
+    </g>
+  </svg>
+</figure>

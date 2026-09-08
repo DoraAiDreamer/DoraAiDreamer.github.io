@@ -1,0 +1,54 @@
+---
+// MHA / MQA / GQA 的 Q·K·V 头共享关系；MLA 单独用低秩投影图
+---
+<figure>
+  <svg viewBox="0 0 600 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif" text-anchor="middle">
+      <text x="300" y="24" font-size="14" font-weight="bold" fill="#0c5f74">MHA / GQA / MQA：K、V 头的共享程度</text>
+
+      {[
+        { cx: 110, title: 'MHA（原始多头）', qn: 4, kn: 4, body: '#eef2ff', border: '#7c9cf0', note: '每组 Q 独立 KV' },
+        { cx: 300, title: 'GQA（分组共享）', qn: 4, kn: 2, body: '#f0fbf5', border: '#3ec6a0', note: '每 2 个 Q 共享 1 组 KV' },
+        { cx: 490, title: 'MQA（全部共享）', qn: 4, kn: 1, body: '#fdf3ec', border: '#e6a23c', note: '所有 Q 共享 1 组 KV' },
+      ].map((m) => (
+        <g>
+          <rect x={m.cx - 82} y="40" width="164" height="200" rx="12" fill="#ffffff" stroke={m.border} stroke-width="1.5"></rect>
+          <text x={m.cx} y="62" font-size="12.5" font-weight="bold" fill="#1f2937">{m.title}</text>
+
+          {/* Q 行（上） */}
+          <text x={m.cx - 66} y="88" font-size="10" fill="#4255c4" text-anchor="start" font-weight="bold">Q 头</text>
+          {Array.from({ length: m.qn }).map((_, i) => (
+            <rect x={m.cx - 66 + i * 30} y="94" width="24" height="18" rx="4" fill="#dbe2fb" stroke="#7c9cf0"></rect>
+          ))}
+
+          {/* KV 行（下）：头数不同 */}
+          <text x={m.cx - 66} y="150" font-size="10" fill="#159070" text-anchor="start" font-weight="bold">K=V 头</text>
+          {Array.from({ length: m.kn }).map((_, i) => (
+            <rect x={m.cx - 66 + i * 30} y="156" width="24" height="18" rx="4" fill="#d6f3e9" stroke="#3ec6a0"></rect>
+          ))}
+          {/* MHA/GQA 补齐对齐的空槽（视觉占位） */}
+          {Array.from({ length: m.qn - m.kn }).map((_, i) => (
+            <text x={m.cx - 66 + (m.kn + i) * 30 + 12} y="170" font-size="14" fill="#cbd5e1" fill-opacity="0">·</text>
+          ))}
+
+          {/* 共享连线 */}
+          {Array.from({ length: m.qn }).map((_, qi) => {
+            const x1 = m.cx - 66 + qi * 30 + 12;
+            const ki = Math.min(Math.floor(qi * m.kn / m.qn), m.kn - 1);
+            const x2 = m.cx - 66 + ki * 30 + 12;
+            return <line x1={x1} y1="112" x2={x2} y2="156" stroke={m.border} stroke-width="1.2" stroke-dasharray="3,3"></line>;
+          })}
+
+          <text x={m.cx} y="206" font-size="10.5" fill="#64748b">{m.note}</text>
+          <text x={m.cx} y="224" font-size="10.5" fill="#94a3b8">
+            {m.kn === 4 ? 'KV Cache 最大' : m.kn === 1 ? 'KV Cache 最小' : 'KV Cache 折中'}
+          </text>
+        </g>
+      ))}
+
+      <text x="300" y="272" font-size="11" fill="#5b7a86" text-anchor="middle">
+        共享 KV 头越多，推理时缓存/搬移的 K、V 张量越小、吞吐越高，精度损失通常很小（GQA 是主流，MLA 更进一步）
+      </text>
+    </g>
+  </svg>
+</figure>

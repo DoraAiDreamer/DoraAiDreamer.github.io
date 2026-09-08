@@ -1,0 +1,47 @@
+---
+// softmax 注意力（全连接、看全部历史）vs 线性注意力（固定大小状态、递推更新）
+---
+<figure>
+  <svg viewBox="0 0 600 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif" text-anchor="middle">
+      <text x="300" y="24" font-size="14" font-weight="bold" fill="#0c5f74">softmax 注意力 vs 线性注意力：一个看全部，一个维护状态</text>
+
+      <!-- 左：softmax -->
+      <rect x="30" y="44" width="252" height="230" rx="12" fill="#f0f9fc" stroke="#bfe0ea"></rect>
+      <text x="156" y="70" font-size="12.5" font-weight="bold" fill="#0a5f78">softmax 注意力（O(n²)）</text>
+      {/* 当前 token 与每个历史 token 连线 */}
+      <g stroke="#bcdce7" stroke-width="1.3">
+        {[0,1,2,3,4].map((i) => (
+          <line x1="156" y1="220" x2={72 + i*42} y2="110"></line>
+        ))}
+      </g>
+      {/* 历史 token */}
+      {[0,1,2,3,4].map((i) => (
+        <rect x={58 + i*42} y="98" width="28" height="24" rx="5" fill="#7ec3d8"></rect>
+      ))}
+      <text x="156" y="146" font-size="10" fill="#4a7284">每个 token 都和全部历史算一次点积</text>
+      {/* 当前 token */}
+      <rect x="132" y="206" width="48" height="28" rx="6" fill="#0e87a6"></rect>
+      <text x="156" y="225" font-size="10.5" fill="#fff" font-weight="bold">当前</text>
+      <text x="156" y="260" font-size="10" fill="#0a5f78" font-weight="bold">KV 随上下文线性增长</text>
+
+      <!-- 右：线性注意力 -->
+      <rect x="318" y="44" width="252" height="230" rx="12" fill="#f4f2ff" stroke="#c9c2f2"></rect>
+      <text x="444" y="70" font-size="12.5" font-weight="bold" fill="#4b3fa0">线性注意力（固定状态）</text>
+      {/* 历史 token → 状态 → 当前 */}
+      <rect x="348" y="92" width="192" height="48" rx="8" fill="#6d5bd0"></rect>
+      <text x="444" y="112" font-size="11" fill="#fff" font-weight="bold">固定状态矩阵 S</text>
+      <text x="444" y="129" font-size="9.5" fill="#e0dcfa">压缩全部历史（大小不变）</text>
+      <line x1="444" y1="140" x2="444" y2="200" stroke="#8a78d8" stroke-width="1.6" marker-end=""></line>
+      <path d="M444 200 L440 192 M444 200 L448 192" stroke="#8a78d8" stroke-width="1.6" fill="none"></path>
+      {[0,1,2].map((i) => (
+        <rect x={360 + i*42} y="208" width="28" height="24" rx="5" fill="#b3a8f0"></rect>
+      ))}
+      <text x="470" y="224" font-size="10" fill="#4b3fa0">新 token 只更新一次状态</text>
+      <text x="444" y="260" font-size="10" fill="#4b3fa0" font-weight="bold">状态固定 → 长上下文显存不涨</text>
+
+      {/* 中间箭头 */}
+      <path d="M282 154 l8 5 l-8 5" stroke="#94a3b8" stroke-width="2.5" fill="none"></path>
+    </g>
+  </svg>
+</figure>

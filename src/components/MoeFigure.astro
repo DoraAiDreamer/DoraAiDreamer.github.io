@@ -1,0 +1,54 @@
+---
+// MoE 路由直觉图：一个 token 经过路由器，只激活 N 个专家中的少数几个
+---
+<figure>
+  <svg viewBox="0 0 600 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="moe-ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"></path>
+      </marker>
+      <filter id="moe-shadow" x="-20%" y="-20%" width="140%" height="160%">
+        <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#0b2a3a" flood-opacity="0.10"></feDropShadow>
+      </filter>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="300" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">MoE：一个 token 只激活少数专家（以选 Top-2 为例）</text>
+
+      <!-- 输入 token -->
+      <rect x="30" y="130" width="90" height="44" rx="10" fill="#eef2f8" stroke="#8fa4c9" filter="url(#moe-shadow)"></rect>
+      <text x="75" y="157" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">token</text>
+
+      <!-- 路由器 -->
+      <rect x="160" y="126" width="90" height="52" rx="10" fill="#0e87a6" filter="url(#moe-shadow)"></rect>
+      <text x="205" y="150" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">Router</text>
+      <text x="205" y="166" font-size="10" fill="#dff3f9" text-anchor="middle">softmax 打分</text>
+      <line x1="120" y1="152" x2="158" y2="152" stroke="#0e87a6" stroke-width="2" marker-end="url(#moe-ar)"></line>
+
+      <!-- 8 个专家：2 个激活（高亮），6 个闲置（暗淡） -->
+      {[0,1,2,3,4,5,6,7].map((i) => {
+        const active = i === 1 || i === 4;
+        const x = 300 + (i % 2) * 130;
+        const y = 56 + Math.floor(i / 2) * 58;
+        const color = active ? '#0f9d68' : '#e5e9f0';
+        const textColor = active ? '#fff' : '#9aa5b5';
+        return (
+          <g>
+            <line x1="250" y1="152" x2={x} y2={y+20}
+                  stroke={active ? '#0f9d68' : '#d8dee8'} stroke-width={active ? '2' : '1.2'}
+                  stroke-dasharray={active ? 'none' : '4,3'} marker-end={active ? 'url(#moe-ar)' : ''}
+                  opacity={active ? 1 : 0.55}></line>
+            <rect x={x} y={y} width="112" height="40" rx="8" fill={color} stroke={active ? '#0a7a50' : '#d3dae4'}
+                  stroke-width={active ? '1.6' : '1'} filter={active ? 'url(#moe-shadow)' : ''}></rect>
+            <text x={x+56} y={y+25} font-size="11.5" font-weight={active ? 'bold' : 'normal'} fill={textColor} text-anchor="middle">
+              {active ? `专家 ${i+1}（激活）` : `专家 ${i+1}`}
+            </text>
+          </g>
+        );
+      })}
+
+      <text x="300" y="280" font-size="11.5" fill="#5b7a86" text-anchor="middle">
+        路由器为每个 token 选权重最高的 K 个专家（这里 K=2），其余专家完全不参与计算——总专家很多，但每步只算少数
+      </text>
+    </g>
+  </svg>
+</figure>

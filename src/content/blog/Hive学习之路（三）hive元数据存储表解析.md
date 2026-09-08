@@ -56,7 +56,7 @@ DBS和DATABASE_PARAMS这两张表通过DB_ID字段关联。
 		
 #### 三、Hive表和视图相关的元数据表		
 		
-**主要有TBLS、TABLE_PARAMS、TBL_PRIVS，这三张表通过TBL_ID关联。	**			
+主要有TBLS、TABLE_PARAMS、TBL_PRIVS，这三张表通过TBL_ID关联。			
 
 ##### 1、TBLS	
 该表中存储Hive表、视图、索引表的基本信息。

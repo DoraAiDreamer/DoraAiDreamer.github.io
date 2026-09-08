@@ -26,9 +26,9 @@ import Expand from "../../components/Expand.astro";
 # 1. 一句话讲清楚 Transformer
 Transformer 本质上是一个函数：**输入一串 token ID，输出下一个 token 的概率分布**。
 
-- 它由 Google 在 2017 年论文 [*Attention Is All You Need*](https://arxiv.org/abs/1706.03762) 提出，核心创新是 **Self-Attention（自注意力）**：让序列里任意两个位置直接交换信息，不再依赖 RNN/CNN 的递归或卷积。
+- 它由 Google 在 2017 年论文 [*Attention Is All You Need*](https://arxiv.org/abs/1706.03762) 提出，核心创新是 **Self-Attention**（自注意力）：让序列里任意两个位置直接交换信息，不再依赖 RNN/CNN 的递归或卷积。
 - 它是 GPT、LLaMA、Gemini、DeepSeek、Qwen 等几乎所有现代大模型的骨架。
-- 文本生成靠的是 **next-token prediction（下一个 token 预测）**：给一句话，预测最可能接在后面的那个词（或子词），然后把它拼回去再预测下一个，循环往复——这叫**自回归（autoregressive）**。
+- 文本生成靠的是 **next-token prediction**（下一个 token 预测）：给一句话，预测最可能接在后面的那个词（或子词），然后把它拼回去再预测下一个，循环往复——这叫**自回归**（autoregressive）。
 
 先给两个贯穿全文的「解剖样本」：
 
@@ -57,7 +57,7 @@ Transformer 本质上是一个函数：**输入一串 token ID，输出下一个
 
 # 2. 第 1 步：分词 Tokenize
 
-模型只认识数字，所以先把文本切成 **token**（一个词、子词或标点）（可能是一个词、一个子词或一个标点），再映射成词表里的 ID。主流分词算法是 **BPE（Byte Pair Encoding）**，思想极简：
+模型只认识数字，所以先把文本切成 **token**（一个词、子词或标点）（可能是一个词、一个子词或一个标点），再映射成词表里的 ID。主流分词算法是 **BPE**（Byte Pair Encoding），思想极简：
 
 ```
 初始:   l o w e r      # 从字符开始
@@ -188,8 +188,8 @@ V 不旋转（它是"内容"，不需要位置方向）。
 
 两个关键配角：
 
-- **残差连接（Residual）**：`x = x + 子层(Norm(x))`，让梯度有一条「高速公路」直通浅层，缓解深层网络的梯度消失，这是能堆几十上百层的前提。
-- **归一化（Norm）**：稳定数值分布、加速收敛。
+- **残差连接**（Residual）：`x = x + 子层(Norm(x))`，让梯度有一条「高速公路」直通浅层，缓解深层网络的梯度消失，这是能堆几十上百层的前提。
+- **归一化**（Norm）：稳定数值分布、加速收敛。
 
 ## 4.2 Self-Attention：Q / K / V 与公式
 
@@ -396,7 +396,7 @@ GQA 已基本成为现代 LLM 的标配；DeepSeek 还进一步提出 MLA（多�
 | 计算量 | 两次 reduce（均值+方差） | 一次 reduce（平方均值） |
 | 公式 | $\hat{x}=\dfrac{x-\mu}{\sigma}\,\gamma+\beta$ | $\hat{x}=\dfrac{x}{\mathrm{RMS}(x)}\,\gamma,\ \ \mathrm{RMS}(x)=\sqrt{\dfrac{1}{d}\sum_{i=1}^{d}x_i^2+\epsilon}$ |
 
-**RMSNorm 为什么成为现代大模型标配？** 它的核心观察是：LayerNorm 里**「减均值」这一步作用很小，真正起稳定作用的是缩放**。于是 RMSNorm 直接丢掉均值居中（re-centering），只保留重新缩放（re-scaling），用均方根
+**RMSNorm 为什么成为现代大模型标配？** 它的核心观察是：LayerNorm 里「减均值」这一步作用很小，真正起稳定作用的是**缩放**。于是 RMSNorm 直接丢掉均值居中（re-centering），只保留重新缩放（re-scaling），用均方根
 
 $$
 \mathrm{RMS}(x)=\sqrt{\frac{1}{d}\sum_{i}x_i^2}
@@ -439,8 +439,8 @@ class RMSNorm(nn.Module):
 
 **结构：升维 → 非线性激活 → 降维。** 为什么要先升维？先用一个大 4 倍左右的中间层把特征投影到更高维空间，在那里施加非线性，模型能表达更复杂的模式，再压回原维度：
 
-- **GPT-2（GELU）**：$768 \to 3072$（4 倍）$\to$ GELU $\to 768$
-- **LLaMA（SwiGLU）**：门控结构，用 3 个矩阵 `gate / up / down`，中间维度 11008
+- **GPT-2**（GELU）：$768 \to 3072$（4 倍）$\to$ GELU $\to 768$
+- **LLaMA**（SwiGLU）：门控结构，用 3 个矩阵 `gate / up / down`，中间维度 11008
 
 两种形式的数学表达：
 
@@ -502,9 +502,9 @@ class TransformerBlock(nn.Module):
 
 # 5. 第 4 步：Final Norm → LM Head
 
-所有 Block 处理完后，取**最后一个位置**的向量，映射到词表大小得到 **logits（原始分数，可正可负，未归一化）**：
+所有 Block 处理完后，取**最后一个位置**的向量，映射到词表大小得到 **logits**（原始分数，可正可负，未归一化）：
 
-所有 Block 处理完后，取**最后一个位置**的向量，映射到词表大小得到 **logits（原始分数，可正可负，未归一化）**，再 softmax 成概率：
+所有 Block 处理完后，取**最后一个位置**的向量，映射到词表大小得到 **logits**（原始分数，可正可负，未归一化），再 softmax 成概率：
 
 ```
 [n, d] ──Final Norm──► [n, d] ──Linear Head──► [n, V]
@@ -569,7 +569,7 @@ def sample(logits, temperature=1.0, top_k=None, top_p=None):
 
 ## 7.1 参数都在哪
 
-**GPT-2 small（约 124M）**：
+**GPT-2 small**（约 124M）：
 
 | 组件 | 计算 | 参数量 |
 | --- | --- | --- |
@@ -579,7 +579,7 @@ def sample(logits, temperature=1.0, top_k=None, top_p=None):
 | 每层 MLP | 2 × (768×3072) | ≈ 4.7 M |
 | 12 层合计 | 12 × (2.4+4.7) | ≈ 85 M |
 
-**LLaMA 2 7B（每层，d=4096、ffn=11008）**：
+**LLaMA 2 7B**（每层，d=4096、ffn=11008）：
 
 | 组件 | 计算 | 参数量 | 占比 |
 | --- | --- | --- | --- |
@@ -623,7 +623,7 @@ $QK^\top$ 生成 $[n,n]$ 矩阵，n 是序列长度。长度翻倍，注意力�
 ---
 
 # 8. 一张速查表总结
-**Transformer Block 内的数据流（shape 以 GPT-2 为例）**：
+**Transformer Block 内的数据流**（shape 以 GPT-2 为例）：
 
 | 阶段 | 操作 | shape 变化 |
 | --- | --- | --- |

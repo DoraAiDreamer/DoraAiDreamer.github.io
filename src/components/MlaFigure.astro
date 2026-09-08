@@ -1,0 +1,63 @@
+---
+// DeepSeek MLA（Multi-head Latent Attention）低秩潜变量压缩示意
+// 不缓存大 K/V，而是缓存低维潜向量 c，用时再上投影恢复 K、V
+---
+<figure>
+  <svg viewBox="0 0 600 340" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="mla-ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#0e87a6"></path>
+      </marker>
+      <filter id="mla-shadow" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#0b2a3a" flood-opacity="0.10"></feDropShadow>
+      </filter>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="300" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">MLA：缓存低维潜向量 c，而不是完整 K / V（DeepSeek）</text>
+
+      <!-- 输入 h -->
+      <rect x="40" y="140" width="110" height="64" rx="10" fill="#eef2f8" stroke="#8fa4c9" filter="url(#mla-shadow)"></rect>
+      <text x="95" y="168" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">隐藏状态 h</text>
+      <text x="95" y="186" font-size="10.5" fill="#64748b" text-anchor="middle">维度 d（高）</text>
+
+      <!-- 下投影（压缩） -->
+      <line x1="150" y1="172" x2="222" y2="172" stroke="#0e87a6" stroke-width="2.2" marker-end="url(#mla-ar)"></line>
+      <text x="186" y="158" font-size="10" fill="#0a5f78" text-anchor="middle">下投影 W_</text>
+      <text x="186" y="190" font-size="9.5" fill="#94a3b8" text-anchor="middle">压到低维 d_c</text>
+
+      <!-- 潜向量 c（小，被缓存） -->
+      <rect x="226" y="146" width="80" height="52" rx="9" fill="#0e87a6" filter="url(#mla-shadow)"></rect>
+      <text x="266" y="170" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">c_t</text>
+      <text x="266" y="188" font-size="10" fill="#dff3f9" text-anchor="middle">潜向量（低维）</text>
+      <text x="266" y="222" font-size="10" fill="#0a5f78" text-anchor="middle" font-weight="bold">✓ 只缓存这个（KV Cache 骤减）</text>
+
+      <!-- 上投影（恢复 K/V） -->
+      <line x1="306" y1="160" x2="372" y2="120" stroke="#0e87a6" stroke-width="2.2" marker-end="url(#mla-ar)"></line>
+      <line x1="306" y1="184" x2="372" y2="212" stroke="#0e87a6" stroke-width="2.2" marker-end="url(#mla-ar)"></line>
+      <text x="350" y="128" font-size="9.5" fill="#94a3b8" text-anchor="middle">上投影恢复</text>
+
+      <!-- 恢复出的 K、V -->
+      <rect x="376" y="92" width="120" height="52" rx="9" fill="#eef2ff" stroke="#7c9cf0" filter="url(#mla-shadow)"></rect>
+      <text x="436" y="115" font-size="12" font-weight="bold" fill="#4255c4" text-anchor="middle">K（查询时恢复）</text>
+      <text x="436" y="133" font-size="10.5" fill="#6b78d8" text-anchor="middle">上投影 + 解耦 RoPE</text>
+      <text x="436" y="145" font-size="9" fill="#94a3b8" text-anchor="middle">内容低秩恢复 · 位置单独承载</text>
+
+      <rect x="376" y="188" width="120" height="52" rx="9" fill="#e6faf5" stroke="#3ec6a0" filter="url(#mla-shadow)"></rect>
+      <text x="436" y="211" font-size="12" font-weight="bold" fill="#159070" text-anchor="middle">V（查询时恢复）</text>
+      <text x="436" y="229" font-size="10.5" fill="#4ab08d" text-anchor="middle">低秩下仍是多头</text>
+
+      <!-- 注意力 -->
+      <line x1="496" y1="118" x2="530" y2="160" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#mla-ar)"></line>
+      <line x1="496" y1="214" x2="530" y2="180" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#mla-ar)"></line>
+      <rect x="530" y="146" width="46" height="44" rx="8" fill="#f4f6f9" stroke="#cbd5e1"></rect>
+      <text x="553" y="172" font-size="10.5" fill="#64748b" text-anchor="middle">Attn</text>
+
+      <!-- 对比说明 -->
+      <rect x="40" y="262" width="520" height="56" rx="10" fill="#fafcfd" stroke="#dce8ef"></rect>
+      <text x="56" y="284" font-size="11" fill="#334155">
+        GQA 只是减少 K/V 头数；MLA 把 K、V 本身压成<tspan font-weight="bold" fill="#0a5f78">低秩潜向量</tspan>再缓存，压缩率通常更高；</text>
+      <text x="56" y="304" font-size="11" fill="#334155">
+        RoPE 需要的位置信息用<tspan font-weight="bold">单独一小部分维度</tspan>承载（解耦），上投影后只作用于查询，兼顾位置编码与压缩。</text>
+    </g>
+  </svg>
+</figure>

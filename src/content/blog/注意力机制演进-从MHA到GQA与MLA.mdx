@@ -1,0 +1,235 @@
+---
+title: "注意力机制演进：从 MHA 到 MLA"
+subtitle: "时间线、原理、数学与代表模型（含国产）：高效计算、稀疏/线性、MQA、GQA、MLA 与长上下文"
+date: 2026-09-07
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "大模型"
+  - "注意力机制"
+  - "GQA"
+  - "MLA"
+  - "DeepSeek"
+  - "推理"
+---
+
+import Expand from "../../components/Expand.astro";
+import AttnTimelineFigure from "../../components/AttnTimelineFigure.astro";
+import AttnShareFigure from "../../components/AttnShareFigure.astro";
+import MlaFigure from "../../components/MlaFigure.astro";
+
+注意力（Attention）是 Transformer 的核心，也是这些年大模型架构里**演进最活跃**的部分。回看 2017 年至今的改进，基本围绕三条主线（与图 1 对应）：
+
+1. **让它更准、更好算**（精确、高效计算）——FlashAttention、Ring Attention；
+2. **让它能处理更长序列**（近似降复杂度）——稀疏注意力、线性注意力、原生稀疏 NSA；
+3. **让它推理更省显存、吞吐更高**（压缩 KV Cache）——MQA、GQA、MLA。
+
+下面就按 ① → ② → ③ 的顺序讲，和图 1 完全对应；偏学术的深推导放在扩展阅读。
+
+<AttnTimelineFigure />
+
+*图 1：三条主线沿时间轴（向右）发展——① 基础与高效计算（蓝，精确）；② 降复杂度的稀疏/线性（紫，近似，思想被 NSA 继承）；③ 省 KV Cache 的共享/低秩（绿，推理工程主流）。*
+
+## 1. 起点：Scaled Dot-Product 与 MHA
+
+标准注意力（公式、点积即相似度、为什么除 $\sqrt{d_k}$、因果掩码）在 [图解 Transformer](/llm/) 里已详细讲过，这里只回顾骨架：
+
+$$
+\mathrm{Attention}(Q,K,V)=\mathrm{softmax}\!\left(\frac{QK^{\top}}{\sqrt{d_k}}\right)V
+$$
+
+**多头**（MHA, Multi-Head Attention） 把向量切成 $h$ 个头、各头在不同子空间独立做注意力再拼回：
+
+$$
+\mathrm{MHA}(Q,K,V)=\mathrm{Concat}(\mathrm{head}_1,\dots,\mathrm{head}_h)W^{O},\quad \mathrm{head}_i=\mathrm{Attn}(QW_i^Q,KW_i^K,VW_i^V)
+$$
+
+每个头都要存自己的一份 K、V——这正是推理时 **KV Cache** 的来源，也是后面"省显存"改进的靶点。
+
+**两个痛点**（对应三条主线要解决的问题）：
+
+- **计算/显存随序列长度二次增长**：注意力分数是 $n\times n$ 矩阵，$O(n^2)$；
+- **KV Cache 随层数、头数、上下文线性膨胀**：长上下文/高并发时显存被它占满。
+
+接下来的三条主线，分别从「怎么算得更快（①，不改结果）」「少算一些（②，近似）」「缓存压缩（③，不改结果）」来优化。
+
+## 2. 主线① 精确、更好算：FlashAttention 与 Ring Attention
+
+这一类**不改变注意力的计算结果**（数学上等价），只优化它在硬件上**怎么算**。
+
+- **FlashAttention**（2022/2023）：传统实现反复在显存和 SRAM 之间读写巨大的 $n\times n$ 注意力矩阵，很慢很费显存。FlashAttention 用**分块（tiling）+ 在线 softmax**，一块一块地算注意力并累积，**从不把完整的 $n\times n$ 矩阵写回显存**（IO 感知）。结果和标准注意力完全一致，但显著加速、省显存，已成为训练/推理底层默认。
+- **Ring Attention**（2023）：把超长序列的 K/V **分块放在多张卡上**，各卡环形传递 K/V 块、边传边算，让超过单卡显存的超长序列可以分布式计算，计算结果同样精确。
+
+> 关键直觉：这两个方法**没有动注意力公式**，只是让同样的计算更适合 GPU/多卡。所以它们可以和 GQA/MLA、量化等叠加使用。
+
+## 3. 主线② 降复杂度：稀疏与线性注意力（长序列，近似）
+
+这类方法**改变了"每个 token 看哪些位置"**，是**近似**（结果不再等于完整 softmax 注意力），用来把长序列成本从 $O(n^2)$ 降下来。
+
+<Expand title="扩展阅读：稀疏/线性注意力的数学与细节（偏学术）">
+
+核心是**不去计算全部 $n^2$ 个注意力权重**。
+
+**稀疏注意力**（Sparse）：每个 token 只关注一部分位置。
+- **Longformer**（2020）：「滑动窗口（sliding window，只看周围 w 个）+ 少量全局 token（如分类符 CLS，能看到所有位置）」，复杂度降到 $O(n\cdot w)$。
+- **BigBird / Sparse Transformer**：滑窗 + 全局 + 随机/块稀疏，理论可证明保持表达能力，用于长文档/基因序列。
+
+**线性/核注意力**（Linear）：利用矩阵结合律跳过 $n^2$ 中间矩阵。对 Q、K 做核特征映射 $\phi(\cdot)$ 后：
+
+$$
+\mathrm{Attn}\approx \phi(Q)\big(\phi(K)^{\top}V\big),\qquad \text{先算 }\phi(K)^{\top}V\ (\text{固定大小}),\ \text{再乘 }\phi(Q)
+$$
+
+复杂度从 $O(n^2)$ 降到 $O(n)$。代表：**Linformer**（对 K/V 沿长度维做低秩投影，把 n 压到 k）、**Performer**（FAVOR+）（用随机特征近似 softmax 核）。
+
+**为什么主流推理早期较少直接用？** 它们是近似，在语言建模质量与生态上一度不如精确注意力；但思想（滑窗、块稀疏、低秩）被后来继承——Mistral 的滑动窗口注意力、以及下面的 NSA。
+
+</Expand>
+
+工程结论：**稀疏 = 每个 token 少看一些位置（滑窗/全局/块选择）；线性 = 用矩阵结合律跳过 $n^2$ 中间矩阵**。
+
+**原生稀疏注意力 NSA**（DeepSeek，2025）：把稀疏路线做成**模型原生训练**（而非外挂近似），由三个分支组成——**压缩（compression，把邻近块压成粗粒度表示）+ 块选择（block selection，按重要性挑相关块）+ 滑动窗口（sliding window，保留局部细节）**，长序列推理近线性且保持效果，是稀疏思想走向生产的代表。
+
+## 4. 主线③ 省 KV Cache：MQA → GQA → MLA（推理工程主流）
+
+这一类也**不改变注意力结果**（数学等价），而是压缩推理时要缓存/搬移的 K、V。
+
+### 4.1 MQA 与 GQA：共享 K/V 头
+
+<AttnShareFigure />
+
+*图 2：从 MHA 到 GQA 再到 MQA，K/V 头逐渐合并、共享给更多 Q 头，KV Cache 随之缩小，精度损失很小。*
+
+| 机制 | K/V 头数 | 效果 | 代表模型 |
+| --- | --- | --- | --- |
+| **MHA**（2017） | 与 Q 头相同（如 32） | 表达力最强、KV Cache 最大 | 原版 Transformer、GPT-2/3 |
+| **MQA**（2019，Multi-Query） | **1** 组，所有 Q 头共享 | KV Cache 最小、加速最猛，但质量略降、训练易不稳 | PaLM、Falcon |
+| **GQA**（2023，Grouped-Query） | 分组（如 8 组，每组 4 个 Q 头共享） | **质量≈MHA、速度≈MQA 的折中** | **LLaMA-2/3、Mistral、Qwen2+、GLM-4、DeepSeek、Gemini** |
+
+**数学上**：MHA 每个 Q 头有独立投影出的 $K_i,V_i$（共 $h$ 份）；GQA 只投影出 $g$ 组 $K,V$（$g<h$），让若干 Q 头共享同一组已投影好的 $K_{g(i)},V_{g(i)}$：
+
+$$
+\mathrm{head}_i=\mathrm{Attn}(QW_i^Q,\ K_{\,g(i)},\ V_{\,g(i)}),\qquad g(i)=\Big\lfloor i\cdot \frac{g}{h}\Big\rfloor
+$$
+
+$g=h$ 退化为 MHA、$g=1$ 退化为 MQA，中间就是 GQA。KV Cache 里的 K/V 张量从「层数 × 头数 × …」降为「层数 × 组数 × …」。
+
+**实践结论**：GQA 几乎不掉点地大幅降低 KV Cache、提升吞吐，是 2023 年后**几乎所有开源/国产 LLM 的标配**；MQA 因训练稳定性顾虑多被 GQA 取代。
+
+### 4.2 国产集大成：DeepSeek MLA（低秩潜变量）
+
+GQA 是"减少 K/V 头数"，DeepSeek-V2（2024）的 **MLA**（Multi-head Latent Attention，多头潜在注意力） 更进一步：**把 K、V 本身压成一个低维潜向量再缓存**。
+
+<MlaFigure />
+
+*图 3：MLA 不缓存完整 K/V，而是把高维隐藏状态 $h$ 下投影成低维潜向量 $c_t$ 缓存；用到时再上投影恢复 K、V。缓存的是 $c_t$，维度远小于完整 KV。*
+
+**原理与数学**：
+
+1. 隐藏状态 $h_t$（维度 $d$）先**下投影**成低维潜向量 $c_t$（维度 $d_c \ll d$）：
+
+$$
+c_t = W^{DKV}\,h_t
+$$
+
+2. **推理时只缓存 $c_t$**（而不是每层大份的 K、V）——这是 KV Cache 大幅缩小的关键；
+3. 用到时再**上投影**恢复各头的 K、V：
+
+$$
+k_t = W^{UK}c_t,\qquad v_t = W^{UV}c_t
+$$
+
+4. **RoPE 位置编码解耦**（Decoupled RoPE）：位置旋转不能直接压进低秩潜向量（会破坏压缩），MLA 把 Q/K 拆成「内容部分」（走低秩压缩恢复）和「位置部分」（一小部分维度单独承载 RoPE、直接拼接），既保住相对位置感知又不牺牲压缩率。
+
+| 对比（直觉） | 缓存内容 | 压缩思路 | 代表 |
+| --- | --- | --- | --- |
+| MHA | 完整 K、V（每头一份） | 不压缩 | 早期模型 |
+| GQA | 分组后的 K、V | 减少头数（共享） | LLaMA / Qwen / GLM |
+| **MLA** | **低维潜向量 $c_t$** | **低秩压缩 K/V 本身**，用时再展开 | **DeepSeek-V2/V3/R1** |
+
+MLA 通常能在与 GQA 相近甚至更好的效果下把 KV Cache 压得更小，是目前"省 KV"最激进、最受关注的工程方案之一。
+
+## 5. 位置编码的配合
+
+注意力演进与位置编码紧密相关：绝对位置 → 相对位置 → **RoPE**（旋转位置编码，LLaMA/Qwen/DeepSeek 标配）与 **ALiBi**（线性偏置，BLOOM 等）。RoPE 让注意力天然感知相对位置，也直接影响了 MLA 的"解耦"设计。这部分在 [图解 Transformer](/llm/) 的位置编码扩展有专门讲解。
+
+## 6. 全景对比与选型
+
+下表按「解决什么问题 / 改不改变计算结果」组织，一眼看清每个方法的定位：
+
+| 方法 | 年份 | 属于主线 | 解决什么问题 | 改变计算结果？ | 核心思想 | 代表模型 |
+| --- | --- | --- | --- | --- | --- | --- |
+| MHA | 2017 | 起点 | ——（基线） | —— | 多头点积注意力 | Transformer / GPT-2 |
+| FlashAttention | 2022 | ① 精确高效 | 算得快/省显存 | **不改变**（精确） | 分块 + 在线 softmax，IO 感知 | 几乎所有训练/推理 |
+| Ring Attention | 2023 | ① 精确高效 | 超长序列跨卡 | **不改变**（精确） | 多卡分块、环形传 K/V | 长上下文服务 |
+| Longformer / BigBird | 2020 | ② 降复杂度 | 长序列 $O(n^2)$ | **改变**（稀疏近似） | 滑窗 + 全局 token | 长文档/基因 |
+| Linformer / Performer | 2020 | ② 降复杂度 | 长序列 $O(n^2)$ | **改变**（低秩/核近似） | 低秩投影 / 核特征重排 | 学术/检索 |
+| NSA 原生稀疏 | 2025 | ② 降复杂度 | 长序列近线性 | **改变**（稀疏近似） | 压缩 + 块选择 + 滑窗，原生训练 | **DeepSeek** |
+| MQA | 2019 | ③ 省 KV Cache | KV Cache 太大 | 不改变（结构共享） | 所有 Q 共享 1 组 K/V | PaLM / Falcon |
+| GQA | 2023 | ③ 省 KV Cache | KV Cache 折中 | 不改变（结构共享） | Q 分组共享 K/V | **LLaMA/Qwen/GLM/DeepSeek/Mistral** |
+| MLA | 2024 | ③ 省 KV Cache | KV Cache 压缩最强 | 不改变（低秩等价 + RoPE 解耦） | K/V 压成低秩潜变量缓存 | **DeepSeek-V2/V3/R1** |
+
+**一句话选型/现状**：
+- **底层加速**（任何模型都受益） → FlashAttention；**多卡超长序列** → Ring Attention；
+- **长序列要近线性** → 原生稀疏（NSA）这类近似稀疏；
+- **推理省显存/高吞吐** → GQA 是当前标配，追求极致压缩用 **MLA**（DeepSeek 路线）；
+- ① 精确高效、③ 省 KV 都是**数学等价**优化，可自由叠加；② 是**近似**，用效果换长度。
+
+**国产模型关注**：DeepSeek（MLA、NSA，省 KV 与长序列集大成）、Qwen（GQA + QK-Norm + RoPE，长上下文达百万级 token）、GLM/智谱（GQA、长文本）、Kimi/月之暗面（长上下文注意力工程）、豆包/字节（GQA 类路线）——国产模型在"省 KV Cache + 长上下文"两条工程主线上贡献尤其多。
+
+---
+
+## 自测（答案点击展开）
+
+**Q1. 为什么说 FlashAttention 和 GQA 不冲突、可以同时用？它们优化的是同一个东西吗？**
+
+<Expand title="查看答案">
+
+不是同一个东西，且正交可叠加。
+- **FlashAttention** 属于主线①：优化注意力**怎么算**（分块/IO 感知），**计算结果完全不变**，解决"算得慢、中间矩阵占显存"；
+- **GQA** 属于主线③：优化**缓存/搬运多少 K/V**（多 Q 头共享），也是数学等价，解决"KV Cache 占显存、吞吐低"。
+
+一个管「单次注意力计算的效率」，一个管「跨 token 缓存的 KV 大小」，作用层次不同，因此实际推理引擎（如 vLLM）里两者是一起开的。
+
+</Expand>
+
+**Q2. GQA 和 NSA 都能降低长序列成本，它们的本质区别是什么？哪个改变了注意力的计算结果？**
+
+<Expand title="查看答案">
+
+- **GQA** 是主线③（省 KV Cache）：通过让多个 Q 头共享 K/V 来**压缩缓存和搬移量**，注意力的数学结果与标准 MHA 等价（只是参数训练成共享形式），**不改变计算结果**；
+- **NSA** 是主线②（降复杂度）：通过「压缩 + 块选择 + 滑窗」让每个 token **只关注一部分位置**，是**稀疏近似**，**改变了计算结果**（不再是完整 softmax 注意力），但长序列推理近线性、且原生训练保证效果。
+
+一句话：GQA 省的是"缓存"，NSA 省的是"计算的 token 对数"；前者精确、后者近似。
+
+</Expand>
+
+**Q3. MLA 相比 GQA 在压缩 KV Cache 上更进一步，关键做法是什么？为什么还要搞"RoPE 解耦"？**
+
+<Expand title="查看答案">
+
+- **关键做法**：GQA 只是减少 K/V 的**头数**；MLA 干脆把 K、V 本身通过**下投影压成一个低维潜向量** $c_t=W^{DKV}h_t$（$d_c\ll d$），推理时**只缓存 $c_t$**，用到时再上投影 $k_t=W^{UK}c_t$、$v_t=W^{UV}c_t$ 恢复各头 K/V，因此缓存维度大幅降低（低秩压缩）。
+- **为什么 RoPE 要解耦**：RoPE 是对 Q/K 按位置做旋转，旋转后的向量难以再被低秩压缩直接表示；如果把带 RoPE 的 K 也压进潜向量，会破坏压缩与位置信息。MLA 因此把 Q/K 拆成「内容部分」（走低秩压缩）和「位置部分」（小部分维度单独施加 RoPE 再拼接），既保住相对位置感知、又不牺牲 KV 压缩率。
+
+</Expand>
+
+---
+
+## 参考资料
+
+1. Vaswani et al., *Attention Is All You Need*, 2017. [arXiv](https://arxiv.org/abs/1706.03762)
+2. Shazeer, *Fast Transformer Decoding: One Write-Head is All You Need*（MQA）, 2019. [arXiv](https://arxiv.org/abs/1911.02150)
+3. Ainslie et al., *GQA: Training Generalized Multi-Query Transformer Models*, 2023. [arXiv](https://arxiv.org/abs/2305.13245)
+4. Beltagy et al., *Longformer: The Long-Document Transformer*, 2020. [arXiv](https://arxiv.org/abs/2004.05150)
+5. Zaheer et al., *Big Bird: Transformers for Longer Sequences*, 2020. [arXiv](https://arxiv.org/abs/2007.14062)
+6. Wang et al., *Linformer: Self-Attention with Linear Complexity*, 2020. [arXiv](https://arxiv.org/abs/2006.04768)
+7. Choromanski et al., *Rethinking Attention with Performers*, 2020. [arXiv](https://arxiv.org/abs/2009.14794)
+8. Dao et al., *FlashAttention: Fast and Memory-Efficient Exact Attention*, 2022. [arXiv](https://arxiv.org/abs/2205.14135)
+9. Liu et al., *Ring Attention with Blockwise Transformers*, 2023. [arXiv](https://arxiv.org/abs/2310.01889)
+10. DeepSeek-AI, *DeepSeek-V2*（MLA）, 2024. [arXiv](https://arxiv.org/abs/2405.04434)
+11. DeepSeek-AI, *DeepSeek-V3 Technical Report*, 2024. [arXiv](https://arxiv.org/abs/2412.19437)
+12. DeepSeek-AI, *Native Sparse Attention*（NSA）, 2025. [arXiv](https://arxiv.org/abs/2502.11089)
+13. Su et al., *RoFormer（RoPE）*, 2021. [arXiv](https://arxiv.org/abs/2104.09864)
+14. 各模型技术文档：LLaMA、Mistral、Qwen2/2.5、ChatGLM/GLM-4、Kimi K2、DeepSeek 官方技术报告。
+
+> 相关阅读：[图解大模型/Transformer](/llm/)（注意力公式与 QKV 直觉）、[大模型量化](/blog/大模型量化-用更少的显存跑更大的模型/)（KV Cache 压缩与 W4A16）、[推理加速实战](/inference/)（PagedAttention、连续批处理）。

@@ -1,0 +1,52 @@
+---
+// 三种桥接机制对比：Linear/MLP 投影（LLaVA）、Q-Former（BLIP-2）、Resampler（Flamingo）
+---
+<figure>
+  <svg viewBox="0 0 600 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="mb-ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"></path>
+      </marker>
+      <filter id="mb-shadow" x="-20%" y="-20%" width="140%" height="160%">
+        <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#0b2a3a" flood-opacity="0.10"></feDropShadow>
+      </filter>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif" text-anchor="middle">
+      <text x="300" y="24" font-size="14" font-weight="bold" fill="#0c5f74">视觉信息怎么接进 LLM：三种桥接机制</text>
+
+      {[
+        { cx: 110, title: '投影（LLaVA）', color: '#0e87a6',
+          bridge: 'MLP 投影', bnote: '视觉特征直接映射', note: '简单、直接投影成嵌入', tag: '拼接式 · late fusion' },
+        { cx: 300, title: 'Q-Former（BLIP-2）', color: '#6d5bd0',
+          bridge: '可学习 Query', bnote: '查询 + 交叉注意力', note: '用一组 query 提取关键信息', tag: '拼接式 · 轻量桥接' },
+        { cx: 490, title: 'Resampler（Flamingo）', color: '#0f9d68',
+          bridge: 'Perceiver 重采样', bnote: '变长 → 固定 token 数', note: '压成固定数量视觉 token', tag: '拼接式 · 交叉注意力' },
+      ].map((m) => (
+        <g>
+          <rect x={m.cx - 86} y="40" width="172" height="214" rx="12" fill="#fff" stroke={m.color} stroke-width="1.5" filter="url(#mb-shadow)"></rect>
+          <text x={m.cx} y="62" font-size="12" font-weight="bold" fill={m.color}>{m.title}</text>
+
+          {/* 图像 */}
+          <rect x={m.cx - 34} y="76" width="68" height="40" rx="6" fill="#eef2f8" stroke="#8fa4c9"></rect>
+          <text x={m.cx} y="101" font-size="10" fill="#334155">图像 / patch</text>
+
+          <line x1={m.cx} y1="120" x2={m.cx} y2="146" stroke={m.color} stroke-width="2" marker-end="url(#mb-ar)"></line>
+
+          {/* 桥 */}
+          <rect x={m.cx - 60} y="150" width="120" height="44" rx="8" fill={m.color} opacity="0.92"></rect>
+          <text x={m.cx} y="170" font-size="11" font-weight="bold" fill="#fff">{m.bridge}</text>
+          <text x={m.cx} y="186" font-size="9" fill="#ffffff" opacity="0.9">{m.bnote}</text>
+
+          <line x1={m.cx} y1="198" x2={m.cx} y2="220" stroke={m.color} stroke-width="2" marker-end="url(#mb-ar)"></line>
+
+          {/* LLM */}
+          <rect x={m.cx - 34} y="224" width="68" height="20" rx="5" fill="#f4f6f9" stroke="#cbd5e1"></rect>
+          <text x={m.cx} y="238" font-size="9.5" fill="#475569">→ LLM</text>
+
+          <text x={m.cx} y="262" font-size="9.5" fill="#64748b">{m.note}</text>
+          <text x={m.cx} y="278" font-size="9" fill={m.color}>{m.tag}</text>
+        </g>
+      ))}
+    </g>
+  </svg>
+</figure>

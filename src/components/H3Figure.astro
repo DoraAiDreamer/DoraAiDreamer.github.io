@@ -1,0 +1,54 @@
+---
+// MiniMax H3：单流多模态 DiT —— 文本/图像/视频/音频/噪声 latent 拼成一条序列，
+// 用同一组 self-attention + FFN 联合去噪，音视频同步生成（示意）
+---
+<figure>
+  <svg viewBox="0 0 600 330" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="h3-ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#0e87a6"></path>
+      </marker>
+      <filter id="h3-shadow" x="-20%" y="-20%" width="140%" height="160%">
+        <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#0b2a3a" flood-opacity="0.10"></feDropShadow>
+      </filter>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif" text-anchor="middle">
+      <text x="300" y="24" font-size="14" font-weight="bold" fill="#0c5f74">MiniMax H3：单流多模态 DiT，视频+音频在同一条序列里联合去噪</text>
+
+      {/* 输入 token 条带：不同模态用不同颜色，拼进一条 packed 序列 */}
+      <text x="300" y="52" font-size="10.5" fill="#64748b">多种输入统一成 token，拼成一条 packed 序列</text>
+      {[
+        { x: 60,  w: 86, c: '#dbe2fb', t: '文本' },
+        { x: 156, w: 86, c: '#d6f3e9', t: '参考图像' },
+        { x: 252, w: 100, c: '#fdecd4', t: '视频帧 latent' },
+        { x: 362, w: 100, c: '#efeaff', t: '音频 latent' },
+        { x: 472, w: 96,  c: '#fde2e2', t: '带噪待生成' },
+      ].map((b) => (
+        <g>
+          <rect x={b.x} y="64" width={b.w} height="34" rx="7" fill={b.c} stroke="#cbd5e1"></rect>
+          <text x={b.x + b.w / 2} y="85" font-size="9.5" fill="#334155">{b.t}</text>
+        </g>
+      ))}
+
+      <line x1="300" y1="102" x2="300" y2="126" stroke="#0e87a6" stroke-width="2" marker-end="url(#h3-ar)"></line>
+
+      {/* 单一 Transformer 骨干 */}
+      <rect x="70" y="130" width="460" height="86" rx="12" fill="#0e87a6" filter="url(#h3-shadow)"></rect>
+      <text x="300" y="158" font-size="13" font-weight="bold" fill="#fff">同一个 Transformer（50 层 · self-attention + FFN）</text>
+      <text x="300" y="180" font-size="10" fill="#dff3f9">所有模态 token 在同一组注意力里交互；模态专属 AdaLN 控制去噪步</text>
+      <text x="300" y="198" font-size="10" fill="#dff3f9">三维 RoPE（t, h, w）编码时空位置</text>
+
+      <line x1="300" y1="220" x2="300" y2="242" stroke="#0e87a6" stroke-width="2" marker-end="url(#h3-ar)"></line>
+
+      {/* 输出：视频 + 音频同步生成 */}
+      <rect x="150" y="246" width="140" height="50" rx="10" fill="#f0fbf5" stroke="#0f9d68" stroke-width="1.5"></rect>
+      <text x="220" y="268" font-size="11" font-weight="bold" fill="#0a7a50">视频帧</text>
+      <text x="220" y="285" font-size="9.5" fill="#3f8065">2K · 15s · 24fps</text>
+      <rect x="310" y="246" width="140" height="50" rx="10" fill="#f4f0ff" stroke="#6d5bd0" stroke-width="1.5"></rect>
+      <text x="380" y="268" font-size="11" font-weight="bold" fill="#5b4ba8">音频</text>
+      <text x="380" y="285" font-size="9.5" fill="#7a6cc0">32kHz 立体声·与画面同步</text>
+
+      <text x="300" y="320" font-size="10.5" fill="#5b7a86">音视频在同一次去噪里一起生成，因此天然音画同步（而非后期对齐）</text>
+    </g>
+  </svg>
+</figure>

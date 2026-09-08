@@ -1,0 +1,49 @@
+---
+// Gated DeltaNet：带门控（选择性遗忘）+ delta 规则（读出后纠正）的状态更新
+---
+<figure>
+  <svg viewBox="0 0 600 260" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="dn-ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#6d5bd0"></path>
+      </marker>
+      <filter id="dn-shadow" x="-20%" y="-20%" width="140%" height="160%">
+        <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#0b2a3a" flood-opacity="0.10"></feDropShadow>
+      </filter>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="300" y="26" font-size="14" font-weight="bold" fill="#4b3fa0" text-anchor="middle">Gated DeltaNet：状态更新加了「门控遗忘」和「读出纠错」</text>
+
+      <!-- 新 token -->
+      <rect x="30" y="100" width="92" height="56" rx="10" fill="#eef2f8" stroke="#8fa4c9" filter="url(#dn-shadow)"></rect>
+      <text x="76" y="124" font-size="11.5" font-weight="bold" fill="#334155" text-anchor="middle">当前 token</text>
+      <text x="76" y="142" font-size="10" fill="#64748b" text-anchor="middle">k, v, 门 g</text>
+
+      <line x1="122" y1="128" x2="164" y2="128" stroke="#6d5bd0" stroke-width="2" marker-end="url(#dn-ar)"></line>
+
+      <!-- 门控 -->
+      <rect x="168" y="60" width="150" height="50" rx="9" fill="#fdf3ec" stroke="#e6a23c" filter="url(#dn-shadow)"></rect>
+      <text x="243" y="82" font-size="11.5" font-weight="bold" fill="#b5791f" text-anchor="middle">① 门控 g（遗忘）</text>
+      <text x="243" y="99" font-size="9.8" fill="#9a7440" text-anchor="middle">按内容决定旧状态留多少</text>
+
+      <!-- delta 纠错 -->
+      <rect x="168" y="138" width="150" height="50" rx="9" fill="#f0fbf5" stroke="#0f9d68" filter="url(#dn-shadow)"></rect>
+      <text x="243" y="160" font-size="11.5" font-weight="bold" fill="#0a7a50" text-anchor="middle">② Delta 规则（纠错）</text>
+      <text x="243" y="177" font-size="9.8" fill="#3f8065" text-anchor="middle">先读旧状态，再按误差更新</text>
+
+      <!-- 状态 -->
+      <line x1="318" y1="85" x2="384" y2="116" stroke="#6d5bd0" stroke-width="2" marker-end="url(#dn-ar)"></line>
+      <line x1="318" y1="163" x2="384" y2="140" stroke="#6d5bd0" stroke-width="2" marker-end="url(#dn-ar)"></line>
+      <rect x="388" y="100" width="120" height="56" rx="10" fill="#6d5bd0" filter="url(#dn-shadow)"></rect>
+      <text x="448" y="125" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">状态 S</text>
+      <text x="448" y="143" font-size="9.5" fill="#e0dcfa" text-anchor="middle">更新后供下步读出</text>
+
+      <line x1="508" y1="128" x2="546" y2="128" stroke="#6d5bd0" stroke-width="2" marker-end="url(#dn-ar)"></line>
+      <text x="575" y="132" font-size="11" font-weight="bold" fill="#4b3fa0" text-anchor="middle">输出 o</text>
+
+      <text x="300" y="226" font-size="11" fill="#5b7a86" text-anchor="middle">
+        老线性注意力只会“不断累加”新内容；门控让它学会该忘就忘，delta 让它能像检索一样修正之前写过的内容
+      </text>
+    </g>
+  </svg>
+</figure>

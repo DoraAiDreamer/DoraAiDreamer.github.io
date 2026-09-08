@@ -1,0 +1,65 @@
+---
+// 拼接式模型两阶段训练：阶段一只训桥（对齐），阶段二放开 LLM（指令微调）
+---
+<figure>
+  <svg viewBox="0 0 600 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="mt-ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"></path>
+      </marker>
+      <filter id="mt-shadow" x="-20%" y="-20%" width="140%" height="160%">
+        <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#0b2a3a" flood-opacity="0.10"></feDropShadow>
+      </filter>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif" text-anchor="middle">
+      <text x="300" y="26" font-size="14" font-weight="bold" fill="#0c5f74">拼接式模型怎么训练：两阶段</text>
+
+      {/* ===== 阶段一 ===== */}
+      <text x="155" y="58" font-size="12.5" font-weight="bold" fill="#b5791f">阶段 1：对齐预训练</text>
+      {/* 视觉编码器（冻结） */}
+      <rect x="46" y="70" width="96" height="60" rx="10" fill="#f0f9fc" stroke="#7ec3d8" stroke-width="1.5" stroke-dasharray="5,4"></rect>
+      <text x="94" y="96" font-size="10.5" fill="#334155">图像/视觉</text>
+      <text x="94" y="112" font-size="9.5" fill="#94a3b8">编码器（冻结）</text>
+      {/* 桥（训练） */}
+      <rect x="160" y="76" width="86" height="48" rx="9" fill="#e6a23c" filter="url(#mt-shadow)"></rect>
+      <text x="203" y="97" font-size="10.5" font-weight="bold" fill="#fff">桥接</text>
+      <text x="203" y="112" font-size="9" fill="#fdecd4">训练这部分</text>
+      <line x1="142" y1="100" x2="158" y2="100" stroke="#e6a23c" stroke-width="2" marker-end="url(#mt-ar)"></line>
+      {/* LLM（冻结） */}
+      <rect x="264" y="70" width="96" height="60" rx="10" fill="#eef2f8" stroke="#8fa4c9" stroke-width="1.5" stroke-dasharray="5,4"></rect>
+      <text x="312" y="96" font-size="10.5" fill="#334155">文本 LLM</text>
+      <text x="312" y="112" font-size="9.5" fill="#94a3b8">（冻结）</text>
+      <line x1="246" y1="100" x2="262" y2="100" stroke="#e6a23c" stroke-width="2" marker-end="url(#mt-ar)"></line>
+      <text x="203" y="152" font-size="9.5" fill="#9a7440">用大量图文对，让视觉嵌入对齐到语言空间</text>
+
+      {/* 中间过渡 */}
+      <line x1="300" y1="166" x2="300" y2="190" stroke="#94a3b8" stroke-width="2" marker-end="url(#mt-ar)"></line>
+
+      {/* ===== 阶段二 ===== */}
+      <text x="155" y="210" font-size="12.5" font-weight="bold" fill="#0a7a50">阶段 2：视觉指令微调</text>
+      <rect x="46" y="222" width="96" height="52" rx="10" fill="#f0f9fc" stroke="#7ec3d8" stroke-width="1.5" stroke-dasharray="5,4"></rect>
+      <text x="94" y="252" font-size="10.5" fill="#334155">图像/视觉</text>
+      <rect x="160" y="226" width="86" height="44" rx="9" fill="#0f9d68" filter="url(#mt-shadow)"></rect>
+      <text x="203" y="245" font-size="10.5" font-weight="bold" fill="#fff">桥接</text>
+      <text x="203" y="259" font-size="9" fill="#d6f3e9">已对齐</text>
+      {/* LLM 解冻（实线高亮） */}
+      <rect x="264" y="222" width="96" height="52" rx="10" fill="#f0fbf5" stroke="#0f9d68" stroke-width="2"></rect>
+      <text x="312" y="245" font-size="10.5" fill="#334155">LLM</text>
+      <text x="312" y="259" font-size="9.5" fill="#0a7a50">解冻/微调</text>
+      <line x1="142" y1="248" x2="158" y2="248" stroke="#0f9d68" stroke-width="2" marker-end="url(#mt-ar)"></line>
+      <line x1="246" y1="248" x2="262" y2="248" stroke="#0f9d68" stroke-width="2" marker-end="url(#mt-ar)"></line>
+
+      {/* 结果说明 */}
+      <rect x="400" y="92" width="170" height="182" rx="12" fill="#fafcfd" stroke="#dce8ef"></rect>
+      <text x="485" y="116" font-size="10.5" font-weight="bold" fill="#0c5f74">数据 / 目标</text>
+      <text x="412" y="140" font-size="9.5" fill="#475569" text-anchor="start">阶段1：图文对(caption)</text>
+      <text x="412" y="156" font-size="9.5" fill="#475569" text-anchor="start">→ 学会“看图说话”</text>
+      <text x="412" y="180" font-size="9.5" fill="#475569" text-anchor="start">阶段2：图+指令→回答</text>
+      <text x="412" y="196" font-size="9.5" fill="#475569" text-anchor="start">（多模态对话数据）</text>
+      <text x="412" y="220" font-size="9.5" fill="#475569" text-anchor="start">→ 学会按指令</text>
+      <text x="412" y="236" font-size="9.5" fill="#475569" text-anchor="start">  做视觉问答</text>
+      <text x="412" y="262" font-size="9.5" fill="#94a3b8" text-anchor="start">冻结策略可选：</text>
+      <text x="412" y="276" font-size="9.5" fill="#94a3b8" text-anchor="start">全冻结/LoRA/全参</text>
+    </g>
+  </svg>
+</figure>
