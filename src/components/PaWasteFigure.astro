@@ -1,0 +1,50 @@
+---
+// 图1：旧系统连续预留——只有 20.4%–38.2% 显存存了真实 token
+// 三色浪费：reserved（为未来 token 预留）/ internal（按最大长度超发）/ external（分配器缝隙）
+---
+
+<figure>
+  <svg viewBox="0 0 640 286" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">旧做法：每个请求按「最大长度」预留一整块连续显存</text>
+
+      {/* 图例 */}
+      <g font-size="10.5">
+        <rect x="120" y="40" width="12" height="12" rx="2" fill="#7ec3d8"/>
+        <text x="138" y="50" fill="#334155">真实 KV</text>
+        <rect x="210" y="40" width="12" height="12" rx="2" fill="#cfe6ee"/>
+        <text x="228" y="50" fill="#334155">为未来 token 预留（reserved）</text>
+        <rect x="430" y="40" width="12" height="12" rx="2" fill="#fdf0e0"/>
+        <text x="448" y="50" fill="#334155">超发/缝隙（内外部碎片）</text>
+      </g>
+
+      {/* 三条请求带 */}
+      {[
+        { y: 76,  used: 0.34, label: "请求 A（已生成 34%）" },
+        { y: 128, used: 0.21, label: "请求 B（已生成 21%）" },
+        { y: 180, used: 0.26, label: "请求 C（已生成 26%）" },
+      ].map((r) => {
+        const x0=140, w=440;
+        const wUsed = w*r.used;
+        return (
+          <g>
+            <text x="130" y={r.y+19} font-size="10.5" fill="#64748b" text-anchor="end">{r.label}</text>
+            <rect x={x0} y={r.y} width={w} height="32" rx="5" fill="#fdf0e0" stroke="#e6a23c"/>
+            {/* reserved 部分（未来会用但现在锁占）：淡蓝 */}
+            <rect x={x0+wUsed} y={r.y} width={w*0.4} height="32" fill="#cfe6ee"/>
+            {/* 真实 */}
+            <rect x={x0} y={r.y} width={wUsed} height="32" rx="5" fill="#7ec3d8"/>
+          </g>
+        );
+      })}
+
+      <line x1="140" y1="232" x2="580" y2="232" stroke="#94a3b8"/>
+      <text x="320" y="256" font-size="11.5" fill="#334155" text-anchor="middle">
+        论文实测（OPT-13B，ShareGPT / Alpaca 真实长度分布）：预留出去的显存平均只有
+      </text>
+      <text x="320" y="276" font-size="12.5" font-weight="bold" fill="#b14a4a" text-anchor="middle">
+        20.4% – 38.2% 存了真实 token —— 六到八成显存被锁死或浪费
+      </text>
+    </g>
+  </svg>
+</figure>

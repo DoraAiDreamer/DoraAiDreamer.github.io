@@ -1,0 +1,284 @@
+---
+title: "PagedAttention：给 KV Cache 装上「虚拟内存」"
+subtitle: "vLLM 的核心创新——分页、块表与写时复制，论文机制与今天的 V1 实现分开讲"
+date: 2026-09-15
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "vLLM"
+  - "PagedAttention"
+  - "KV Cache"
+  - "推理加速"
+---
+
+import Expand from "../../components/Expand.astro";
+import PaWasteFigure from "../../components/PaWasteFigure.astro";
+import PaBlockMapFigure from "../../components/PaBlockMapFigure.astro";
+import PaKernelFigure from "../../components/PaKernelFigure.astro";
+import PaCowFigure from "../../components/PaCowFigure.astro";
+import PaLifecycleFigure from "../../components/PaLifecycleFigure.astro";
+
+在[《图解大模型（入门篇）》](/blog/图解大模型-一口气搞懂大模型的骨架/)里我们讲过：自回归生成时，模型要为每个历史 token 缓存 Key/Value（KV Cache）。当时留了一个问题——**这些 KV 在显存里怎么摆放，才能同时服务尽量多的请求？**
+
+这正是 vLLM 的核心创新 **PagedAttention**（SOSP 2023 论文 [Efficient Memory Management for Large Language Model Serving with PagedAttention](https://arxiv.org/abs/2309.06180)）解决的问题。它的思想你可能天天在用——操作系统的**虚拟内存分页**：进程以为自己占着连续地址，物理内存里的页其实散落各处，由一张页表翻译。PagedAttention 把同一套设计搬到了 KV Cache 上。
+
+本文有一条明确的时间线，请全程留意三个标注：**论文（2023）**、**vLLM V0**、**vLLM V1（当前默认引擎）**。论文里的部分机制（写时复制、换出到 CPU）在今天的 V1 中已经被更简单的设计取代，混在一起讲会直接误导你读代码。
+
+## 0. 先算一笔账：并发数是被显存卡死的
+
+先回顾每个 token 的 KV 有多大（[深入篇第 7 节](/blog/图解transformer-从self-attention到llama/)给过同一个公式）：
+
+$$
+\text{每 token KV 字节数} = 2 \times \text{层数} \times \text{KV 头数} \times d_{\text{head}} \times \text{精度字节数}
+$$
+
+以 Llama-2-7B（32 层、MHA 32 个 KV 头、$d_{\text{head}}=128$、FP16）为例：
+
+$$
+2 \times 32 \times 32 \times 128 \times 2 = 524{,}288 \text{ B} \approx 512 \text{ KiB / token}
+$$
+
+于是**单条 2K token 的序列就要约 1 GiB KV**；32 个并发就是约 32 GiB。一张 80GB 的卡，权重只占约 14 GiB，纸面能装 60 多个 2K 请求——但实际并发常常只有个位数。差距去哪了？
+
+<Expand title="折叠：GQA 模型的对照账">
+
+换成 GQA 的 Llama-3-8B（32 层、8 个 KV 头、$d_{\text{head}}=128$、FP16）：$2\times32\times8\times128\times2=131{,}072$ B $\approx 128$ KiB/token，一条 8K 序列才约 1 GiB。这是另一条优化路线——**让每个 token 的 KV 变小**（GQA、[MLA](/blog/注意力机制演进-从mha到gqa与mla/)）；而 PagedAttention 走的是**让这些 KV 摆得更省**的路线。两者正交，可以叠加。
+
+</Expand>
+
+答案是：旧的推理系统**按最大长度预分配显存**，大量空间在请求的整个生命周期里被锁死或浪费。论文给出的实测数字是：预留出去的显存，平均只有 **20.4%–38.2%** 真正存了 token 状态——六到八成是废的。如果能像操作系统管内存一样管 KV，同样的卡能多装几倍的请求？这就是 PagedAttention 的出发点。
+
+<PaWasteFigure />
+
+*图 1：旧系统按最大长度连续预留。论文在 OPT-13B + ShareGPT/Alpaca 真实长度分布上实测，平均利用率只有 20.4%–38.2%。*
+
+## 1. 问题：朴素 KV 管理的三种浪费
+
+论文把旧系统（FasterTransformer、Orca 的几种预分配策略）的浪费拆成三部分，要分开记：
+
+1. **预留占用（reserved）**：为未来才会生成的 token 提前占住的槽位——这些空间最终可能用上，但在请求存活期间一直锁着，别的请求不能碰，直接压低并发；
+2. **内部碎片（internal fragmentation）**：按最大长度（如 2048）超发、但请求提前结束，永远用不上的部分；
+3. **外部碎片（external fragmentation）**：连续分配器（论文实验里是 buddy allocator）在不同大小的预留块之间切出的缝隙——总空闲够，但没有一段连续空间放得下新请求。
+
+还有第四种浪费：**相同前缀无法共享**。同一个 system prompt 的几十个请求、对同一道题做 parallel sampling（采样多个回答）、beam search 的多条候选——它们开头的 KV 明明逐字节相同，旧系统却要各存一份。
+
+结果就是第 0 节的现象：GPU 算力其实够用，但显存"装不下"更多请求。
+
+## 2. 核心思想：储物柜、取物单与物理格子
+
+先用一个生活场景建立直觉：
+
+- 健身房的储物柜是**统一大小**的格子，每格固定放 16 件随身物品（token 的 KV）；
+- 你一次寄存的东西可以放进**任意几个不相邻的格子**，不必连号；
+- 你手里拿一张**按顺序写着柜号的取物单**：单子上的第 1 格、第 2 格是连续的，实际柜子可以隔着整个房间；
+- 两个人的取物单可以写**同一个柜号**（共享前缀），柜门上贴"正在被几个人共用"的计数贴；谁要往共用柜里放不同东西，就另领一个新格子；
+- 柜子不够时，管理员请最晚来的人把东西取走，凭寄存记录**重新打包一遍**。
+
+翻译成正式概念：
+
+| 储物柜版 | PagedAttention | 操作系统 |
+| --- | --- | --- |
+| 一件物品 | 一个 token 的 KV | （字节） |
+| 统一大小的格子 | **block（块，默认 16 token）** | 内存页 |
+| 按顺序写柜号的取物单 | **block table（块表）** | 页表 |
+| 实际柜号 | 物理块编号（可以离散） | 物理页帧 |
+| 寄存人 | 一个请求 | 进程 |
+| 发格子的管理员 | 调度器 / BlockManager | 内核 |
+
+这也正是论文自己的类比：*blocks as pages, tokens as bytes, requests as processes*。走一个具体例子：请求 A 生成了 20 个 token，占 2 个块（第二块只填了 4/16）；请求 B 生成了 7 个 token，占 1 个块。A 的块表是 `[7, 2]`、B 的块表是 `[5]`——物理块 7、2、5 在显存里完全可以交错摆放（见图 2）。所有格子同样大，于是外部碎片被彻底消灭：不存在"坐不进缝隙"的问题。
+
+<PaBlockMapFigure />
+
+*图 2：每个请求看到的逻辑序列是连续的，块表把它翻译到离散的物理块。*
+
+这个类比比到哪里为止？有三条边界必须记住，否则会推出错误结论：
+
+| 类比成立 | 类比**不**成立 |
+| --- | --- |
+| 页 ↔ 块、页表 ↔ 块表、进程 ↔ 请求 | **没有缺页中断**：块是调度器在每步计算**之前**分好的，kernel 拿到的块表必然指向有效格子，绝不会"注意力算到一半卡一下去显存取页" |
+| | **V1 没有磁盘换入换出**（V0 曾支持换到 CPU，第 5 节讲） |
+| | 块是 **append-only**：新 token 只能接在序列末尾，不能随机改写某个历史块 |
+| | 访问模式不是随机读：注意力每一步仍要沿块表**顺序扫完所有前缀块**，分页改的是物理摆放，不是"想读哪页读哪页" |
+
+浪费还剩多少？每个请求**最多**浪费一个没写满的尾块（最多 $16-1=15$ 个空槽；注意短序列单看浪费率可能不低，但摊到成百上千并发的总量里占比极小，论文称之为 near-zero waste）。块越大尾浪费越大，而且大块还会降低前缀共享的命中率（第 6 节），16 是论文消融后的折中，NVIDIA GPU + 默认后端至今沿用（其他硬件后端可改写此默认值）。
+
+<Expand title="折叠：一个容易忽略的实现细节">
+
+一个逻辑块号在**每一层**都对应一块独立的物理存储（KV 张量本来就按层分开），但块表是跨层共用的——取物单上一个编号，就同时指定了"这 16 个 token 在所有层的格子"。
+
+</Expand>
+
+## 3. PagedAttention kernel：历史 KV 散落在格子里，注意力怎么算
+
+分页解决了"怎么放"，立刻带来一个 kernel 问题：当前 token 的 Q 要和**全部历史** K/V 做注意力，而它们散落在任意物理块中，怎么办？
+
+直觉版只有三句话（图 3）：
+
+1. **照单取货**：计算单元（一个 GPU warp）拿着块表，一次取一个物理块——块内 16 个 token 是连续存放的，可以一次性读入；格子之间靠块表跳转；
+2. **边取边记账**：softmax 的难处是没翻完所有格子之前不知道全局最大分，办法是每翻到更大的分数，就把旧账整体按比例重标一次刻度（rescale，即 online softmax / log-sum-exp 思想，源自 [Milakov & Gimelshein 2018](https://arxiv.org/abs/1805.02867)）；
+3. **结果等价**：翻完所有格子时账已算完，和"把 K/V 拼成连续显存一次算"在数学上是**同一个函数**——只是浮点求和顺序不同，不保证逐 bit 一致。新算出的 K/V 也不先拼连续，而是经一个 fused 写内核按块表**散写**进各自的物理块，读、写两侧都是间接寻址。
+
+<PaKernelFigure />
+
+*图 3：沿块表逐块 gather，跨块归约。主线理解到这一层即可。*
+
+<Expand title="折叠：论文原始 kernel 和今天的后端其实不是一种实现">
+
+- **论文/V0 的 PagedAttention kernel** 改编自 FasterTransformer，不是流式 online softmax：它把整条序列的 logits 放进共享内存，先扫完所有块算 QK、再统一求 max、再算 exp/sum、最后再扫一遍 V（"两遍法"）；长序列按 512 token 切 partition，每个 partition 各自两遍，再用一个 reduce kernel 按 log-sum-exp 合并。
+- **今天的主流后端**（FlashAttention 的 paged 版本、FlashInfer 等）直接在分页布局上跑分块流式归约（online softmax），vLLM V1 的 NVIDIA 主力路径已经是它们。vLLM 0.21 的中文文档明确写着 FlashAttention 后端的输入元数据里就包含 block_tables——**分页是存储布局，FlashAttention 是在该布局上算注意力的内核，二者正交且实际合一**。
+- 论文时代 PagedAttention **只用于 decode**：prefill 仍用普通注意力，算完再散写进块。有了 chunked prefill 和前缀缓存后，prefill 也可能要读分页块，才由新后端统一承担。
+- 最后一个块的空位用 mask 处理：padding 位置同时被排除出 max 和 exp 求和，不需要真的写零 K/V。
+- 分页不是免费午餐：论文消融里分页寻址让注意力 kernel 自身比 FasterTransformer 慢 20%–26%，但端到端因为批更大、浪费更少而大幅获胜。
+
+</Expand>
+
+**PagedAttention vs FlashAttention——两句试金石**，别再混：
+
+| | FlashAttention | PagedAttention |
+| --- | --- | --- |
+| 回答的问题 | 这一次注意力怎么算得省（HBM 读写趟数） | 这块显存放得下几个请求（KV 怎么放、怎么共享） |
+| 层次 | 计算 kernel 层 | 调度 / 内存管理层 |
+| 关掉对方 | 不用分页也能算，但并发上不去 | 不用 FA 也能跑，但每步算得慢 |
+
+详见[注意力机制演进](/blog/注意力机制演进-从mha到gqa与mla/)中"FlashAttention 没动注意力公式"一节。
+
+## 4. 共享前缀：从引用计数到不可变块
+
+最有价值的场景：**同一段前缀的 KV，只存一份**。比如对同一个 prompt 采样 8 个回答、beam search 里的几十条候选、大家共用的 system prompt——前缀部分逐 token 相同，没理由存 8 份。
+
+### 4.1 论文 / V0：引用计数 + 写时复制
+
+论文时代，共享块带一个**引用计数**。多条序列从同一前缀"分叉"时共用前缀块；但它们可能**同时写最后一个还没满的块**，处理办法是 **copy-on-write（COW，写时复制）**：谁先往共用的尾块里写不同内容，就先申请新块、把整块拷走、原块计数减一，再在自己的副本上写。论文还有专门的 fused block copy kernel 加速这次拷贝。那时共享前缀还要靠运维**预先注册**，不是自动发现的。
+
+节省了多少？数字要分场景（OPT-13B，论文 §6.3）：
+
+| 场景 | Alpaca trace | ShareGPT trace |
+| --- | --- | --- |
+| parallel sampling（只共享 prompt） | 省 **6.1%–9.8%** | 省 **16.2%–30.5%** |
+| beam search（候选反复分叉/合并） | 省 **37.6%–55.2%** | 省 **44.3%–66.3%** |
+
+parallel sampling 省得少是结构性的：它只能共享 prompt，而论文实验里 prompt 平均只占总 KV 的 **12%**（§6.3 实验口径）——输入越短、采样数越少，共享盘子越小。beam 候选在生成途中持续分叉合并，收益自然大得多。
+
+### 4.2 V1：不可变满块 + 追加，结构性消除 COW
+
+今天的 V1 换了一个更简单的设计，读代码前必须知道（0.21 的《调度与 KV Cache》文档原话是"引用计数而非 COW"）：
+
+- **只有写满的块才会被缓存和共享**，块一写满就计算内容哈希、**不可变**；
+- 新 token 永远追加进**新块**，结构上不可能改写任何共享块——于是不需要复制，共享 = 把块的引用计数 +1（`touch`）；
+- 多条采样序列在 V1 里就是 $n$ 个独立子请求，共享完全靠哈希命中；
+- beam search 在 V1 调度器里已经没有一等地位，只剩 API 层用"每次发 $2\times$beam 条 `max_tokens=1` 的独立请求"来**模拟**，OpenAI 兼容服务端根本不暴露 beam——论文里 beam 的高共享率在今天的生产路径上已不复存在。
+
+<PaCowFigure />
+
+*图 4：左——论文/V0 的尾块写时复制；右——V1 的满块不可变 + 各自追加。效果等价（完整前缀只存一份），机制不同。*
+
+### 4.3 APC：请求之间自动共享前缀
+
+**Automatic Prefix Caching**（APC）把同一套哈希机制延伸到互不相识的请求之间：块的哈希由"父块哈希 + 本块 token + 额外键（LoRA 适配器、多模态输入、多租户 salt）"链式组成，新请求的前缀算出同样的哈希就直接命中（v0.11 起默认 sha256）。几个命中条件必须知道：
+
+- 只认**从头开始的连续前缀**，中间出现过的相同片段不共享；
+- 只共享**写满的整块**（16 token），加上最后一个 token 为了取 logits 永远要重算，天然有最多一个整块的对齐损耗；
+- 同样的 token 出现在不同位置，KV **并不相同**（RoPE 让 K/V 带位置信息），但链式哈希把父块（位置）编了进去，所以不会误命中；
+- 缓存按 LRU 驱逐、引用计数大于 0 的块不会被驱逐、重启不保留；**它只省 prefill，不省 decode**；没有共享前缀的负载收益为零；请求 logprobs 时会绕过缓存全量重算。
+- 开关也有模型差异：V1 中 APC **默认开启**（可按模型自动解析），causal decoder 与 LAST pooling 模型支持；双向 encoder-only、MEAN/CLS/STEP pooling 默认关；纯 attention-free（如 Mamba 类）默认关；带 sliding window 的 decoder（Gemma2/3、gpt-oss 类）由专门的混合缓存管理器支持。注意别把它和"attention+SSM 混合模型"的代码概念混成一谈。
+
+## 5. 调度器：谁在什么时候拿到格子
+
+分页只是存储，真正让显存转起来的是调度器。
+
+**KV 池有多大，是启动时量出来的，不是拍脑袋配的**：目标占用（`gpu_memory_utilization`，默认 0.9）× 总显存，减去模型权重、再跑一次按 `max_num_batched_tokens` 满规格的 dummy 前向测得峰值激活（CUDA graph 的占用也计入），剩下的除以"每块 × 全部层的 KV 字节数"，得到物理块总数（`num_gpu_blocks`，可用 override 调试）。运维含义：调大批处理规格或多模态分辨率，会反过来吃掉 KV 并发容量。
+
+TP 部署下注意一个事实：**块表和块号是中心化的、所有 worker 共享一致**；各卡只是物理上只存自己分到的那部分 attention head 的 KV 分片（SPMD，相同块号、不同 head），不是"每张卡各管一套"。
+
+**显存不够了怎么办（抢占）**，这是论文与 V1 差异最大的地方：
+
+- **论文/V0 有两条路**：`swap`——把整组 KV 经 PCIe 换出到 CPU 内存（每卡默认预留 4 GiB CPU 空间）；`recompute`——丢弃 KV，之后把 prompt 和已生成文本拼成一次 prefill 批量重建。V0 的默认选择就是 **recompute**（配置注释：开销更低），仅当序列组含多条序列（beam 等）不支持重算时才回退 swap。论文消融还给出一个反直觉结论：块很小时 swap 因大量小传输吃不满 PCIe 而更慢，而 recompute 的开销在各块尺寸下从不超过 swap 的 20%。
+- **V1 只剩 recompute**：抢占 = 释放该请求的全部块、把已计算进度清零、请求退回队首重放（FCFS 策略下踢最晚加入的 LIFO，priority 策略下踢优先级最低的；执行抢占的那一步不接收新请求）。GPU↔CPU swap 在 V1 中已移除；今天的 CPU/远端分层存放由显式开启的 **KV connector** 子系统（LMCache、Mooncake、NIXL 等）承担，它有外部前缀命中语义、失败可按策略重算，不是透明换页。
+
+另一条与分页互相成就的主线是**连续批处理（continuous batching）**：它出自 **Orca**（[Yu et al., OSDI 2022](https://www.usenix.org/conference/osdi22/presentation/yu)，无 arXiv 预印本；注意与微软的 Orca *模型*论文同名但无关），Orca 称之为 iteration-level scheduling——每生成一个 token 就能让完成的请求离场、新请求入场，像一部每一层都能进人的电梯，而不是等全员到齐才走的班车。Orca 在没有分页时已经能这么调度，但仍需按最大长度预留；分页让请求动态进出时不必再整块预留，二者组合才真正释放并发。
+
+**Chunked prefill**（学术源头是 [Sarathi](https://arxiv.org/abs/2308.16369)，[Sarathi-Serve](https://arxiv.org/abs/2403.02310) 与 DeepSpeed-FastGen 的 [Dynamic SplitFuse](https://arxiv.org/abs/2401.08671) 是独立同期的同构思想）：长 prompt 的 prefill 被切成小块，与 decode 请求混在同一步执行，不让一个长 prefill 堵死全队。V1 默认开启；每步 token 预算（`max_num_batched_tokens`）配置层默认 2048、可调，官方对大显存卡/离线场景给 8192、16384 的推荐档位，CUDA graph 也按若干预算档（如 2048/4096/8192/13824）预捕获——别理解成随硬件自动切换。
+
+<PaLifecycleFigure />
+
+*图 5：V1 中一个物理块的状态流转，以及显存不足时的重算式抢占。*
+
+## 6. 工程边界（速览）
+
+<Expand title="块大小、connector 与分布式：更多实现细节">
+
+- **块大小权衡**：太小→块表与调度开销大、kernel 并行度差；太大→尾浪费回升、前缀哈希命中率下降。默认 16 是 NVIDIA + 主流后端的取值，CPU/TPU/部分 ROCm 后端可通过后端接口改写。
+- **KV connector 怎么搬**：调度器侧先做外部前缀匹配，命中的 token 数直接计入已计算进度；worker 侧在分层前向中逐层"等待该层 KV 加载 / 保存该层 KV"，搬运与计算流水线重叠；TP 下各 rank 只传自己的 head 分片，两端块尺寸要对齐，加载失败可按策略重算或报错。NIXL（RDMA）、Mooncake、LMCache 定位各不相同，别当成同一类东西并列。
+- **PD 分离**：prefill 节点算好的 KV 以块为粒度传给 decode 节点（[DistServe](https://arxiv.org/abs/2401.09670) 提出分离思想，[Mooncake](https://arxiv.org/abs/2407.00079) 是工程代表）。推理负载 decode 占绝对大头（短输入、超长输出），跨网络搬 KV 可能反噬，同机 NVLink 或高速连接器往往优于盲目跨节点。
+- 思维链这类超长 decode 的容量账，正是[《思维链》第 4 节](/blog/思维链-大模型为什么要先想再答/)算过的内容。
+
+</Expand>
+
+## 7. 家族谱：三类优化，各管一段
+
+| 系统 / 技术 | 年份 | 一句话机制 | 与分页的关系 |
+| --- | --- | --- | --- |
+| [Orca](https://www.usenix.org/conference/osdi22/presentation/yu) | OSDI'22 | iteration-level scheduling（连续批处理） | 调度线，早于分页；两者组合释放并发 |
+| **PagedAttention / vLLM** | SOSP'23 | 定长块 + 块表 + 共享 | 本文主角，存储线 |
+| TensorRT-LLM paged KV | 2023+ | 同一分页思想的另一套工业实现 | 互相验证 |
+| [SGLang / RadixAttention](https://arxiv.org/abs/2312.07104) | MLSys'24 | 任意长度前缀的 radix tree + LRU 叶子驱逐 | 差异在**复用策略层**（树 vs 定长哈希链），物理层同样用非连续池 |
+| Sarathi / SplitFuse | 2024 | chunked prefill | 调度线，已进 vLLM V1 |
+| DistServe / Mooncake | 2024 | prefill/decode 分离、KV 跨节点传输 | 以块为传输单位 |
+| GQA / MQA / [MLA](/blog/注意力机制演进-从mha到gqa与mla/) | 2023–2024 | 减少每 token 的 KV 头数 / 低秩潜变量压缩 | **少算线**，与分页作用层次不同、可叠加（V1 中 MLA 的潜变量缓存也走同一块管理器） |
+
+收口成三条路线，和站内系列文章对齐：
+
+1. **少算**：GQA、MLA——让每个 token 的 KV 本身更小；
+2. **少放**：PagedAttention——消灭碎片、同一份前缀不存第二遍；
+3. **会调度**：连续批处理、chunked prefill、PD 分离——让 GPU 不等任何一个请求。
+
+## 8. 收束
+
+回到第 0 节的问题：同样一张 80GB 的卡，PagedAttention 改变了什么？它**没有**减少每个 token 的计算量，**没有**改变注意力的数学公式，**没有**压缩每个 token 的 KV 大小（那是 GQA/MLA 的战场）。它只做了两件事：
+
+- 让显存里**没有废格子**（浪费从六到八成压到每个请求至多一个尾块，论文称 near-zero waste）；
+- 让**同一份前缀不存第二遍**。
+
+论文报告同等延迟约束下吞吐提升约 **2–4×**——这个数字有完整的时代条件：2023 年、A100、OPT-13B/66B/175B 与 LLaMA-13B、ShareGPT/Alpaca 长度分布加 Poisson 到达，基线是 Orca 的三种分配变体与 FasterTransformer（分项看，约为 Orca 最优变体的 1.7–2.7×、对 FasterTransformer 最高 22×；长序列、大模型、复杂解码算法收益更大）。它不是用来和今天的 TRT-LLM/SGLang 做营销对比的，但"OS 的虚拟内存思想可以照搬到 LLM 显存管理"这一洞见，已经成为所有现代推理引擎的共同底座。
+
+## 9. 自测（答案点击展开）
+
+<Expand title="Q1：手算：Llama-2-7B（32 层、32 个 KV 头、head_dim=128、FP16）一条 2048 token 的序列要多少 KV 显存？">
+$2\times32\times32\times128\times2=524{,}288$ B $=512$ KiB/token，乘以 2048 约为 1 GiB。换成 8 个 KV 头的 GQA（Llama-3-8B）则是 128 KiB/token。
+</Expand>
+
+<Expand title="Q2：注意力计算进行到一半发现下一个块还没分配，会触发「缺页」暂停吗？">
+不会，也不允许。PagedAttention 里没有 demand paging：调度器在每步执行**之前**就为要生成的 token 分好物理块，kernel 只拿着块表做间接寻址。它与操作系统缺页中断的本质区别正在于此。
+</Expand>
+
+<Expand title="Q3：FlashAttention 和 PagedAttention 各解决什么问题？能同时用吗？">
+FlashAttention 解决一次注意力计算内部的 HBM 读写趟数（kernel 内的分块与 online softmax）；PagedAttention 解决 KV 的物理摆放与跨请求共享（调度/存储层）。二者正交：今天 vLLM 的 FlashAttention/FlashInfer 后端直接以 block table 为输入，在分页布局上计算。
+</Expand>
+
+<Expand title="Q4：V1 中对同一 prompt 采样多个回答，什么时候才会真正产生第二份 KV 拷贝？">
+在满块边界之前都不会：写满的前缀块不可变、只增引用计数；两条序列从各自写**新块**（最后一个未满块的后续）开始才分别占空间。V1 没有 COW——不是"先共享再复制"，而是"满块只读共享 + 追加天然分叉"。
+</Expand>
+
+<Expand title="Q5：下面三种情况，APC 能命中吗？① 相同句子出现在 prompt 中间；② 前缀只差 3 个 token 但没凑满 16；③ 同样的 token 出现在不同位置。">
+都不命中/不共享：① 只认从头开始的连续前缀；② 只共享写满的整块，未凑满的尾块各算各的（且最后一个 token 总要重算取 logits）；③ RoPE 让不同位置的 KV 不同，而块哈希链式包含父块（位置）信息，哈希本身就不同。
+</Expand>
+
+<Expand title="Q6：V1 里显存不足被抢占的请求，KV 去哪了？V0 有什么不同？">
+V1 只有 recompute：整块释放、进度清零、回队首，之后用 prompt + 已生成文本拼一次 prefill 重建。V0 还支持 swap（整块经 PCIe 换出到预留的 CPU 内存），但默认策略就是 recompute（开销更低，论文实测小块下 swap 更慢），仅 beam 等多序列组才回退 swap；V1 已移除该路径，CPU/远端分层改由显式 KV connector 承担。
+</Expand>
+
+## 10. 参考资料
+
+1. Kwon et al., [Efficient Memory Management for Large Language Model Serving with PagedAttention](https://arxiv.org/abs/2309.06180)（SOSP 2023）
+2. Yu et al., [Orca: A Distributed Serving System for Transformer-Based Generative Models](https://www.usenix.org/conference/osdi22/presentation/yu)（OSDI 2022，USENIX 官方页；该文无 arXiv 预印本，注意与微软 Orca 模型区分）
+3. Dao et al., [FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness](https://arxiv.org/abs/2205.14135)（NeurIPS 2022）
+4. Milakov & Gimelshein, [Online normalizer calculation for softmax](https://arxiv.org/abs/1805.02867)（2018）
+5. Agrawal et al., [SARATHI: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills](https://arxiv.org/abs/2308.16369)
+6. Agrawal et al., [Sarathi-Serve: Piggybacking Decodes for Disaggregated LLM Inference](https://arxiv.org/abs/2403.02310)（OSDI 2024）
+7. Holmes et al., [DeepSpeed-FastGen: High-Throughput Text Generation for LLMs via MII and DeepSpeed-Inference](https://arxiv.org/abs/2401.08671)（Dynamic SplitFuse）
+8. Zhong et al., [DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving](https://arxiv.org/abs/2401.09670)（OSDI 2024）
+9. Qin et al., [Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving](https://arxiv.org/abs/2407.00079)
+10. Zheng et al., [SGLang: Efficient Execution of Structured Language Model Programs](https://arxiv.org/abs/2312.07104)（RadixAttention 为其中的核心机制，MLSys 2024）
+11. 一手实现细节：vLLM 0.21 中文教程《调度与 KV Cache》《注意力后端》《分布式》章节与 `vllm/config/cache.py`、`vllm/v1/core/` 源码
+
+**站内延伸**：[图解大模型（入门篇）](/blog/图解大模型-一口气搞懂大模型的骨架/)（KV Cache 基础）、[注意力机制演进：从 MHA 到 GQA 与 MLA](/blog/注意力机制演进-从mha到gqa与mla/)（少算路线）、[投机解码](/blog/投机解码-小模型打草稿大模型一次批改/)（让一次搬运多产出 token）、[思维链](/blog/思维链-大模型为什么要先想再答/)（长 decode 的容量账）、[推理加速实战专栏](/inference/)。

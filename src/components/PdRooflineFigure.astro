@@ -1,0 +1,34 @@
+---
+// 图4：两本账——同一套权重，prefill 时间花在计算上，decode 时间花在搬运上
+// 两行：搬运条 vs 计算条
+---
+
+<figure>
+  <svg viewBox="0 0 640 266" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">同一套权重，时间花在了两本不同的账上</text>
+      <text x="220" y="52" font-size="11" fill="#64748b" text-anchor="middle">从显存搬运的时间（搬权重 + 读 KV）</text>
+      <text x="500" y="52" font-size="11" fill="#64748b" text-anchor="middle">真正做乘加计算的时间</text>
+
+      {/* Prefill 行 */}
+      <text x="20" y="92" font-size="12" font-weight="bold" fill="#006377">Prefill</text>
+      <text x="20" y="108" font-size="9.5" fill="#94a3b8">n 个词一起</text>
+      <rect x="90" y="82" width="240" height="26" rx="5" fill="#cfe6ee" stroke="#7ec3d8"/>
+      <text x="210" y="100" font-size="10" fill="#006377" text-anchor="middle">搬 1 次，摊给 n 个词</text>
+      <rect x="340" y="82" width="252" height="26" rx="5" fill="#7ec3d8" stroke="#0085a1"/>
+      <text x="466" y="100" font-size="10.5" fill="#fff" text-anchor="middle">n 个词的大矩阵乘，计算单元埋头算</text>
+
+      {/* Decode 行 */}
+      <text x="20" y="166" font-size="12" font-weight="bold" fill="#b97a1f">Decode</text>
+      <text x="20" y="182" font-size="9.5" fill="#94a3b8">每步 1 个词</text>
+      <rect x="90" y="156" width="430" height="26" rx="5" fill="#fde2b8" stroke="#e6a23c"/>
+      <text x="305" y="174" font-size="10.5" fill="#7a5a20" text-anchor="middle">整套权重搬一遍 + 读全部 KV，只为算 1 个新词</text>
+      <rect x="530" y="156" width="62" height="26" rx="5" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="561" y="174" font-size="10" fill="#b97a1f" text-anchor="middle">计算很少</text>
+
+      <line x1="40" y1="208" x2="600" y2="208" stroke="#e2e8f0"/>
+      <text x="60" y="232" font-size="11" fill="#475569">计算单元大多时间在等数据 → decode 叫「带宽受限（memory-bound）」；prefill 叫「算力受限（compute-bound）」</text>
+      <text x="60" y="252" font-size="10.5" fill="#94a3b8">分界线叫「算术强度」（每搬 1 字节能做几次乘加）；凑一大批请求一起 decode，就是把搬运成本摊薄</text>
+    </g>
+  </svg>
+</figure>

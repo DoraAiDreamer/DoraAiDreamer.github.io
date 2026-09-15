@@ -1,0 +1,51 @@
+---
+// 图3：同一个下三角——prefill 一次填满 vs decode 一行行追加
+// 上半：prefill 一次填满下三角；下半：decode 每步追加一行
+---
+
+<figure>
+  <svg viewBox="0 0 640 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">同一个注意力「三角形」，两种填法</text>
+
+      {/* 上半 prefill */}
+      <text x="20" y="64" font-size="11.5" font-weight="bold" fill="#006377">Prefill：一次填满</text>
+      <g transform="translate(210,44)">
+        {/* 4x4 下三角格子 */}
+        {[0,1,2,3].map((r)=>
+          [0,1,2,3].map((c)=>{
+            const filled = c<=r;
+            return <rect x={c*26} y={r*22} width="24" height="20" rx="3"
+                     fill={filled?"#7ec3d8":"#f4f6f8"} stroke={filled?"#0085a1":"#e2e8f0"}/>;
+          })
+        )}
+        <text x="130" y="30" font-size="10" fill="#475569">4 个已知词同时算</text>
+        <text x="130" y="52" font-size="10" fill="#475569">每格 = 一次 Q·K 比对</text>
+        <text x="130" y="74" font-size="10" fill="#b14a4a">只需最下面一行的输出分布</text>
+      </g>
+
+      {/* 分隔线 */}
+      <line x1="40" y1="150" x2="600" y2="150" stroke="#e2e8f0"/>
+
+      {/* 下半 decode：每步追加一行 */}
+      <text x="20" y="180" font-size="11.5" font-weight="bold" fill="#b97a1f">Decode：每步只追加一行</text>
+      <g transform="translate(210,166)">
+        {[0,1,2,3,4].map((r)=>
+          [0,1,2,3,4].map((c)=>{
+            let fill="#f4f6f8", stroke="#e2e8f0";
+            if(c<=r){
+              if(r<=3){fill="#cfe6ee";stroke="#7ec3d8";}
+              if(r===4 && c<=3){fill="#cfe6ee";stroke="#7ec3d8";}
+              if(r===4 && c===4){fill="#fdf0e0";stroke="#e6a23c";}
+            }
+            return <rect x={c*22} y={r*18} width="20" height="16" rx="2" fill={fill} stroke={stroke}/>;
+          })
+        )}
+        {/* 标注新行 */}
+        <path d="M116,76 C128,72 124,72 112,70" fill="none"/>
+        <text x="136" y="70" font-size="10" fill="#b97a1f">新行 = 新 token 对全部历史</text>
+        <text x="136" y="86" font-size="10" fill="#94a3b8">输入要等上一步采样出来才能算</text>
+      </g>
+    </g>
+  </svg>
+</figure>

@@ -1,0 +1,40 @@
+---
+// 图5：KV 接力棒——prefill 写 n 行、decode 读全量并追加、前缀复用/跨机传输
+---
+
+<figure>
+  <svg viewBox="0 0 640 230" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="pd5-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">KV Cache：两个阶段之间唯一的接力棒</text>
+
+      {/* Prefill 写 */}
+      <rect x="30" y="70" width="120" height="70" rx="9" fill="#d9eef3" stroke="#0085a1" stroke-width="1.6"/>
+      <text x="90" y="98" font-size="11.5" font-weight="bold" fill="#006377" text-anchor="middle">Prefill</text>
+      <text x="90" y="116" font-size="10" fill="#006377" text-anchor="middle">一次写出 n 行 KV</text>
+
+      {/* KV 存储 */}
+      <rect x="230" y="56" width="180" height="98" rx="10" fill="#f7fbfc" stroke="#7ec3d8" stroke-width="1.6"/>
+      <text x="320" y="78" font-size="11" font-weight="bold" fill="#006377" text-anchor="middle">KV Cache</text>
+      {[0,1,2,3,4].map((i)=>(
+        <rect x={246+i*34} y="90" width="30" height="22" rx="4" fill="#cfe6ee" stroke="#7ec3d8"/>
+      ))}
+      {[0,1].map((i)=>(
+        <rect x={246+i*34} y="118" width="30" height="22" rx="4" fill="#fdf0e0" stroke="#e6c388"/>
+      ))}
+
+      {/* Decode 读+追加 */}
+      <rect x="490" y="70" width="120" height="70" rx="9" fill="#fdf0e0" stroke="#e6a23c" stroke-width="1.6"/>
+      <text x="550" y="98" font-size="11.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">Decode</text>
+      <text x="550" y="116" font-size="10" fill="#b97a1f" text-anchor="middle">每步读全量 + 追加 1 行</text>
+
+      <line x1="150" y1="105" x2="226" y2="105" stroke="#0085a1" stroke-width="1.6" marker-end="url(#pd5-arw)"/>
+      <line x1="410" y1="105" x2="486" y2="105" stroke="#e6a23c" stroke-width="1.6" marker-end="url(#pd5-arw)"/>
+      <path d="M490,130 C460,172 430,170 408,140" fill="none" stroke="#e6a23c" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#pd5-arw)"/>
+      <text x="500" y="176" font-size="9.5" fill="#b97a1f">追加的行也回写缓存</text>
+
+      <text x="60" y="202" font-size="10.5" fill="#475569">· 前缀相同 → 直接复用已算好的蓝块（APC），prefill 变短（只利首字延迟，末尾仍要重算）</text>
+      <text x="60" y="222" font-size="10.5" fill="#475569">· prefill/decode 分到不同机器时，这根棒子要经高速网络按块搬过去（PD 分离）</text>
+    </g>
+  </svg>
+</figure>

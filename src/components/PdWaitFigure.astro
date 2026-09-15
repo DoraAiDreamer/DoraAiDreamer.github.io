@@ -1,0 +1,36 @@
+---
+// 图1：用户体感时间线——先等待（TTFT），再逐字蹦（ITL）
+---
+
+<figure>
+  <svg viewBox="0 0 640 210" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="pd1-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">你看到的流式回答：两种完全不同的等待</text>
+
+      <line x1="40" y1="120" x2="612" y2="120" stroke="#cbd5e1" stroke-width="2"/>
+
+      {/* 发送 */}
+      <circle cx="56" cy="120" r="6" fill="#475569"/>
+      <text x="56" y="150" font-size="10.5" fill="#475569" text-anchor="middle">发送</text>
+
+      {/* TTFT 段 */}
+      <rect x="66" y="106" width="200" height="28" rx="14" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="166" y="125" font-size="11" fill="#b97a1f" text-anchor="middle">转圈等待：首 token 延迟 TTFT</text>
+      <text x="166" y="92" font-size="10" fill="#94a3b8" text-anchor="middle">排队 + 读完整个 prompt（prefill）</text>
+
+      {/* 首 token */}
+      <circle cx="290" cy="120" r="6" fill="#0f9d68"/>
+      <text x="290" y="150" font-size="10.5" fill="#0a7a50" text-anchor="middle">第一个字</text>
+
+      {/* ITL 段：逐字 */}
+      {[0,1,2,3,4,5].map((i)=>(
+        <g>
+          <circle cx={330+i*44} cy="120" r="5" fill="#7ec3d8"/>
+          <text x={330+i*44} y="100" font-size="11" fill="#006377" text-anchor="middle">{['今','天','天','气','很','好'][i]}</text>
+        </g>
+      ))}
+      <text x="462" y="150" font-size="10.5" fill="#006377" text-anchor="middle">字与字间隔 ITL（decode）</text>
+    </g>
+  </svg>
+</figure>

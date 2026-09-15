@@ -1,0 +1,70 @@
+---
+// 图2：储物柜 → block table 映射
+// 两个请求的逻辑序列各自连续，物理块可以交错摆放
+---
+
+<figure>
+  <svg viewBox="0 0 640 330" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="pa2-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">逻辑上连续的序列，物理上可以放在任意格子里</text>
+
+      {/* 左：两个请求的逻辑视图 */}
+      <text x="120" y="58" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">请求看到的（逻辑顺序）</text>
+      <text x="30" y="92" font-size="11" fill="#006377">A（20 token）</text>
+      {[0,1].map((i)=>(
+        <rect x={96+i*70} y="78" width="62" height="30" rx="6" fill="#d9eef3" stroke="#0085a1"/>
+      ))}
+      <text x="104" y="98" font-size="10" fill="#006377">A 块 0</text>
+      <text x="174" y="98" font-size="10" fill="#006377">A 块 1（4/16）</text>
+
+      <text x="30" y="152" font-size="11" fill="#b97a1f">B（7 token）</text>
+      <rect x="96" y="138" width="62" height="30" rx="6" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="127" y="158" font-size="10" fill="#b97a1f" text-anchor="middle">B 块 0</text>
+
+      {/* block table：两张取物单 */}
+      <text x="300" y="58" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">block table（取物单）</text>
+      <rect x="256" y="70" width="88" height="98" rx="8" fill="#f7fbfc" stroke="#7ec3d8"/>
+      <text x="300" y="88" font-size="10.5" fill="#006377" text-anchor="middle">A：[7]→[2]</text>
+      <line x1="268" y1="96" x2="332" y2="96" stroke="#e2e8f0"/>
+      <text x="300" y="116" font-size="10" fill="#64748b" text-anchor="middle">逻辑第 0 块 → 物理 7 号</text>
+      <text x="300" y="136" font-size="10" fill="#64748b" text-anchor="middle">逻辑第 1 块 → 物理 2 号</text>
+      <text x="300" y="158" font-size="9.5" fill="#94a3b8" text-anchor="middle">格子号不用挨着</text>
+
+      <rect x="256" y="138" width="0" height="0"/>
+      <rect x="356" y="130" width="88" height="46" rx="8" fill="#fdf8f0" stroke="#e6c388"/>
+      <text x="400" y="150" font-size="10.5" fill="#b97a1f" text-anchor="middle">B：[5]</text>
+      <text x="400" y="168" font-size="9.5" fill="#94a3b8" text-anchor="middle">→ 物理 5 号</text>
+
+      {/* 右：物理块网格 */}
+      <text x="545" y="58" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">显存里的物理块</text>
+      {Array.from({length: 16}).map((_,i)=>{
+        const col=i%4, row=Math.floor(i/4);
+        const x=482+col*38, y=70+row*38;
+        let fill="#f4f6f8", stroke="#cbd5e1", t=`${i}`, tcol="#94a3b8";
+        if(i===7){fill="#d9eef3";stroke="#0085a1";t="A0";tcol="#006377";}
+        if(i===2){fill="#d9eef3";stroke="#0085a1";t="A1";tcol="#006377";}
+        if(i===5){fill="#fdf0e0";stroke="#e6a23c";t="B0";tcol="#b97a1f";}
+        return (
+          <g>
+            <rect x={x} y={y} width="32" height="32" rx="5" fill={fill} stroke={stroke}/>
+            <text x={x+16} y={y+14} font-size="8.5" fill={tcol} text-anchor="middle">{t}</text>
+            <text x={x+16} y={y+25} font-size="7.5" fill={tcol} text-anchor="middle">{i}</text>
+          </g>
+        );
+      })}
+
+      {/* 箭头：取物单 → 物理块 */}
+      <path d="M344,96 C400,96 440,86 478,86" fill="none" stroke="#7ec3d8" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#pa2-arw)"/>
+      <path d="M344,140 C420,150 440,178 478,178" fill="none" stroke="#7ec3d8" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#pa2-arw)"/>
+      <path d="M444,152 C460,152 470,140 480,136" fill="none" stroke="#e6c388" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#pa2-arw)"/>
+
+      <line x1="40" y1="248" x2="600" y2="248" stroke="#e2e8f0"/>
+      <g font-size="11" fill="#475569">
+        <text x="60" y="272">· 每格固定放 16 个 token 的 KV，新写满一格才领下一格，无需整块预留</text>
+        <text x="60" y="294">· 每个请求最多剩 1 个没写满的尾块；格子同样大，不存在「坐不进的缝隙」（无外部碎片）</text>
+        <text x="60" y="316">· 注意：不是真的缺页——格子由调度器在每步计算前提前分好，注意力 kernel 只按单子取货</text>
+      </g>
+    </g>
+  </svg>
+</figure>

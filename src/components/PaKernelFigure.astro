@@ -1,0 +1,64 @@
+---
+// 图3：kernel 直觉——照单取货、边翻格子边记账（rescale），算完与连续摆放等价
+---
+
+<figure>
+  <svg viewBox="0 0 640 286" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">注意力怎么读散落的格子：照单取货，边取边记账</text>
+
+      {/* 当前 token 的 Q */}
+      <rect x="30" y="120" width="76" height="44" rx="9" fill="#d9eef3" stroke="#0085a1" stroke-width="1.6"/>
+      <text x="68" y="140" font-size="11" fill="#006377" text-anchor="middle">当前 token</text>
+      <text x="68" y="156" font-size="11" fill="#006377" text-anchor="middle">的 Q</text>
+
+      {/* 取物单 */}
+      <rect x="140" y="92" width="86" height="100" rx="8" fill="#f7fbfc" stroke="#7ec3d8"/>
+      <text x="183" y="112" font-size="10.5" font-weight="bold" fill="#006377" text-anchor="middle">block table</text>
+      {[0,1,2,3].map((i)=>(
+        <g>
+          <rect x="154" y={120+i*17} width="58" height="14" rx="3" fill="#fff" stroke="#cbd5e1"/>
+          <text x="183" y={131+i*17} font-size="9" fill="#475569" text-anchor="middle">逻辑{i} → 物理{[7,2,11,5][i]}</text>
+        </g>
+      ))}
+
+      {/* 散落物理块 */}
+      {[
+        {x:286,y:64, n:7, c:"#d9eef3", s:"#0085a1"},
+        {x:392,y:96, n:2, c:"#d9eef3", s:"#0085a1"},
+        {x:300,y:160, n:11, c:"#d9eef3", s:"#0085a1"},
+        {x:412,y:184, n:5, c:"#d9eef3", s:"#0085a1"},
+      ].map((b)=>(
+        <g>
+          <rect x={b.x} y={b.y} width="64" height="34" rx="7" fill={b.c} stroke={b.s}/>
+          <text x={b.x+32} y={b.y+15} font-size="9.5" fill="#006377" text-anchor="middle">物理块 {b.n}</text>
+          <text x={b.x+32} y={b.y+27} font-size="8.5" fill="#5b7a86" text-anchor="middle">16 token 的 K/V</text>
+        </g>
+      ))}
+
+      {/* 箭头 Q -> 单子 -> 块 */}
+      <line x1="106" y1="142" x2="138" y2="142" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#pa3-arw)"/>
+      <path d="M226,130 C256,110 262,86 284,80" fill="none" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#pa3-arw)"/>
+      <path d="M226,150 C300,150 360,110 390,112" fill="none" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#pa3-arw)"/>
+      <path d="M226,160 C262,170 276,172 298,174" fill="none" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#pa3-arw)"/>
+      <path d="M226,170 C310,200 380,204 410,202" fill="none" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#pa3-arw)"/>
+
+      {/* 小账本 */}
+      <rect x="510" y="92" width="104" height="104" rx="8" fill="#fff8ee" stroke="#e6a23c"/>
+      <text x="562" y="112" font-size="10.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">小账本</text>
+      <text x="562" y="132" font-size="9.5" fill="#7a5a20" text-anchor="middle">当前最大分 m</text>
+      <text x="562" y="152" font-size="9.5" fill="#7a5a20" text-anchor="middle">加权和 l</text>
+      <text x="562" y="176" font-size="9.5" fill="#b97a1f" text-anchor="middle">遇到更大的 m，</text>
+      <text x="562" y="190" font-size="9.5" fill="#b97a1f" text-anchor="middle">旧账整体重标刻度</text>
+      <line x1="458" y1="140" x2="508" y2="146" stroke="#e6a23c" stroke-width="1.4" marker-end="url(#pa3-arw)"/>
+
+      <defs><marker id="pa3-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
+
+      <line x1="40" y1="232" x2="600" y2="232" stroke="#e2e8f0"/>
+      <g font-size="11" fill="#475569">
+        <text x="60" y="254">· 一个 warp 处理一个物理块：块内 token 连续摆放，可以一次性读入；格子之间靠单子跳转</text>
+        <text x="60" y="274">· 翻完所有格子时账已算完——和 K/V 连续摆放时数学上是同一个注意力函数（浮点累加顺序不同，非逐 bit 一致）</text>
+      </g>
+    </g>
+  </svg>
+</figure>

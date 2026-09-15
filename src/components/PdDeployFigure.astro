@@ -1,0 +1,54 @@
+---
+// 图6：三种部署形态——同卡混跑（小规模）/ chunked 混批 / PD 分离（大规模）
+---
+
+<figure>
+  <svg viewBox="0 0 640 272" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="pd6-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">三种部署形态（没有默认最优，按规模选）</text>
+
+      {/* 1. 同卡混跑 */}
+      <rect x="18" y="46" width="190" height="150" rx="10" fill="#f7fbfc" stroke="#7ec3d8"/>
+      <text x="113" y="70" font-size="11.5" font-weight="bold" fill="#006377" text-anchor="middle">① 同卡混跑</text>
+      <rect x="40" y="84" width="146" height="26" rx="6" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="113" y="102" font-size="9.5" fill="#006377" text-anchor="middle">P 块 + D 步 排一队</text>
+      <rect x="40" y="118" width="146" height="26" rx="6" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="113" y="136" font-size="9.5" fill="#b97a1f" text-anchor="middle">请求少、统计复用</text>
+      <text x="113" y="166" font-size="9.5" fill="#475569" text-anchor="middle">小规模最省钱</text>
+      <text x="113" y="184" font-size="9.5" fill="#b14a4a" text-anchor="middle">长 prompt 会拖累全队</text>
+
+      {/* 2. chunked 混批 */}
+      <rect x="225" y="46" width="190" height="150" rx="10" fill="#fffdf6" stroke="#e6c388"/>
+      <text x="320" y="70" font-size="11.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">② Chunked 混批</text>
+      {[
+        {y:84, a:"#d9eef3", s:"#0085a1", t:"P 切块"},
+        {y:102, a:"#fdf0e0", s:"#e6a23c", t:"D"},
+        {y:120, a:"#d9eef3", s:"#0085a1", t:"P 切块"},
+        {y:138, a:"#fdf0e0", s:"#e6a23c", t:"D D"},
+      ].map((r)=>(
+        <rect x="247" y={r.y} width="146" height="15" rx="4" fill={r.a} stroke={r.s}/>
+      ))}
+      <text x="320" y="112" font-size="8" fill="#006377" text-anchor="middle"></text>
+      <text x="320" y="178" font-size="9.5" fill="#475569" text-anchor="middle">长 prompt 切块插进 decode 流</text>
+      <text x="320" y="190" font-size="9.5" fill="#b14a4a" text-anchor="middle">代价：被插队那步 ITL 鼓包</text>
+
+      {/* 3. PD 分离 */}
+      <rect x="432" y="46" width="190" height="150" rx="10" fill="#f4fbf7" stroke="#8fd3b6"/>
+      <text x="527" y="70" font-size="11.5" font-weight="bold" fill="#0a7a50" text-anchor="middle">③ Prefill / Decode 分离</text>
+      <rect x="454" y="84" width="62" height="40" rx="7" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="485" y="102" font-size="9.5" fill="#006377" text-anchor="middle">P 池</text>
+      <text x="485" y="115" font-size="8.5" fill="#006377" text-anchor="middle">高算力卡</text>
+      <rect x="538" y="84" width="62" height="40" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="569" y="102" font-size="9.5" fill="#b97a1f" text-anchor="middle">D 池</text>
+      <text x="569" y="115" font-size="8.5" fill="#b97a1f" text-anchor="middle">大显存池</text>
+      <path d="M516,118 C520,140 534,140 538,118" fill="none" stroke="#0f9d68" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#pd6-arw)"/>
+      <text x="527" y="146" font-size="8.5" fill="#0a7a50" text-anchor="middle">KV 走高速网络</text>
+      <text x="527" y="178" font-size="9.5" fill="#475569" text-anchor="middle">高 QPS 大机队：各自最优配置</text>
+      <text x="527" y="190" font-size="9.5" fill="#b14a4a" text-anchor="middle">权重双份常驻，要 RDMA</text>
+
+      <text x="320" y="232" font-size="10.5" fill="#64748b" text-anchor="middle">②是今天 vLLM 的默认调度方式；③提升的是满足延迟 SLO 的有效吞吐（goodput），不是裸吞吐，小集群上①反而更优</text>
+      <text x="320" y="252" font-size="10" fill="#94a3b8" text-anchor="middle">P = Prefill（处理输入）　D = Decode（生成输出）</text>
+    </g>
+  </svg>
+</figure>

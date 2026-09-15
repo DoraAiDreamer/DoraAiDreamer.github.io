@@ -1,0 +1,307 @@
+---
+title: "一次推理的旅程：Prefill 与 Decode"
+subtitle: "为什么大模型「先卡顿、再蹦字」——处理输入和生成输出是两种完全不同的计算"
+date: 2026-09-16
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "vLLM"
+  - "Prefill"
+  - "Decode"
+  - "推理优化"
+  - "KV Cache"
+---
+
+import Expand from "../../components/Expand.astro";
+import PdWaitFigure from "../../components/PdWaitFigure.astro";
+import PdJourneyFigure from "../../components/PdJourneyFigure.astro";
+import PdTriangleFigure from "../../components/PdTriangleFigure.astro";
+import PdRooflineFigure from "../../components/PdRooflineFigure.astro";
+import PdHandoverFigure from "../../components/PdHandoverFigure.astro";
+import PdDeployFigure from "../../components/PdDeployFigure.astro";
+
+用流式输出时，每个人都见过这个节奏：问题发出去，先对着转圈等几秒，然后文字才一个字一个字蹦出来。
+
+这两段等待的性质完全不同。前面那几秒，模型在**一次性读完你的整段输入**；后面蹦字的过程，模型在**一个词一个词地往外生成**。它们在 vLLM 等推理引擎里有专门的名字：**Prefill（预填充）** 和 **Decode（解码）**。理解这一对概念，是理解所有推理优化（连续批处理、PagedAttention、投机解码、PD 分离、思维链成本）的总开关——后面这些技术，治的都是这两段里的某一段。
+
+<Expand title="术语速查（先扫一眼，读完全文再回看）">
+
+- **Prefill**：模型处理输入 prompt 的第一次前向，n 个 token 一起算。
+- **Decode**：之后逐 token 生成的每一步，每步只进一个新词。
+- **logits**：模型对下一个词的原始打分（入门篇第 8 节讲过的「原始分数」）。
+- **HBM**：显卡上的高带宽显存（如 H100 的 80GB），离计算单元近、带宽高但容量小。
+- **算术强度**：每从显存搬进芯片 1 字节数据，计算单元能拿它做多少次乘加。
+- **TTFT / ITL**：Time To First Token（首 token 延迟）/ Inter-Token Latency（词间延迟，也叫 TPOT/TBT）。
+
+</Expand>
+
+## 1. 全景：一次请求经历了什么
+
+先用一句话把旅程走完：
+
+**文本 → 分词 → Prefill（第一次前向）→ Decode 循环（采样一个、再前向一次）→ 增量拼回文本**。
+
+1. **分词（tokenize）**：你的输入被切成 token ID（入门篇讲过）；
+2. **Prefill**：$n$ 个输入 token 组成一个矩阵，**一次性**通过整个网络。模型在这一步做完两件事：算出第一个新词的打分，并为全部 $n$ 个位置写好 KV Cache；
+3. **Decode**：从打分里采样出第 1 个新词，把它作为下一步的唯一新输入，再跑一次网络得到第 2 个词……如此循环，直到采样出结束符或达到长度上限；
+4. **拼回文本（detokenize）**：生成的 token 边出边转回文字，通过流式接口推给你。
+
+先澄清一个常见误解：**整个过程只有前向计算，没有反向传播，模型权重一个字节都不会改**。打个比方，推理时的模型像一本字典，你只查不改；训练才是重写字典。所以 Prefill 和训练虽然都是"一次喂很多 token"，但本质完全不同——Prefill 不更新任何参数。
+
+<PdJourneyFigure />
+
+*图 1：一次请求的计算旅程。Prefill 一生一次，Decode 重复 $m$ 次；KV Cache 是贯穿两者的绶带。*
+
+读完下面两节，我们再回来把这张表填上。
+
+| 阶段 | 一次吃进几个 token | 并行还是串行 | 主要在等什么 | 你感知到的指标 |
+| --- | --- | --- | --- | --- |
+| Prefill | ？ | ？ | ？ | ？ |
+| Decode | ？ | ？ | ？ | ？ |
+
+## 2. Prefill：把 prompt 一次性「读完」
+
+### 2.1 为什么 $n$ 个词能一次并行算完
+
+用入门篇里的例子，输入是「今天天气」4 个 token。关键事实是：**这 4 个词在请求开始时就已经全部存在了**（是你给的），所以它们的向量可以组成一个 $[n,d]$ 矩阵，作为一次大矩阵乘法通过网络。
+
+这里要纠正一个容易理解反的因果：**不是因为有因果掩码才能并行，而是因为输入本来就全部已知。**
+
+- 并行的真正来源：$n$ 个已知输入天然可以组成一批矩阵运算一次算完；
+- 因果掩码的作用：保证位置 $i$ 在计算时只能看到 $\le i$ 的内容，从而让"并行算出的结果"和"一个位置一个位置串行算出的结果"完全等价。一个反证是：双向注意力模型（如 BERT）根本不用因果掩码，照样整序列并行。
+
+至于注意力的开销：$n$ 个 query 对 $n$ 个 key，形成 $n\times n$ 个比对格——**句子长度翻倍，这部分计算变四倍**。完整的分层账本放折叠区，正文记住"$n\times n$ 个格子"即可。
+
+<Expand title="折叠：Prefill 的完整计算账本">
+
+每个 Transformer 层里：
+- 注意力的打分与加权（$QK^\top$、softmax·$V$）：$O(n^2d)$（因果掩码把格子减半，不改变量级）；
+- Q/K/V/输出四个投影，以及 FFN：都是 $O(nd^2)$（与序列长度 $n$ 线性、与隐藏维 $d$ 平方）。
+
+两者的交叉点大约在 $n\approx d$：常规 prompt（$n$ 几百到几千、$d$ 为 4k–8k）下投影和 FFN 的总计算量占大头；当上下文极长（$n\gg d$）时，$n^2$ 的注意力项反超——这正是 FlashAttention 要解决的问题（它减少的是 $n\times n$ 中间矩阵的显存读写，不减少浮点计算量）。
+
+</Expand>
+
+### 2.2 Prefill 产出什么
+
+两样东西：
+
+1. **最后一个位置的 logits**：即"prompt 之后该接哪个词"的概率分布，交给采样器决定第一个输出 token。prompt 自己各个位置的 logits 在推理时默认是不算/丢弃的（vLLM 只对采样位置切片过 LM Head）；只有请求 prompt logprobs、模型训练、以及[投机解码](/blog/投机解码-小模型打草稿大模型一次批改/)的校验前向才需要它们——顺带一提，投机校验一次处理 1+k 个候选，形状上就是一次 Prefill。
+2. **整页 KV Cache**：$n$ 个位置的 Key/Value 全部写好，供后面每一步 Decode 反复读。
+
+所以 prompt 越长（长文档、多轮历史、多模态的成百上千图像 token），Prefill 越贵，你等第一个字的时间越长。
+
+<PdTriangleFigure />
+
+*图 2：同一个注意力「三角形」。上——Prefill 一次填满整页下三角，但只用最后一行的输出；下——Decode 每步在底部追加一行。*
+
+## 3. Decode：一个词一个词「往外挤」
+
+### 3.1 为什么不能一口气把整句话生成完
+
+接着「今天天气」的例子：Prefill 算完，采样器选出第 5 个词是「很」，下一步要以「很」为输入算「好」。
+
+关键在于：**在「很」被采样出来之前，下一步的输入向量根本不存在。** 这不是"不能看未来"的掩码问题，而是"这一步要拿什么去算"都还没决定——矩阵乘法无法对一个尚不存在的输入开算。
+
+一句话钉死：**Prefill 的并行是"并行处理 $n$ 个已知的输入位置"，不是"并行生成 $n$ 个新词"。** 自回归的因果链决定了：$m$ 个输出词，至少要 $m$ 次前向，一次都省不掉（投机解码省的是这些前向的墙钟时间，不是次数）。
+
+### 3.2 单步的形状：极小输入，极大搬运
+
+Decode 每一步的输入只有"上一步选中的那 1 个 token"（批处理时形状是 $[B,1,d]$，$B$ 个请求各出一个词），输出是这一个新词的 logits 和它的一行新 KV。
+
+计算量小得可怜，但每一步都要：
+
+1. **把本卡上的模型权重从 HBM 完整搬到计算单元一遍**；
+2. **读取当前全部历史 KV**（$n+t$ 个位置）做注意力；
+3. 把新的一行 K/V 追加进缓存。
+
+这就引出全文最重要的一笔账。以稠密（dense）70B 模型、FP16 为例：权重约 140GB，H100 SXM 的显存带宽约 3.35TB/s，光把权重搬一遍的理论下限就是 $140/3.35\approx42\text{ms}$——而真正用于这 1 个词的乘加计算，占比很小。
+
+三条限定必须一起记住：①这是**只算权重、batch=1、假设带宽跑满**的理论下限，真实延迟还要加 KV 读取、采样、多卡通信；②真实部署 70B 多为张量并行，每卡搬的字节和算力同比缩小，界限性质不变；③超长上下文时读 KV 的流量可能超过权重（FP8 量化则把权重时间减半）。
+
+<PdWaitFigure />
+
+*图 3：用户体感的两段等待——转圈对应 Prefill（含排队），逐字间隔对应 Decode。*
+
+几何地看复杂度：每一步注意力都要扫过 $n+t$ 个历史位置，相当于在图 2 的三角形底部**加一行越来越长的新格子**。单步是 $O(n+t)$，生成 $m$ 个词累计约 $O(mn+m^2)$（$m\gg n$ 时近似平方）；KV 存储则线性增长 $O(n+m)$。这就是[《思维链》](/blog/思维链-大模型为什么要先想再答/)里 $m$ 被推到上万时成本爆炸的根源（投影部分的累计量 $O(md^2)$ 是浮点账，实际墙钟时间通常被"权重搬 $m$ 次"淹没，别把 FLOPs 和时间混为一谈）。
+
+<Expand title="折叠：KV 到底多大（一个会反复用到的数）">
+
+每个 token 的 KV 字节数：
+
+$$
+2\times\text{层数}\times\text{KV 头数}\times d_{\text{head}}\times\text{精度字节数}
+$$
+
+- Llama-2-7B（MHA）：约 **512 KiB/token**，单条 2K 序列约 1 GiB；
+- Llama-3-8B（GQA，8 个 KV 头）：约 **128 KiB/token**；
+- Llama-2-70B 级 GQA 模型：约 **320 KiB/token**——一条 8K 上下文约 2.6GB、32K 约 10GB。
+
+KV 头数（GQA/MLA）直接决定这个数，这也是后面「治病地图」里 GQA/MLA 的位置。
+
+</Expand>
+
+## 4. 同一次前向，两本不同的账
+
+现在可以给前两节命名了。先用一个生活类比建立直觉——**开卷考试**：
+
+- 考场的桌子极小（芯片片上内存），所有参考书都在远处的书架上（**HBM 显存**），书架到桌子每趟能搬的书有限（**带宽**）；
+- **Prefill 像一口气并行答 $n$ 道题**：参考书搬一次、摊在桌上，被 $n$ 道题反复共用，搬运成本被摊薄，考生（计算单元）埋头做题、根本不抬头——时间主要花在**计算**上，叫**算力受限（compute-bound）**；
+- **Decode 像每次只准答 1 道题，但每答一道都要把全部参考书和历史笔记重新搬上桌**：题很快就答完了，大部分时间在等书——叫**带宽受限（memory-bound）**。
+
+衡量"等书还是等做题"的标尺叫**算术强度**：每搬进芯片 1 字节，计算单元能做多少次乘加。强度低（Decode，几字节才换一次计算）→ 被带宽卡死；强度高（Prefill，搬进来的每批数据被 $n$ 个位置反复用）→ 被算力卡死。
+
+<PdRooflineFigure />
+
+*图 4：同一套权重，Prefill 的时间条以计算为主，Decode 的时间条以搬运为主。*
+
+一句收口：**同一个模型、同样的权重，单次前向处理的 token 行数决定了 GPU 是"算不过来"还是"等货上门"。** 这也解释了为什么所有推理优化手段天然分成两堆，分别治这两段。
+
+<Expand title="折叠：屋顶图（roofline）与六个「结论翻转」的例外">
+
+把算术强度画在横轴、可达性能画在纵轴，是一条折线：左边是带宽墙（性能=带宽×算术强度），右边是算力墙（峰值 FLOPs），折点在 H100（BF16 dense）约 **295 FLOP/byte**、A100 约 156（FP8 折点翻倍）。
+
+「Prefill 算力受限、Decode 带宽受限」是**典型稠密模型、中等 batch 的一阶近似**，边界条件要知道：
+
+1. **很短的 Prefill**：单次前向总 token 数太少（小 prompt、小 chunk），大矩阵乘喂不饱，加上 kernel 启动开销，也可能卡在带宽——杠杆是总 token 数 $n\cdot B$，不是 batch 本身；
+2. **很大的 Decode batch**：权重搬运被 $B$ 个请求摊薄，算术强度随 $B$ 升高，理论上可以越过折点转为算力受限——这正是 continuous batching 有效的原理（注意反向刹车：每步 KV 读取随 $B\cdot(n+t)$ 线性增长，会给算术强度设一个渐近天花板，70B 级模型通常先被 KV 容量卡住）；
+3. **MoE 模型**（DeepSeek-V3/R1 类）：每个 token 只激活 top-k 个专家，单步并不读全部专家权重（42ms 锚点不适用），但专家并行的 all-to-all 通信让 Decode 往往更受带宽/通信约束；
+4. **超长上下文**：单步 KV 读取可能超过权重字节——稠密 70B 单条请求要约 44 万 token 才越线，但 7B MHA（约 512KB/token）约 2.8 万 token 就到；batch=64、均长 4K 时聚合 KV 已约 80GB，与权重同量级；
+5. **注意力算子自身**：朴素实现要把 $n\times n$ 的分数矩阵物化到 HBM，Prefill 阶段的注意力层本身反而是 IO 受限的——FlashAttention 用分块融合治这个；"Prefill 算力受限"是投影/FFN 主导下的整阶段结论；
+6. **多模态**：图像/视频 token（数百到上万）让 Prefill 更重，强化而非推翻结论。
+
+这套两段结构与显卡型号无关，手机、Mac、H100 都成立，只是折点数字不同。
+
+</Expand>
+
+## 5. 收束：两阶段对照表
+
+把第 1 节那张表的问号填上：
+
+| 维度 | Prefill | Decode |
+| --- | --- | --- |
+| 输入形状 | $[n,d]$：整段 prompt | $[B,1,d]$：每请求 1 个新词 |
+| 请求内并行性 | $n$ 个已知位置并行 | 严格串行（下一步依赖上一步采样） |
+| 算术强度 | 高，$\propto n\cdot B$ | 低，$\propto B$ |
+| 典型瓶颈 | 计算受限（注意力层自身 IO 受限） | 带宽受限（搬权重 + 读 KV） |
+| 注意力开销 | $n\times n$ 格，$O(n^2d)$ | 单步 $O(n+t)$，累计 $O(mn+m^2)$ |
+| KV 角色 | 一次写出整页 | 每步读全量 + 追加一行 |
+| 产出 | 首词 logits + 全部 KV | 每个后续词的 logits + 一行 KV |
+| 延迟指标 | TTFT（首 token 延迟） | ITL/TPOT（词间延迟） |
+| 变长的影响 | prompt 越长越贵 | 输出越长，步数越多 |
+
+## 6. KV Cache：两阶段之间唯一的接力棒
+
+Prefill 和 Decode 不是两个独立程序，它们靠 KV Cache 交接：Prefill 一次写出 $n$ 行，Decode 每一步读完全部历史、再追加 1 行。
+
+这根接力棒带来两个直接的工程后果：
+
+- **前缀可以不重算**：如果新请求的开头与之前算过的逐 token 相同（同一个 system prompt、多轮对话的历史），对应的满块 KV 可以直接复用，Prefill 因此变短（vLLM 的 APC，机制细节见[《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存/)）。注意它只省 Prefill：即使全部命中，最后一个 token 仍要重算（要出新 logits），且只缓存写满的整块——**它改善 TTFT，对 ITL 没有帮助**；命中率在不同业务里可以从接近 0 到很高，共享 system prompt/tools 的场景最稳。
+- **两阶段可以分家**：把 Prefill 和 Decode 放到不同机器上，Prefill 算好的 KV 就要经网络搬给 Decode 机器——这就是第 7 节的 PD 分离。
+
+<PdHandoverFigure />
+
+*图 5：Prefill 写、Decode 读+追加、前缀复用与跨机传输，都是在传递同一根棒子。*
+
+KV 在显存里怎么分页、怎么共享、怎么回收，本文不展开——那是 PagedAttention 的主场。
+
+## 7. 工程后果地图：每种优化在治哪一段
+
+按"治 Prefill / 治 Decode / 治 KV 状态"分三组，比记一堆名词清楚。
+
+### ① 让搬运变少
+
+- **GQA / MLA / MQA**（[注意力机制演进](/blog/注意力机制演进-从mha到gqa与mla/)）：减少 KV 头数，直接砍掉每个 token 的 KV 字节——主要减轻 Decode 的 KV 读取，也让 PD 传输更便宜；
+- **权重量化**（FP8/INT8，[量化文章](/blog/大模型量化-用更少的显存跑更大的模型/)）：砍的是权重字节，直接缩短 Decode 的搬权重时间（42ms 减半）；
+- **KV 量化**：另一条独立路线，砍的是 KV 字节。三类优化砍的不是同一种东西，别混为一谈。
+
+### ② 把固定搬运摊薄
+
+- **连续批处理（continuous batching）**：出自 [Orca](https://www.usenix.org/conference/osdi22/presentation/yu)（OSDI 2022，论文叫 iteration-level scheduling，"continuous batching"是后来叫开的名字）。单个请求的 Decode 在等显存，但一张卡同时服务几十个请求时，权重搬一遍可以同时喂 $B$ 个请求——第 4 节说的"大 batch 把算术强度抬过折点"就是它的原理。实现上调度器在**每个 token 步**插入新请求、送走已完成的（Orca 称之为 selective batching），而不是等一整批跑完。
+- **Chunked Prefill**：长 prompt 的 Prefill 又长又重，如果让它一口气跑完，同卡所有 Decode 请求当步都被堵住、ITL 出现尖峰。做法是把 Prefill 切成固定预算的小块，逐块插进 Decode 流里（[Sarathi](https://arxiv.org/abs/2308.16369) 预印本提出，[Sarathi-Serve](https://arxiv.org/abs/2403.02310) 与 DeepSpeed 的 [SplitFuse](https://arxiv.org/abs/2401.08671) 独立发展了同构思想）。它是一个 **TTFT↔ITL 的双向旋钮**：块预算小则 Decode 平稳但 Prefill 被切更多步、TTFT 变长，反之亦然。切块不增加注意力总算力（忽略 padding，跨块 dense + 块内三角严格等于 $n^2/2$ 个格子），效率损失只有小矩阵乘规模与 padding 带来的数个百分点量级。vLLM V1 默认开启且 Decode 优先（剩余预算才喂 Prefill）；每步 token 预算随硬件/场景分档（v0.21：H100 级在线服务约 8192、A100 约 2048，离线 16384/8192，2048 只是配置兜底值且会漂移，以官方调优文档为准）。
+
+### ③ 改变计算的组织方式
+
+- **Prefill/Decode 分离（PD 分离）**：为什么要分家？因果链有四步——
+  1. **干扰**：一次重 Prefill 混在 Decode 池里会拖慢同池所有人的当步，打爆 ITL 尾延迟；
+  2. **配置耦合**：两阶段的最优部署正好相反——Prefill 要大张量并行、小 batch 压 TTFT，Decode 要较低并行（省通信）、大 batch 摊薄权重、大显存装 KV；混在一个池里只能取折中；
+  3. **SLO 独立配给**：分开后 TTFT 池和 ITL 池按各自到达率独立扩缩容，优化目标是**同时满足两个延迟 SLO 的有效吞吐（goodput）**——vLLM 文档明确指出分离本身**不提升裸吞吐**；
+  4. **硬件分化**：[SplitWise](https://arxiv.org/abs/2311.18677)（ISCA 2024）用 H100 跑 Prefill、A100 跑 Decode（论文口径：H100 算力约为 A100 的 3 倍——规格 989/312≈3.17×，HBM 带宽约 1.6 倍；而 Decode 保留了约七成的逐 token 表现），实测约 1.4× 吞吐、约 20% 成本下降（注意这是论文的特定搭配，不宜外推到其他卡型）。
+- **代价与门槛**：70B 级 GQA 模型的 KV 约 320KB/token，8K prompt 就是约 2.6GB、32K 约 10GB，必须靠 400Gb IB（约 50GB/s）配合逐层异步传输，把搬运藏在 Prefill 计算背后；两套实例意味着**权重双份常驻**，低负载时同卡混跑靠统计复用反而更省——PD 分离值得做的前提是高 QPS、大机队、紧 SL* 加上高速网络。vLLM 0.21 中该特性仍标 **experimental**，生产连接器依赖 Mooncake/LMCache/NIXL 等三方生态，KV 加载失败触发的补算还会引入抖动。
+- **投机解码 / MTP**（[本站专文](/blog/投机解码-小模型打草稿大模型一次批改/)）：利用 Decode 单步的闲置算力，让小模型一次打多个草稿、大模型并行批改。注意它不是免费午餐：草稿模型自己要跑一次前向，目标模型的验证步形状变成 $[B,1+k]$（一次 Prefill 式前向）；它**改善 ITL 与吞吐、不改善 TTFT**，净收益取决于草稿接受率，低接受率反而伤尾延迟、增功耗。
+- **PagedAttention**（[本站专文](/blog/pagedattention-给kv-cache装上虚拟内存/)）：管的是接力棒本身——让 KV 放得下、共享得了、抢占时可重算。
+
+<PdDeployFigure />
+
+*图 6：同卡混跑（小规模、统计复用）→ Chunked 混批（今天默认）→ PD 分离（大规模、专用池）。没有默认最优，只有规模与 SLO 的匹配。*
+
+最后放一股**反向拉力**：[思维链](/blog/思维链-大模型为什么要先想再答/)把 Decode 步数 $m$ 从几百推到上万，长输出让 Decode 阶段在整次请求里占绝对主导（生产集群 Prefill:Decode 的资源比例可达 1:10 量级），也让 KV 容量和长上下文 O(n²) 成为越来越大的负担。优化与需求就是这样互相推着走。
+
+## 8. 指标与容量：别用一个数字骗自己
+
+服务端口径（vLLM）：
+
+- **TTFT** = 请求到达 → 首 token 发出，**包含排队时间**（队列等待往往是体感"卡顿"的大头——你等的未必是硬件，可能是在等别人）、Prefill 计算，还包含被抢占后重算的时间；
+- **TPOT/ITL** = 相邻输出 token 的间隔；vLLM 的 TPOT 是整条回复的均值（decode 总时长 ÷（输出数−1)），把 chunked prefill 插队、抢占重算都摊了进去；生产 SLO 实际看的是 **ITL/TBT 的 P90/P99 分位**——均值和分位在混批场景差异很大；
+- 客户端体感还要再加网络往返、增量分词和 SSE 缓冲，"服务端 30ms、用户还觉得卡"经常卡在这一层；
+- **goodput** 不是 token/s，而是"同时满足 TTFT 和 ITL 两个 SLO 的请求速率"——裸吞吐高但人人超时，goodput 是零。
+
+容量规划上两件事最难：prompt 长度重尾导致 **P99 TTFT 与 P50 差出数量级**；输出长度不可预测（推理模型动辄上万）决定请求驻留时长和 KV 占用，显存不足时被抢占的请求要回队首重算，成为尾部延迟的隐藏来源。所以"首字快"和"生成快"必须分开测、分开优化——产品宣传只给其中一个数字时，另一个往往不好看。
+
+## 9. 常见误解
+
+- **Prefill 是训练吗？** 不是。只有前向、没有反向和优化器，权重只读不改（查字典不改字典）。
+- **Prefill 完是不是答案就想好了？** 它只产出了第一个词的分布，后续每个词仍要一步步采样。
+- **为什么不能一次并行生成整句？** 第 $t$ 个词的输入里包含第 $t-1$ 个词本身，而它此刻还不存在。
+- **batch 是在一个请求内部凑的吗？** 不是。请求内严格串行，batch 是把**不同请求**的 Decode 步凑在一起（iteration 级调度）。
+- **KV Cache 只是个"缓存"，丢了无所谓？** 它就是当前生成状态本身：没有它模型"忘了"所有已生成内容，丢了只能把 prompt 和已输出重放一遍（V1 抢占只支持重算）。
+- **batch 开越大越好？** 不是。batch 变大单步变重、ITL 变差，KV 容量也先耗尽——调度永远在 TTFT 和 ITL 之间取舍，这正是 chunked prefill 和 PD 分离存在的理由。
+
+<Expand title="折叠：生产现场的四个坑">
+
+1. **Prefill 尾延迟**：长文档/多模态 prompt 叠加排队，P99 TTFT 可能是 P50 的几十倍，容量规划不能只看均值；
+2. **输出长度方差**：reasoning 模型的超长思考让驻留时间长尾，KV 不足触发重算抢占，是 TTFT/ITL 双尾的隐藏来源；
+3. **多 LoRA / 多模型混部**：前缀缓存按 adapter 隔离（不同 LoRA 不共享），`max_loras` 直接限制可调度集合；
+4. **流式管道**：增量分词器、SSE flush、网关缓冲都可能让"服务端很快"的首字在用户端迟到。
+
+</Expand>
+
+## 10. 自测（答案点击展开）
+
+<Expand title="Q1：Prefill 能一次并行处理 n 个位置，为什么不能并行生成 n 个新词？">
+Prefill 处理的 n 个位置是请求开始时就全部已知的输入，组成一个大 batch 一次算完（掩码只保证结果与串行等价）；而第 t 个新词的输入依赖第 t−1 个词的采样结果，在它被采样出来之前该步的输入向量不存在，矩阵乘法无法对不存在的输入执行。
+</Expand>
+
+<Expand title="Q2：发 2 万字长 prompt，和让模型写 2 万字长回答，分别让哪个指标变差？">
+长 prompt 主要拉长 Prefill → TTFT 变差（注意力约 $n^2$、KV 写 $n$ 行）；长回答意味着上万次 Decode 步 → ITL 累积成的总时长和 KV 容量爆炸，单步 ITL 还随历史变长而缓慢上升。
+</Expand>
+
+<Expand title="Q3：GQA/MLA 和权重量化，主要在治哪一段的什么病？">
+GQA/MLA 减少 KV 头数→砍每 token 的 KV 字节，治 Decode 的 KV 读取与 PD 传输；权重量化砍权重字节，直接缩短 Decode 每步搬权重的时间（也降 Prefill 的搬运）。两者作用对象不同，可叠加。
+</Expand>
+
+<Expand title="Q4：continuous batching 把很多用户凑成一批，单个用户的模型没变快，系统到底省了什么？">
+Decode 每步本来就要把整套权重搬一遍，一个人用是搬、$B$ 个人共用这一趟搬运也是搬；凑批后同一份权重的读取被 $B$ 个请求摊薄，算术强度上升、GPU 闲置算力被利用，单位时间服务的请求数（吞吐）提高。单用户的 ITL 不一定降低，甚至可能因批大而略升。
+</Expand>
+
+<Expand title="Q5：KV Cache 丢了为什么不能从权重里「再读出来」，只能重算？">
+KV 是模型对本次对话具体上下文（prompt + 已生成 token）跑前向得到的中间状态，权重里只有通用参数、不包含任何这次对话的内容。丢了只能拿 prompt 加已输出文本重新做一次前向重建（重算抢占）。
+</Expand>
+
+<Expand title="加分题：batch 加到几百，Decode 一定还是带宽受限吗？MoE 模型每步也搬全部权重吗？">
+都不一定。算术强度随 batch 升高，越过 roofline 折点（H100 BF16 约 295 FLOP/byte）后可能转为算力受限——但 KV 读取随 $B(n+t)$ 线性增长、显存容量常常先到顶，70B 级稠密模型实际很难越界；小模型、FP8、超大 KV 池下更可能发生。MoE 每 token 只路由到 top-k 个专家，单步不读全部专家权重（但要付专家并行的 all-to-all 通信代价）。
+</Expand>
+
+## 11. 参考资料
+
+1. Yu et al., [Orca: A Distributed Serving System for Transformer-Based Generative Models](https://www.usenix.org/conference/osdi22/presentation/yu)（OSDI 2022，USENIX 官方页；该文无 arXiv 预印本，注意与微软 Orca 模型区分）
+2. Kwon et al., [Efficient Memory Management for LLM Serving with PagedAttention](https://arxiv.org/abs/2309.06180)（SOSP 2023）
+3. Dao et al., [FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness](https://arxiv.org/abs/2205.14135)（NeurIPS 2022）
+4. Agrawal et al., [SARATHI: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills](https://arxiv.org/abs/2308.16369)（预印本）
+5. Agrawal et al., [Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve](https://arxiv.org/abs/2403.02310)（OSDI 2024）
+6. Holmes et al., [DeepSpeed-FastGen（Dynamic SplitFuse）](https://arxiv.org/abs/2401.08671)（2024）
+7. Zhong et al., [DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving](https://arxiv.org/abs/2401.09670)（OSDI 2024）
+8. Patel et al., [SplitWise: Efficient Generative LLM Inference Using Phase Splitting](https://arxiv.org/abs/2311.18677)（ISCA 2024；注意 arXiv:2404.10641 是无关论文）
+9. vLLM 0.21 中文教程：调度与 KV Cache、优化配置、Disaggregated Prefill 章节（本地一手实现文档）
+
+**站内延伸**：底层结构见[图解大模型（入门篇）](/blog/图解大模型-一口气搞懂大模型的骨架/)；KV 管理见[PagedAttention](/blog/pagedattention-给kv-cache装上虚拟内存/)；省 Decode 步数见[投机解码](/blog/投机解码-小模型打草稿大模型一次批改/)；长 Decode 的成本见[思维链](/blog/思维链-大模型为什么要先想再答/)；少搬 KV 的模型设计见[注意力机制演进](/blog/注意力机制演进-从mha到gqa与mla/)；工程实战见[推理加速专栏](/inference/)。
