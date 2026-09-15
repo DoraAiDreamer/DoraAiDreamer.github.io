@@ -1,0 +1,51 @@
+---
+// QK^T 批量算两两内积（相似度矩阵）——注意力的核心
+---
+<figure>
+  <svg viewBox="0 0 600 270" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="300" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">QKᵀ：一次乘法批量算出“谁和谁相关”</text>
+
+      {/* queries */}
+      <text x="90" y="52" font-size="11" font-weight="bold" fill="#0a5f78" text-anchor="middle">查询 Q（n 个）</text>
+      {[0,1,2].map((r) => (
+        <rect x="50" y={70+r*40} width="80" height="32" rx="6" fill="#f0f9fc" stroke="#7ec3d8"></rect>
+      ))}
+      {[0,1,2].map((r) => (
+        <text x="90" y={91+r*40} font-size="10.5" fill="#334155" text-anchor="middle">q{r+1}</text>
+      ))}
+
+      <text x="185" y="120" font-size="20" fill="#5b7a86" text-anchor="middle">× Kᵀ</text>
+
+      {/* keys */}
+      <text x="320" y="52" font-size="11" font-weight="bold" fill="#5b4ba8" text-anchor="middle">键 K（n 个）</text>
+      {[0,1,2].map((c) => (
+        <rect x={252+c*46} y="66" width="42" height="96" rx="6" fill="#f5f4fd" stroke="#9b8ae0"></rect>
+      ))}
+      {[0,1,2].map((c) => (
+        <text x={273+c*46} y="118" font-size="10.5" fill="#334155" text-anchor="middle">k{c+1}</text>
+      ))}
+
+      <text x="405" y="120" font-size="20" fill="#5b7a86" text-anchor="middle">=</text>
+
+      {/* 相似度矩阵 */}
+      <text x="490" y="52" font-size="11" font-weight="bold" fill="#b14a4a" text-anchor="middle">相似度 QKᵀ</text>
+      {[0,1,2].map((r) => [0,1,2].map((c) => {
+        // 对角(自己)最相关
+        const strong = r===c;
+        const mid = Math.abs(r-c)===1;
+        const fill = strong ? "#e69a99" : mid ? "#f6d2d1" : "#fdf1f1";
+        return (
+          <rect x={448+c*40} y={70+r*40} width="38" height="36" rx="5" fill={fill} stroke="#e2bcbb"></rect>
+        );
+      }))}
+      {[0,1,2].map((r) => [0,1,2].map((c) => (
+        <text x={467+c*40} y={93+r*40} font-size="9.5" fill={r===c?"#b14a4a":"#9a7a7a"} text-anchor="middle">s{r+1}{c+1}</text>
+      )))}
+
+      <text x="300" y="210" font-size="11" fill="#5b7a86" text-anchor="middle">
+        sᵢⱼ = qᵢ·kⱼ（内积）：方向越一致越大——softmax 后就是注意力权重，再对值 V 加权求和
+      </text>
+    </g>
+  </svg>
+</figure>

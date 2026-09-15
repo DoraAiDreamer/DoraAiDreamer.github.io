@@ -1,0 +1,51 @@
+---
+// 矩阵乘 = 行 × 列 的加权求和，内维 k 消失
+---
+<figure>
+  <svg viewBox="0 0 600 270" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif" text-anchor="middle">
+      <text x="300" y="26" font-size="14" font-weight="bold" fill="#0c5f74">矩阵乘：结果的每一格 = 一行扫过一列的加权和</text>
+
+      {/* A */}
+      <g>
+        {[0,1,2].map((r) => [0,1,2].map((c) => (
+          <rect x={60+c*44} y={70+r*44} width="42" height="40" rx="5" fill={r===1&&c===1 ? "#fde2cf" : "#f0f9fc"} stroke="#7ec3d8"></rect>
+        )))}
+        {[0,1,2].map((r) => [0,1,2].map((c) => (
+          <text x={81+c*44} y={95+r*44} font-size="11" fill={r===1&&c===1 ? "#b5621f" : "#334155"} font-weight={r===1&&c===1 ? "bold":"normal"}>a{r+1}{c+1}</text>
+        )))}
+        <text x="104" y="218" font-size="11" font-weight="bold" fill="#0a5f78">A (m×k)</text>
+      </g>
+
+      <text x="226" y="140" font-size="22" fill="#5b7a86">×</text>
+
+      {/* B */}
+      <g>
+        {[0,1,2].map((r) => [0,1,2].map((c) => (
+          <rect x={260+c*44} y={70+r*44} width="42" height="40" rx="5" fill={r===c ? "#e4dcfa" : "#f5f4fd"} stroke="#9b8ae0"></rect>
+        )))}
+        {[0,1,2].map((r) => [0,1,2].map((c) => (
+          <text x={281+c*44} y={95+r*44} font-size="11" fill={r===c ? "#5b4ba8" : "#334155"} font-weight={r===c ? "bold":"normal"}>b{r+1}{c+1}</text>
+        )))}
+        <text x="304" y="218" font-size="11" font-weight="bold" fill="#5b4ba8">B (k×n)</text>
+      </g>
+
+      <text x="430" y="140" font-size="22" fill="#5b7a86">=</text>
+
+      {/* C */}
+      <g>
+        {[0,1,2].map((r) => [0,1,2].map((c) => (
+          <rect x={466+c*44} y={70+r*44} width="42" height="40" rx="5" fill={r===1&&c===1 ? "#d8f3e4" : "#f7fbf9"} stroke="#0f9d68"></rect>
+        )))}
+        {[0,1,2].map((r) => [0,1,2].map((c) => (
+          <text x={487+c*44} y={95+r*44} font-size="11" fill={r===1&&c===1 ? "#0a7a50" : "#334155"} font-weight={r===1&&c===1 ? "bold":"normal"}>c{r+1}{c+1}</text>
+        )))}
+        <text x="510" y="218" font-size="11" font-weight="bold" fill="#0a7a50">C (m×n)</text>
+      </g>
+
+      <text x="300" y="250" font-size="11" fill="#5b7a86">
+        高亮：c₂₂ = a₂₁b₁₂ + a₂₂b₂₂ + a₂₃b₃₂（A 的第 2 行 × B 的第 2 列），匹配的中间维 k 被“加总掉”
+      </text>
+    </g>
+  </svg>
+</figure>

@@ -1,0 +1,46 @@
+---
+// 矩阵乘作为几何变换：把整个空间旋转/缩放/剪切，直线仍直、原点不动
+---
+<figure>
+  <svg viewBox="0 0 600 250" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="300" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">y = Wx：对整个空间做一次线性变换</text>
+
+      {/* 左：原始网格（方格） */}
+      <text x="150" y="52" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">原空间</text>
+      <g stroke="#c8d6e2" stroke-width="1">
+        {[0,1,2,3,4,5].map((i) => (<line x1={80+i*28} y1="66" x2={80+i*28} y2="206"></line>))}
+        {[0,1,2,3,4,5].map((j) => (<line x1="80" y1={66+j*28} x2="220" y2={66+j*28}></line>))}
+      </g>
+      {/* 轴 */}
+      <line x1="80" y1="206" x2="226" y2="206" stroke="#e6a23c" stroke-width="2"></line>
+      <line x1="80" y1="206" x2="80" y2="60" stroke="#7ec3d8" stroke-width="2"></line>
+      <circle cx="150" cy="150" r="5" fill="#f0a35e"></circle>
+      <line x1="150" y1="150" x2="178" y2="122" stroke="#f0a35e" stroke-width="2"></line>
+      <text x="184" y="118" font-size="10" fill="#f0a35e">x</text>
+
+      <text x="300" y="140" font-size="24" fill="#94a3b8" text-anchor="middle">→ W →</text>
+
+      {/* 右：变换后网格（斜切/旋转示意） */}
+      <text x="450" y="52" font-size="12" font-weight="bold" fill="#0a5f78" text-anchor="middle">变换后</text>
+      <g stroke="#9fd4e8" stroke-width="1">
+        {[0,1,2,3,4,5].map((i) => (
+          <line x1={380+i*28} y1={70+(5-i)*10} x2={380+i*28} y2={210+(5-i)*10}></line>
+        ))}
+        {[0,1,2,3,4,5].map((j) => (
+          <line x1="380" y1={104+j*21} x2="520" y2={80+j*21}></line>
+        ))}
+      </g>
+      <line x1="380" y1="176" x2="528" y2="152" stroke="#e6a23c" stroke-width="2"></line>
+      <line x1="380" y1="176" x2="392" y2="92" stroke="#7ec3d8" stroke-width="2"></line>
+      {/* 点被搬到新位置 */}
+      <circle cx="452" cy="132" r="5" fill="#f0a35e"></circle>
+      <line x1="452" y1="132" x2="482" y2="100" stroke="#f0a35e" stroke-width="2"></line>
+      <text x="488" y="96" font-size="10" fill="#f0a35e">y=Wx</text>
+
+      <text x="300" y="238" font-size="10.5" fill="#5b7a86" text-anchor="middle">
+        缩放 / 旋转 / 剪切 / 反射 / 投影；直线还是直线、原点不动；加偏置 b 才是平移（仿射）
+      </text>
+    </g>
+  </svg>
+</figure>

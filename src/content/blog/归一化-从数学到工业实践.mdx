@@ -125,4 +125,4 @@ $$
 - **网络结构**：CNN 多用 BatchNorm；Transformer/LLM 用 **LayerNorm / RMSNorm**，并普遍采用 **Pre-Norm + 残差连接**。
 - **推理与工程**：注意 $\epsilon$ 取值；归一化常写成融合算子（fused layernorm / RMSNorm kernel）以加速；RMSNorm 比 LayerNorm 省算力，是大模型推理的默认。
 
-> 归一化在 Transformer 中的具体位置（Pre-Norm 结构、RMSNorm 逐行实现），见本分类下的[图解大模型：一口气搞懂大模型的骨架](/llm/)第 3 步 Transformer Block。
+> 归一化在 Transformer 中的具体位置（Pre-Norm 结构、RMSNorm 逐行实现），见本分类下的[图解大模型（入门篇）](/llm/)第二部分「主干网络：Transformer Block」。
