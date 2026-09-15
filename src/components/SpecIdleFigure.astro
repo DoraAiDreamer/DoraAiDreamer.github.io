@@ -1,0 +1,52 @@
+---
+// 图1（钩子）：自回归每生成一个 token，大部分时间花在“把权重从 HBM 搬一遍”，算力在空等
+---
+
+<figure>
+  <svg viewBox="0 0 640 230" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">自回归生成：每吐一个词，都要把全部权重从显存搬一遍</text>
+
+      {/* 行标签 */}
+      <text x="64" y="78" font-size="12" fill="#334155" text-anchor="middle">生成的词</text>
+      <text x="64" y="138" font-size="12" fill="#334155" text-anchor="middle">一步的时间</text>
+
+      {/* 4 个 token 行：词 + 省略号 */}
+      <g font-size="13" text-anchor="middle">
+        {['很','好','。','…'].map((w,i)=>(
+          <g>
+            <rect x={104+i*128} y="62" width="112" height="32" rx="7" fill={i<3?'#d9eef3':'#f2f8fa'} stroke="#0085a1"/>
+            <text x={160+i*128} y="83" fill={i<3?'#006377':'#64748b'} font-weight={i<3?'bold':'normal'}>{w}</text>
+          </g>
+        ))}
+      </g>
+
+      {/* 时间条：大段搬权重（蓝） + 小段计算（橙） */}
+      {[0,1,2].map((i)=>(
+        <g>
+          <rect x={104+i*128} y="118" width="96" height="34" rx="5" fill="#cfe6ee" stroke="#7ec3d8"/>
+          <text x={152+i*128} y="133" font-size="10.5" fill="#0c5f74" text-anchor="middle">搬权重</text>
+          <text x={152+i*128} y="146" font-size="9.5" fill="#5b7a86" text-anchor="middle">HBM→片上</text>
+          <rect x={200+i*128} y="118" width="16" height="34" rx="4" fill="#fde2cf" stroke="#e6a23c"/>
+          <text x={208+i*128} y="139" font-size="10" fill="#b97a1f" text-anchor="middle">算</text>
+        </g>
+      ))}
+      <rect x={104+3*128} y="118" width="112" height="34" rx="5" fill="#f4f6f8" stroke="#cbd5e1" stroke-dasharray="4,3"/>
+      <text x={160+3*128} y="139" font-size="10.5" fill="#94a3b8" text-anchor="middle">循环往复</text>
+
+      {/* 空等标注 */}
+      <g font-size="11" fill="#b97a1f" text-anchor="middle">
+        <line x1="152" y1="112" x2="152" y2="100" stroke="#e6a23c" stroke-width="1.2"/>
+        <text x="160" y="94">GPU 算力在空等</text>
+      </g>
+
+      {/* 底部时间轴 */}
+      <line x1="104" y1="178" x2="608" y2="178" stroke="#94a3b8" stroke-width="1.2"/>
+      <g font-size="11" fill="#64748b" text-anchor="middle">
+        <text x="160" y="198">≈40ms（70B / FP16 数量级）</text>
+        <text x="416" y="198">计算只要几毫秒，其余时间都在“等搬运”</text>
+      </g>
+      <text x="320" y="220" font-size="10.5" fill="#94a3b8" text-anchor="middle">注：数量级示意，真实 70B 至少两卡张量并行，聚合带宽改变绝对值，但“时间花在搬运上”的结论不变</text>
+    </g>
+  </svg>
+</figure>

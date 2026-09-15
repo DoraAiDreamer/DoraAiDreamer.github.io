@@ -1,5 +1,5 @@
 ---
-title: "图解 Transformer：一口气搞懂大模型的骨架"
+title: "图解 Transformer（深入篇）：从 Self-Attention 到 LLaMA"
 subtitle: "不背公式——跟着 GPT-2 和 LLaMA 的真实数据流，用图、表和 PyTorch 把 Self-Attention 讲明白"
 date: 2026-09-03
 author: "DoraAiDreamer"
@@ -15,6 +15,7 @@ tags:
 import OverviewFigure from "../../components/OverviewFigure.astro";
 import AttentionFlowFigure from "../../components/AttentionFlowFigure.astro";
 import BlockDetailFigure from "../../components/BlockDetailFigure.astro";
+import RopeFigure from "../../components/RopeFigure.astro";
 import Expand from "../../components/Expand.astro";
 
 > 本文把 2017 年的《Attention Is All You Need》讲清楚，并以两个真实模型为解剖样本：**GPT-2 small**（经典 decoder，`d=768`、12 层）和 **LLaMA 2 7B**（现代 LLM，`d=4096`、32 层）。不讲玄学，只讲**数据流、shape、公式和代码**。
@@ -117,7 +118,84 @@ x = tok_emb(ids) + pos_emb(pos)             # 逐位置相加 → [1, 3, 768]
 print(x.shape)                              # torch.Size([1, 3, 768])
 ```
 
-RoPE 的核心思想是把向量每相邻两维看作平面坐标，按位置旋转一个角度（频率不同），下面是简化实现：
+## 3.3 RoPE 详解：位置是「转」出来的
+
+GPT-2 的做法是把位置向量**加到**词嵌入上；RoPE（Rotary Position Embedding，苏神 2021 年提出）换了个思路：**不加东西，而是在每个注意力层里把 Q、K 按位置「旋转」一个角度**。
+
+**第一步：把向量的相邻两维看成平面上的坐标。** 二维向量旋转 $\theta$ 角，就是左乘一个正交的旋转矩阵（长度不变、只改方向）：
+
+$$
+R(\theta)=\begin{pmatrix}\cos\theta & -\sin\theta\\ \sin\theta & \cos\theta\end{pmatrix},\qquad
+R(\theta)\begin{pmatrix}x_1\\x_2\end{pmatrix}=\begin{pmatrix}x_1\cos\theta-x_2\sin\theta\\ x_1\sin\theta+x_2\cos\theta\end{pmatrix}
+$$
+
+这句话具体什么意思？向量本来是一串数字，RoPE 把它们**两两配对**，每一对当作平面上一个点的横、纵坐标。假设某个注意力头是 8 维，某个词在某一层的 query 是
+
+$$
+q=(q_0,q_1,q_2,q_3,q_4,q_5,q_6,q_7)
+$$
+
+那就把它拆成 4 个平面上的 4 个点：$(q_0,q_1)$ 是平面 1 的点，$(q_2,q_3)$ 是平面 2 的点，$(q_4,q_5)$、$(q_6,q_7)$ 各占一个平面。比如 $q_0=0.8,\ q_1=0.6$，就是平面 1 上横坐标 0.8、纵坐标 0.6 的一个点（它到原点距离 $\sqrt{0.8^2+0.6^2}=1$）。旋转操作就是把这个点绕原点转一个角度，横纵坐标按上面的矩阵更新。真实头维度是 128，就有 64 个这样的平面同时旋转。
+
+RoPE 规定：**位置 $m$ 上的向量，就旋转「$m$ 个角度」**，即角度与位置成正比 $\theta_m=m\theta$。位置 0 不转，位置 1 转 $\theta$，位置 2 转 $2\theta$……同一个内容向量，仅仅因为所在位置不同，方向就被转到不同角度。
+
+<RopeFigure />
+
+*图：RoPE 的三件事。左——位置每加 1，向量多转一个 $\theta$；右——Q 转 $t\theta$、K 转 $s\theta$ 后，两者夹角恰好是 $(s-t)\theta$，注意力只看夹角，于是只与相对位置有关；下——多维向量拆成许多对维度，每对一个频率，高频像分针、低频像时针。*
+
+**第二步：为什么这样一转，注意力就自动「认识」相对位置？** 位置 $m$ 的 query 和位置 $n$ 的 key 旋转后再做点积，用旋转矩阵的正交性质 $R(\alpha)^\top R(\beta)=R(\beta-\alpha)$：
+
+$$
+\tilde q_m^\top\tilde k_n=(R(m\theta)q_m)^\top(R(n\theta)k_n)=q_m^\top R(m\theta)^\top R(n\theta)\,k_n=q_m^\top R((n-m)\theta)\,k_n
+$$
+
+<Expand title="逐步拆解：这四个等号各自用了什么">
+
+要算的是注意力分数——位置 $m$ 的 query 与位置 $n$ 的 key 旋转之后的点积 $\tilde q_m^\top\tilde k_n$。
+
+**第 1 个等号（代入定义）**：旋转后的向量就是「原向量左乘旋转矩阵」，$\tilde q_m=R(m\theta)q_m$、$\tilde k_n=R(n\theta)k_n$，直接代进去。
+
+**第 2 个等号（转置反序）**：矩阵乘积的转置要倒序，$(AB)^\top=B^\top A^\top$。所以
+
+$$
+(R(m\theta)q_m)^\top=q_m^\top R(m\theta)^\top
+$$
+
+（$q_m^\top$ 表示把列向量横过来做点积，不改变内容。）
+
+**第 3 个等号（旋转矩阵的两个几何性质）**：
+
+1. 旋转矩阵是**正交矩阵**，它的转置等于逆矩阵，几何意义是「反向转回去」：$R(\theta)^\top=R(\theta)^{-1}=R(-\theta)$；
+2. 两次旋转可以合并、角度相加：$R(\alpha)R(\beta)=R(\alpha+\beta)$。
+
+于是中间两个矩阵合为一个：
+
+$$
+R(m\theta)^\top R(n\theta)=R(-m\theta)R(n\theta)=R((n-m)\theta)
+$$
+
+**最终结果**：$\tilde q_m^\top\tilde k_n=q_m^\top R((n-m)\theta)\,k_n$，里面只剩 $n-m$。
+
+换个更直观的说法：两个向量的点积等于「长度乘积 × 夹角余弦」。旋转后 q 多转了 $m\theta$、k 多转了 $n\theta$，它们之间的夹角变化恰好是 $(n-m)\theta$——**各自的绝对转角被抵消，只留下转角之差**。所以 $(m,n)=(2,5)$ 和 $(10,13)$ 这两对词虽然位置完全不同，但相隔都是 3，位置对注意力分数的影响一模一样。
+
+</Expand>
+
+绝对位置 $m$、$n$ 消失了，点积里只剩**相对位置 $n-m$**。这正是想要的性质：「小猫」和「它」隔 3 个词时的注意力，与它们出现在句首还是句尾无关，只由距离 3 决定。图的右半画的就是这件事——两根指针各按各的绝对位置旋转，但它们之间的夹角等于位置之差。
+
+**第三步：为什么要拆出很多对维度、每对频率还不同？** 一个注意力头的维度是 $d_h$，相邻两维配一对，共 $d_h/2$ 个平面；第 $i$ 对在位置 $m$ 的旋转角取
+
+$$
+\theta_{m,i}=m\cdot base^{-2i/d_h},\qquad base=10000
+$$
+
+即每对维度有自己的频率：前几对频率高，位置每加 1 就转过很大角度，像钟表的**分针**，用来分辨细微的相对位置；后几对频率低（指数衰减），转得很慢，像**时针**，编码粗粒度的位置区段。不同频率组合在一起，模型既能分清相邻词、又能感知整段文本的布局，这和原始 Transformer 正弦位置编码「多尺度频率」的设计一脉相承，区别只在于正弦编码是**相加**、RoPE 是**相乘旋转**。
+
+四个必须记住的工程要点：
+
+1. 旋转发生在**每一层** Q、K 线性投影之后、点积之前；不是只在输入层做一次；
+2. **只转 Q 和 K，不转 V**——相对位置只影响「谁关注谁」的权重，聚合的内容 V 不带方向；
+3. **零额外参数**：角度全部由位置和固定频率算出，没有可学习的位置表，因此不存在「训练时没见过的位置 ID」，外推到更长序列更容易（NTK、YaRN 等长上下文方法都是在调整这套频率）；
+4. 实现上不会真的构造大旋转矩阵，而是用「偶数列/奇数列配 cos、sin」的逐元素写法，下面是等价的简化实现：
 
 ```python
 def precompute_rope(head_dim, max_len, base=10000.0):
@@ -501,8 +579,6 @@ class TransformerBlock(nn.Module):
 
 
 # 5. 第 4 步：Final Norm → LM Head
-
-所有 Block 处理完后，取**最后一个位置**的向量，映射到词表大小得到 **logits**（原始分数，可正可负，未归一化）：
 
 所有 Block 处理完后，取**最后一个位置**的向量，映射到词表大小得到 **logits**（原始分数，可正可负，未归一化），再 softmax 成概率：
 

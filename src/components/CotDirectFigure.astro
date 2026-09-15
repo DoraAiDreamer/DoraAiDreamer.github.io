@@ -1,0 +1,39 @@
+---
+// 图1：直接作答 vs 思维链——同样的题，token 流的对比
+---
+
+<figure>
+  <svg viewBox="0 0 640 250" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="cot1-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">同一道多步题，两种答法</text>
+
+      {/* 直接作答 */}
+      <text x="20" y="66" font-size="12.5" font-weight="bold" fill="#334155">直接作答</text>
+      <rect x="104" y="46" width="360" height="38" rx="8" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="120" y="70" font-size="12" fill="#334155" text-anchor="start">题目 + “直接给答案”</text>
+      <line x1="464" y1="65" x2="492" y2="65" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#cot1-arw)"/>
+      <rect x="496" y="46" width="124" height="38" rx="8" fill="#fbe3e3" stroke="#e67e7e" stroke-width="1.6"/>
+      <text x="558" y="70" font-size="12" fill="#b14a4a" text-anchor="middle">答案：612 ✗</text>
+
+      {/* 思维链 */}
+      <text x="20" y="130" font-size="12.5" font-weight="bold" fill="#334155">思维链</text>
+      <rect x="104" y="104" width="200" height="30" rx="7" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="116" y="124" font-size="11.5" fill="#334155" text-anchor="start">题目 + “一步步想”</text>
+      <line x1="304" y1="119" x2="322" y2="119" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#cot1-arw)"/>
+      {['37×8 = 296','37×40 = 1480','296+1480 = 1776'].map((t,i)=>(
+        <g>
+          <rect x="326" y={96+i*34} width="150" height="26" rx="6" fill="#fdf0e0" stroke="#e6a23c"/>
+          <text x="401" y={114+i*34} font-size="10.5" fill="#b97a1f" text-anchor="middle">{t}</text>
+        </g>
+      ))}
+      <rect x="496" y="96" width="124" height="94" rx="8" fill="#e4f5ec" stroke="#0f9d68" stroke-width="1.6"/>
+      <text x="558" y="136" font-size="11.5" fill="#0a7a50" text-anchor="middle">中间步骤</text>
+      <text x="558" y="156" font-size="11.5" fill="#0a7a50" text-anchor="middle">都在上下文里</text>
+      <text x="558" y="176" font-size="11.5" fill="#0a7a50" text-anchor="middle">→ 1776 ✓</text>
+      <line x1="476" y1="119" x2="494" y2="136" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#cot1-arw)"/>
+
+      <text x="320" y="226" font-size="11.5" fill="#64748b" text-anchor="middle">模型没有换、参数没有变；变化的只是生成的 token 数——多写的每一步，都是多做的一次计算</text>
+    </g>
+  </svg>
+</figure>

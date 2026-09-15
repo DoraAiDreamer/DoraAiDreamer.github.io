@@ -1,0 +1,48 @@
+---
+// 图2：自回归草稿纸——每个思维 token 都是一次完整解码步：
+// 模型生成 → 写入上下文（KV）→ 下一步能读到自己刚写的内容
+---
+
+<figure>
+  <svg viewBox="0 0 640 262" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="cot2-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">思维链 = 自言自语，而且下一步能听到自己刚说的话</text>
+
+      {/* 上下文纸条（逐行增长） */}
+      <text x="20" y="62" font-size="11.5" fill="#64748b">上下文（KV Cache）：</text>
+
+      {/* 三个时刻 */}
+      {/* t1 */}
+      <rect x="104" y="76" width="150" height="30" rx="7" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="179" y="96" font-size="11" fill="#334155" text-anchor="middle">题：37×48</text>
+      <circle cx="282" cy="91" r="13" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="282" y="95" font-size="10" fill="#006377" text-anchor="middle">算</text>
+      <rect x="310" y="76" width="100" height="30" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="360" y="96" font-size="11" fill="#b97a1f" text-anchor="middle">“37×8=296”</text>
+      <text x="440" y="96" font-size="10.5" fill="#94a3b8">第 1 个思维 token 段 = 一次解码步</text>
+
+      {/* t2：纸条变长 */}
+      <rect x="104" y="122" width="150" height="30" rx="7" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="179" y="142" font-size="11" fill="#334155" text-anchor="middle">题：37×48</text>
+      <rect x="104" y="156" width="150" height="26" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="179" y="174" font-size="10.5" fill="#b97a1f" text-anchor="middle">37×8=296</text>
+      <circle cx="282" cy="150" r="13" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="282" y="154" font-size="10" fill="#006377" text-anchor="middle">算</text>
+      <rect x="310" y="135" width="120" height="30" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="370" y="155" font-size="11" fill="#b97a1f" text-anchor="middle">“37×40=1480”</text>
+      <text x="462" y="155" font-size="10.5" fill="#94a3b8">第 2 步：能读到上一步</text>
+
+      {/* t3 */}
+      <rect x="104" y="198" width="150" height="26" rx="7" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="179" y="216" font-size="10.5" fill="#334155" text-anchor="middle">题：37×48</text>
+      <rect x="104" y="228" width="150" height="22" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="179" y="244" font-size="10" fill="#b97a1f" text-anchor="middle">…296…1480…</text>
+      <circle cx="282" cy="224" r="13" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="282" y="228" font-size="10" fill="#006377" text-anchor="middle">算</text>
+      <rect x="310" y="209" width="106" height="30" rx="7" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="363" y="229" font-size="11" fill="#0a7a50" text-anchor="middle">“=1776”</text>
+      <text x="446" y="229" font-size="10.5" fill="#94a3b8">第 3 步：汇总成答案</text>
+    </g>
+  </svg>
+</figure>

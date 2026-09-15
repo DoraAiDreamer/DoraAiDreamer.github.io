@@ -1,0 +1,56 @@
+---
+// 图：质量守恒——每个词最终出现的概率 = 抽检通过的 min(p,q) + 拒绝后补抽的 (p−q)₊ = p
+// 玩具数值：x1 p=.7 q=.5；x2 p=.2 q=.3；x3 p=.1 q=.2（q 总和 = p 总和 = 1）
+---
+
+<figure>
+  <svg viewBox="0 0 640 262" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">概率质量守恒：抽检通过的部分 + 拒绝后补抽的部分 = 目标分布 p</text>
+
+      {/* 网格与纵轴（1.0 = 150px） */}
+      <g stroke="#e2e8f0" stroke-width="1">
+        <line x1="110" y1="60"  x2="560" y2="60"/>
+        <line x1="110" y1="97.5" x2="560" y2="97.5"/>
+        <line x1="110" y1="135" x2="560" y2="135"/>
+        <line x1="110" y1="172.5" x2="560" y2="172.5"/>
+      </g>
+      <line x1="110" y1="210" x2="560" y2="210" stroke="#94a3b8" stroke-width="1.4"/>
+      <g font-size="9.5" fill="#94a3b8" text-anchor="end">
+        <text x="104" y="64">1.0</text>
+        <text x="104" y="101.5">0.75</text>
+        <text x="104" y="139">0.5</text>
+        <text x="104" y="176.5">0.25</text>
+        <text x="104" y="214">0</text>
+      </g>
+
+      {/* x1: min=.5(75px) 残差=.2(30px) */}
+      <rect x="170" y="135" width="80" height="75" fill="#7ec3d8"/>
+      <rect x="170" y="105" width="80" height="30" fill="#e8908f"/>
+      <text x="210" y="177" font-size="11.5" fill="#fff" text-anchor="middle" font-weight="bold">0.5</text>
+      <text x="210" y="124" font-size="10.5" fill="#fff" text-anchor="middle" font-weight="bold">0.2</text>
+      <text x="210" y="98" font-size="10" fill="#b14a4a" text-anchor="middle">p=0.7</text>
+      <text x="210" y="228" font-size="10.5" fill="#334155" text-anchor="middle">词 x₁（草稿 q=0.5）</text>
+
+      {/* x2: min=.2(30px) 残差=0 */}
+      <rect x="300" y="180" width="80" height="30" fill="#7ec3d8"/>
+      <text x="340" y="199" font-size="11" fill="#fff" text-anchor="middle" font-weight="bold">0.2</text>
+      <text x="340" y="173" font-size="10" fill="#0c5f74" text-anchor="middle">p=0.2</text>
+      <text x="340" y="228" font-size="10.5" fill="#334155" text-anchor="middle">词 x₂（草稿 q=0.3）</text>
+
+      {/* x3: min=.1(15px) 残差=0 */}
+      <rect x="430" y="195" width="80" height="15" fill="#7ec3d8"/>
+      <text x="470" y="207" font-size="10.5" fill="#fff" text-anchor="middle" font-weight="bold">0.1</text>
+      <text x="470" y="188" font-size="10" fill="#0c5f74" text-anchor="middle">p=0.1</text>
+      <text x="470" y="228" font-size="10.5" fill="#334155" text-anchor="middle">词 x₃（草稿 q=0.2）</text>
+
+      {/* 图例 */}
+      <g font-size="11" text-anchor="start">
+        <rect x="120" y="244" width="12" height="12" rx="2" fill="#7ec3d8"/>
+        <text x="138" y="254" fill="#334155">抽检通过：min(p, q)</text>
+        <rect x="300" y="244" width="12" height="12" rx="2" fill="#e8908f"/>
+        <text x="318" y="254" fill="#334155">拒绝后补抽：(p−q)₊（归一化后）</text>
+      </g>
+    </g>
+  </svg>
+</figure>

@@ -1,0 +1,59 @@
+---
+// 图：普通自回归 vs 投机解码的时间线对比（放在流程一节末尾）
+---
+
+<figure>
+  <svg viewBox="0 0 640 290" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="st-arw" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#64748b"/></marker></defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">时间线对比：4 个词，两种走法（宽度示意，不按比例）</text>
+
+      {/* ===== 普通自回归 ===== */}
+      <text x="20" y="62" font-size="12.5" font-weight="bold" fill="#334155">普通自回归</text>
+      <g text-anchor="middle">
+        {['很','好','，','。'].map((w,i)=>(
+          <g>
+            <rect x={104+i*122} y="44" width="110" height="40" rx="7" fill="#d9eef3" stroke="#0085a1"/>
+            <text x={159+i*122} y="62" font-size="10" fill="#0c5f74">目标模型</text>
+            <text x={159+i*122} y="76" font-size="11" fill="#0c5f74">搬权重+算「{w}」</text>
+          </g>
+        ))}
+      </g>
+      <line x1="104" y1="98" x2="592" y2="98" stroke="#94a3b8" stroke-width="1.2" marker-end="url(#st-arw)"/>
+      <text x="348" y="116" font-size="11" fill="#64748b" text-anchor="middle">4 次串行前向，每次都搬一遍权重 ≈ 4 × 40ms</text>
+
+      {/* ===== 投机解码 ===== */}
+      <text x="20" y="172" font-size="12.5" font-weight="bold" fill="#334155">投机解码</text>
+      {/* 草稿 4 小步 */}
+      <g text-anchor="middle">
+        {[0,1,2,3].map((i)=>(
+          <g>
+            <rect x={104+i*52} y="150" width="46" height="38" rx="6" fill="#fdf0e0" stroke="#e6a23c"/>
+            <text x={127+i*52} y="167" font-size="9.5" fill="#b97a1f">草稿{i+1}</text>
+            <text x={127+i*52} y="180" font-size="9.5" fill="#b97a1f">~4ms</text>
+          </g>
+        ))}
+        {/* 一次验证 */}
+        <rect x="322" y="150" width="180" height="38" rx="7" fill="#d9eef3" stroke="#0085a1" stroke-width="1.6"/>
+        <text x="412" y="166" font-size="10.5" fill="#006377">目标模型一次并行验证 5 个位置</text>
+        <text x="412" y="180" font-size="10" fill="#006377">权重只搬一遍 ≈ 40ms 出头</text>
+      </g>
+      <line x1="104" y1="202" x2="592" y2="202" stroke="#94a3b8" stroke-width="1.2" marker-end="url(#st-arw)"/>
+
+      {/* 产出 */}
+      <g text-anchor="middle" font-size="12">
+        <text x="348" y="222" fill="#64748b">一轮实际产出（取决于接受率）：</text>
+        {['很','好','，'].map((w,i)=>(
+          <g>
+            <rect x={468+i*40} y="208" width="34" height="26" rx="6" fill="#e4f5ec" stroke="#0f9d68"/>
+            <text x={485+i*40} y="226" fill="#0a7a50" font-weight="bold">{w}</text>
+          </g>
+        ))}
+        <rect x="588" y="208" width="34" height="26" rx="6" fill="#e4f5ec" stroke="#0f9d68" stroke-dasharray="4,3"/>
+        <text x="605" y="226" fill="#0a7a50" font-weight="bold">补</text>
+        <text x="348" y="248" font-size="11" fill="#0a7a50">前 3 个接受 + 拒绝位补 1 个（或全中时白拿 bonus），拒绝之后的草稿作废</text>
+      </g>
+      <text x="348" y="276" font-size="10.5" fill="#94a3b8" text-anchor="middle">关键：验证 5 个位置与生成 1 个词，在低并发、短候选时墙钟时间接近——多花的只是闲置算力</text>
+    </g>
+  </svg>
+</figure>

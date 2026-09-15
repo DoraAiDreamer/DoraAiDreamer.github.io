@@ -1,0 +1,71 @@
+---
+// 图3：从提示技巧到训练能力的演进时间线（2022–2025）
+// 上排=不改模型的提示派（2 节点），下排=训练派（4 节点，等距窄卡）
+---
+
+<figure>
+  <svg viewBox="0 0 640 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">五年时间：从「提示技巧」到「训练出来的推理能力」</text>
+      <text x="320" y="44" font-size="10.5" fill="#94a3b8" text-anchor="middle">提示派（推理时多给几句话） ──→ 训练派（把「怎么想」学进权重）</text>
+
+      {/* 主轴 */}
+      <line x1="40" y1="150" x2="626" y2="150" stroke="#7ec3d8" stroke-width="2.5"/>
+      {[69,189,278,380,482,580].map((x)=>(
+        <circle cx={x} cy="150" r="5" fill="#0085a1"/>
+      ))}
+      {/* 分界小竖线 */}
+      <line x1="232" y1="138" x2="232" y2="162" stroke="#cbd5e1" stroke-dasharray="3,3"/>
+
+      {/* ===== 上排：提示时代 ===== */}
+      <line x1="69" y1="126" x2="69" y2="143" stroke="#7ec3d8" stroke-dasharray="3,3"/>
+      <text x="69" y="66" font-size="11" font-weight="bold" fill="#006377" text-anchor="middle">2022</text>
+      <rect x="17" y="74" width="104" height="52" rx="8" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="69" y="94" font-size="11" fill="#334155" text-anchor="middle">CoT 提示</text>
+      <text x="69" y="110" font-size="9.5" fill="#64748b" text-anchor="middle">Wei / Kojima</text>
+      <text x="69" y="123" font-size="9.5" fill="#64748b" text-anchor="middle">不改模型</text>
+
+      <line x1="189" y1="126" x2="189" y2="143" stroke="#7ec3d8" stroke-dasharray="3,3"/>
+      <text x="189" y="66" font-size="11" font-weight="bold" fill="#006377" text-anchor="middle">2023</text>
+      <rect x="137" y="74" width="104" height="52" rx="8" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="189" y="94" font-size="11" fill="#334155" text-anchor="middle">PRM 过程奖励</text>
+      <text x="189" y="110" font-size="9.5" fill="#64748b" text-anchor="middle">Lightman</text>
+      <text x="189" y="123" font-size="9.5" fill="#64748b" text-anchor="middle">（并行研究线索）</text>
+
+      {/* ===== 下排：训练时代 ===== */}
+      {/* 节点 1：o1 */}
+      <line x1="278" y1="157" x2="278" y2="174" stroke="#e6c388" stroke-dasharray="3,3"/>
+      <rect x="232" y="176" width="92" height="58" rx="8" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="278" y="196" font-size="10.5" fill="#334155" text-anchor="middle">o1 发布</text>
+      <text x="278" y="212" font-size="9" fill="#64748b" text-anchor="middle">RL + 长思维链</text>
+      <text x="278" y="225" font-size="9" fill="#64748b" text-anchor="middle">配方未公开</text>
+      <text x="278" y="250" font-size="10" font-weight="bold" fill="#b97a1f" text-anchor="middle">2024-09</text>
+
+      {/* 节点 2：QwQ / o1完整版 / o3 */}
+      <line x1="380" y1="157" x2="380" y2="174" stroke="#e6c388" stroke-dasharray="3,3"/>
+      <rect x="334" y="176" width="92" height="58" rx="8" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="380" y="194" font-size="10" fill="#334155" text-anchor="middle">QwQ、完整 o1</text>
+      <text x="380" y="209" font-size="9" fill="#64748b" text-anchor="middle">o3 演示</text>
+      <text x="380" y="222" font-size="9" fill="#64748b" text-anchor="middle">（特制算力档）</text>
+      <text x="380" y="250" font-size="10" font-weight="bold" fill="#b97a1f" text-anchor="middle">2024-11/12</text>
+
+      {/* 节点 3：R1 */}
+      <line x1="482" y1="157" x2="482" y2="174" stroke="#e6c388" stroke-dasharray="3,3"/>
+      <rect x="436" y="176" width="92" height="58" rx="8" fill="#fbe9d2" stroke="#e6a23c" stroke-width="1.6"/>
+      <text x="482" y="196" font-size="10.5" fill="#334155" text-anchor="middle">DeepSeek-R1</text>
+      <text x="482" y="212" font-size="9" fill="#64748b" text-anchor="middle">开源权重</text>
+      <text x="482" y="225" font-size="9" fill="#64748b" text-anchor="middle">+ 蒸馏小模型</text>
+      <text x="482" y="250" font-size="10" font-weight="bold" fill="#b97a1f" text-anchor="middle">2025-01</text>
+
+      {/* 节点 4：Qwen3 / GPT-5 */}
+      <line x1="580" y1="157" x2="580" y2="174" stroke="#8fd3b6" stroke-dasharray="3,3"/>
+      <rect x="534" y="176" width="92" height="58" rx="8" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="580" y="196" font-size="10.5" fill="#334155" text-anchor="middle">Qwen3 / GPT-5</text>
+      <text x="580" y="212" font-size="9" fill="#64748b" text-anchor="middle">思考可切换</text>
+      <text x="580" y="225" font-size="9" fill="#64748b" text-anchor="middle">预算自适应</text>
+      <text x="580" y="250" font-size="10" font-weight="bold" fill="#0a7a50" text-anchor="middle">2025</text>
+
+      <text x="320" y="284" font-size="10.5" fill="#94a3b8" text-anchor="middle">PRM 是并行研究线索，不是 o1 的直接前因；o1 具体训练配方至今未公开</text>
+    </g>
+  </svg>
+</figure>

@@ -1,0 +1,84 @@
+---
+// 图：两轮投机解码——轮一全中拿 bonus，轮二第 3 个被拒、回退补词
+---
+
+<figure>
+  <svg viewBox="0 0 640 318" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="sv-arw" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif" text-anchor="middle">
+
+      <text x="320" y="22" font-size="14" font-weight="bold" fill="#0c5f74">两轮投机解码：一轮全中、一轮中途被拒</text>
+
+      {/* ========== 轮一 ========== */}
+      <rect x="12" y="34" width="616" height="120" rx="10" fill="#f7fbfc" stroke="#0085a1" stroke-dasharray="6,4"/>
+      <text x="26" y="54" font-size="12.5" font-weight="bold" fill="#006377" text-anchor="start">轮一：3 个草稿全部通过</text>
+
+      {/* 前缀 */}
+      <text x="52" y="86" font-size="11" fill="#64748b">前缀</text>
+      {['小','猫','追','着'].map((w,i)=>(
+        <rect x={78+i*40} y="70" width="34" height="28" rx="6" fill="#f2f8fa" stroke="#7ec3d8"/>
+      ))}
+      {['小','猫','追','着'].map((w,i)=>(
+        <text x={95+i*40} y="89" font-size="11.5" fill="#334155">{w}</text>
+      ))}
+      <line x1="244" y1="84" x2="262" y2="84" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#sv-arw)"/>
+      {/* 草稿 */}
+      <text x="286" y="86" font-size="11" fill="#b97a1f">草稿</text>
+      {['它','的','尾'].map((w,i)=>(
+        <rect x={308+i*40} y="70" width="34" height="28" rx="6" fill="#fdf0e0" stroke="#e6a23c"/>
+      ))}
+      {['它','的','尾'].map((w,i)=>(
+        <text x={325+i*40} y="89" font-size="11.5" fill="#b97a1f">{w}</text>
+      ))}
+      <line x1="432" y1="84" x2="446" y2="84" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#sv-arw)"/>
+      {/* 验证 */}
+      <text x="486" y="86" font-size="16" font-weight="bold" fill="#0f9d68">✓ ✓ ✓</text>
+      <rect x="556" y="66" width="44" height="26" rx="6" fill="#e4f5ec" stroke="#0f9d68" stroke-dasharray="4,3"/>
+      <text x="578" y="84" font-size="11" fill="#0a7a50">巴</text>
+      <text x="578" y="62" font-size="9" fill="#0f9d68">bonus</text>
+
+      {/* 采纳 */}
+      <text x="52" y="132" font-size="11" fill="#64748b">采纳</text>
+      {['它','的','尾','巴'].map((w,i)=>(
+        <rect x={78+i*40} y="116" width="34" height="28" rx="6" fill={i<3?'#e4f5ec':'#f0faf5'} stroke="#0f9d68" stroke-dasharray={i<3?'none':'4,3'}/>
+      ))}
+      {['它','的','尾','巴'].map((w,i)=>(
+        <text x={95+i*40} y="135" font-size="11.5" fill="#0a7a50" font-weight="bold">{w}</text>
+      ))}
+      <text x="280" y="134" font-size="10.5" fill="#0f9d68" text-anchor="start">草稿全中 → 最后一个草稿位置的目标分布白送 1 个 bonus 词，本轮落 4 词</text>
+
+      {/* ========== 轮二 ========== */}
+      <rect x="12" y="168" width="616" height="138" rx="10" fill="#fdfaf7" stroke="#e6a23c" stroke-dasharray="6,4"/>
+      <text x="26" y="188" font-size="12.5" font-weight="bold" fill="#b97a1f" text-anchor="start">轮二：前 2 个通过，第 3 个被拒</text>
+
+      <text x="52" y="220" font-size="11" fill="#64748b">前缀</text>
+      <rect x="78" y="204" width="156" height="28" rx="6" fill="#f2f8fa" stroke="#7ec3d8"/>
+      <text x="156" y="223" font-size="11" fill="#334155">…小猫追着它的尾巴</text>
+      <line x1="244" y1="218" x2="262" y2="218" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#sv-arw)"/>
+      <text x="286" y="220" font-size="11" fill="#b97a1f">草稿</text>
+      {['跑','，','啊'].map((w,i)=>(
+        <rect x={308+i*40} y="204" width="34" height="28" rx="6" fill={i<2?'#fdf0e0':'#fbe3e3'} stroke={i<2?'#e6a23c':'#e67e7e'}/>
+      ))}
+      {['跑','，','啊'].map((w,i)=>(
+        <text x={325+i*40} y="223" font-size="11.5" fill={i<2?'#b97a1f':'#b14a4a'}>{w}</text>
+      ))}
+      <line x1="432" y1="218" x2="446" y2="218" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#sv-arw)"/>
+      <text x="486" y="221" font-size="16" font-weight="bold">
+        <tspan fill="#0f9d68">✓ ✓</tspan><tspan fill="#b14a4a"> ✗</tspan>
+      </text>
+
+      <text x="52" y="266" font-size="11" fill="#64748b">采纳</text>
+      <rect x="78" y="250" width="34" height="28" rx="6" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="95" y="269" font-size="11.5" fill="#0a7a50" font-weight="bold">跑</text>
+      <rect x="118" y="250" width="34" height="28" rx="6" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="135" y="269" font-size="11.5" fill="#0a7a50" font-weight="bold">，</text>
+      <rect x="158" y="250" width="34" height="28" rx="6" fill="#f0faf5" stroke="#0f9d68" stroke-dasharray="4,3"/>
+      <text x="175" y="269" font-size="11.5" fill="#0a7a50" font-weight="bold">。</text>
+      <text x="198" y="258" font-size="9.5" fill="#0f9d68" text-anchor="start">目标补</text>
+      <text x="236" y="260" font-size="10.5" fill="#b14a4a" text-anchor="start">「啊」未通过抽检 → 它及之后的草稿全部作废，</text>
+      <text x="236" y="276" font-size="10.5" fill="#b14a4a" text-anchor="start">目标模型在该位置按修正分布补出「。」</text>
+
+      <text x="320" y="300" font-size="10" fill="#94a3b8">补词用的是本次验证前向已经算好的目标分布，不重新跑大模型；已接受位置的 KV 也直接沿用</text>
+    </g>
+  </svg>
+</figure>
