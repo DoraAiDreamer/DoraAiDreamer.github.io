@@ -1,0 +1,90 @@
+---
+// 图3：8×8 分块因果掩码——第1步左上三角、第2步右下三角+左下矩形，右上从不计算
+// 左4列 KV 读两次；右侧可见集合对照：切块与完整 prefill 完全一致
+interface Cell {
+  x: number;
+  y: number;
+  fill: string;
+  stroke: string;
+}
+const cells: Cell[] = [];
+for (let i = 0; i < 8; i++) {
+  for (let j = 0; j < 8; j++) {
+    let fill = "#ffffff";
+    let stroke = "#e2e8f0";
+    if (j > i) {
+      fill = "#eef1f4";
+      stroke = "#cbd5e1";
+    }
+    if (i < 4 && j <= i) {
+      fill = "#d9eef3";
+      stroke = "#0085a1";
+    }
+    if (i >= 4 && j <= i) {
+      fill = "#e4f5ec";
+      stroke = "#0f9d68";
+    }
+    cells.push({ x: 92 + j * 30, y: 80 + i * 30, fill, stroke });
+  }
+}
+
+const compareRows = [
+  { q: "q1", full: "{ k1 }", cut: "{ k1 }" },
+  { q: "q4", full: "{ k1…k4 }", cut: "{ k1…k4 }" },
+  { q: "q5", full: "{ k1…k5 }", cut: "{ k1…k5 }", },
+  { q: "q8", full: "{ k1…k8 }", cut: "{ k1…k8 }" },
+];
+---
+
+<figure>
+  <svg viewBox="0 0 640 360" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="300" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">切块切的是计算步，每个 Attention 分数一次不少</text>
+
+      {/* 列标签 k1..k8 */}
+      {["k1","k2","k3","k4","k5","k6","k7","k8"].map((k, i) => (
+        <text x={92 + i * 30 + 13} y="62" font-size="9.5" fill="#64748b" text-anchor="middle">{k}</text>
+      ))}
+      {/* 行标签 q1..q8 */}
+      {["q1","q2","q3","q4","q5","q6","q7","q8"].map((q, i) => (
+        <text x="80" y={80 + i * 30 + 17} font-size="9.5" fill="#64748b" text-anchor="end">{q}</text>
+      ))}
+
+      {/* 8×8 格子，格 30；第1步蓝、第2步绿、未来格统一灰 */}
+      {cells.map((c) => (
+        <rect x={c.x} y={c.y} width="28" height="28" fill={c.fill} stroke={c.stroke} stroke-width="0.8"/>
+      ))}
+
+      {/* 分块边界：第4/5列与第4/5行之间加粗虚线 */}
+      <line x1="92" y1="200" x2="332" y2="200" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,3"/>
+      <line x1="212" y1="80" x2="212" y2="320" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,3"/>
+
+      {/* 图例 */}
+      <g font-size="9">
+        <rect x="372" y="80" width="12" height="12" fill="#d9eef3" stroke="#0085a1"/>
+        <text x="390" y="90" fill="#334155">第 1 个迭代步计算</text>
+        <rect x="372" y="100" width="12" height="12" fill="#e4f5ec" stroke="#0f9d68"/>
+        <text x="390" y="110" fill="#334155">第 2 个迭代步计算</text>
+        <rect x="372" y="120" width="12" height="12" fill="#eef1f4" stroke="#cbd5e1"/>
+        <text x="390" y="130" fill="#334155">从不计算（未来）</text>
+      </g>
+
+      {/* 重读标注 */}
+      <line x1="92" y1="332" x2="210" y2="332" stroke="#b97a1f" stroke-width="1.5"/>
+      <text x="151" y="348" font-size="9" fill="#b97a1f" text-anchor="middle">左 4 列的 KV：读两次</text>
+
+      {/* 可见集合对照表 */}
+      <text x="496" y="160" font-size="10" font-weight="bold" fill="#0c5f74" text-anchor="middle">可见集合对照</text>
+      <line x1="360" y1="168" x2="628" y2="168" stroke="#cbd5e1"/>
+      {compareRows.map((r, i) => (
+        <g font-size="9">
+          <text x="372" y={186 + i * 22} fill="#475569">{r.q}</text>
+          <text x="408" y={186 + i * 22} fill="#64748b">完整：{r.full}</text>
+          <text x="512" y={186 + i * 22} fill="#0a7a50">切块：{r.cut}</text>
+        </g>
+      ))}
+      <line x1="360" y1="278" x2="628" y2="278" stroke="#cbd5e1"/>
+      <text x="494" y="298" font-size="9.5" fill="#0a7a50" text-anchor="middle">逐行相同——切块只是换个时刻算</text>
+    </g>
+  </svg>
+</figure>

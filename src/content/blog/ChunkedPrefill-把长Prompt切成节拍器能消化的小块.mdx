@@ -1,0 +1,422 @@
+---
+title: "Chunked Prefill：把长 Prompt 切成节拍器能消化的小块"
+subtitle: "从算术强度、分块因果掩码到融合 GEMM 的第一性解释，以及 vLLM V1 的完整调参闭环"
+date: 2026-10-14
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "推理加速"
+  - "Chunked Prefill"
+  - "vLLM"
+---
+
+import Expand from "../../components/Expand.astro";
+import CpDecodeCostFigure from "../../components/CpDecodeCostFigure.astro";
+import CpRooflineFigure from "../../components/CpRooflineFigure.astro";
+import CpMaskFigure from "../../components/CpMaskFigure.astro";
+import CpFusedGemmFigure from "../../components/CpFusedGemmFigure.astro";
+import CpTradeoffFigure from "../../components/CpTradeoffFigure.astro";
+import CpTuningLoopFigure from "../../components/CpTuningLoopFigure.astro";
+
+在[《连续批处理》](/blog/连续批处理-为什么推理引擎不凑够一批再发车/)里我们见过一个怪现象：一旦有用户提交几千 token 的长 prompt，车上所有正在蹦字的请求都会卡住几百毫秒。那篇文章给出的补丁叫 **Chunked Prefill**（分块预填充），并交代了它的三个代价；但「为什么切块之后结果一个数都不变」「为什么 decode 搭车便宜到近乎免费」「块到底该切多大」，那篇没展开。
+
+本文回答这三个问题，并把它们一路落到 vLLM V1 的调参上：**前半篇用算术强度、因果掩码和融合矩阵乘建立第一性解释，后半篇给出 0.21 版本的全部相关旋钮、指标口径与压测闭环。**
+
+读完你应该能回答：
+
+1. Decode 拼车为什么能便宜约 10 倍？
+2. 切块为什么不改结果？
+3. Chunk 大小的选择依据是什么？
+4. 每步 token 预算和 chunk size 是什么关系？哪些「旋钮」在 0.21 里其实不生效？
+5. 线上 ITL 鼓包，怎么区分是 chunk 干扰还是抢占？
+
+## 钩子：一张你能当场验算的账
+
+先看论文里的一组微观基准。硬件是 A6000 显卡、模型是 LLaMA-13B、序列长 1024，研究者分别测了三种批次构成的**单个迭代步**：
+
+| 批次构成 | 线性算子 | 注意力 | 整步总时 | 标称每 token |
+| --- | --- | --- | --- | --- |
+| Prefill-only（约 1024 个 prefill token） | 224.8 | 10.0 | 234.8ms | Prefill 0.229ms |
+| Decode-only（4 个 decode，上下文 1024） | 44.28 | 5.68 | 49.96ms | Decode 12.49ms |
+| Decode-maximal（1021 prefill + 3 decode） | 223.2 | 15.2 | 238.4ms | Prefill 0.229 / **每个 decode 摊 1.2ms** |
+
+先别急着信最后一行，表里有三条你现在就能自己按一遍的恒等式：
+
+- $49.96 \div 4 = 12.49$——decode-only 步共 49.96ms，摊给 4 个 decode token；
+- $234.8 \div 1024 \approx 0.229$——prefill 每 token 的成本；
+- $(238.4 - 234.8) \div 3 = 1.2$——融合步只比纯 prefill 步多花 3.6ms，摊给 3 个搭车的 decode。
+
+最后一条正是全文最容易被误读的数字，必须先说清楚：**1.2ms 是边际归因成本，不是这一步的墙钟时间**。那个混合迭代步实际仍然跑了 238.4ms，3 个 decode 请求在这一步里等的也是 238.4ms；只是在账本上，它们各自只为这一步「添」了 1.2ms。
+
+还要交代三个实验条件，免得这组数字被外推：这是 **microbenchmark**（单步基准，不是端到端 QPS）；是 2023 年 LLaMA-13B / A6000 上的结果；maximal 行共 $1021+3=1024$ token，与 prefill-only 行形状对齐。论文 Table 2 的表注原文写的是「prompt size 1024 of batch size 4」，字面上与总量有歧义；本文只取能闭合的事实——**该步的总计算量是 1024 个 prefill token**，具体是一个长请求还是多个请求的组合，表注不足以断定，不替论文猜。
+
+凭什么 3 个 decode token 搭车只多花 3.6ms？我们从 30 秒回顾讲起。下文用 $\tau$ 表示每步 token 预算（即配置项 max_num_batched_tokens），它的正式定义在第 7 节。
+
+## 1. 30 秒回顾：长 prompt 占住全批共用的站
+
+[《连续批处理》第 4 节](/blog/连续批处理-为什么推理引擎不凑够一批再发车/)详细演过这个病理，这里只留两句话：连续批处理下，全批请求共用同一个迭代步、齐步走；如果不切块，一个长 prompt 要连续占用好几个迭代步才能完成 prefill，这几站里车上所有 decode 请求一步都前进不了。因果要钉准：**问题不是「长 prompt 算得慢」，是「它占住了全批共用的迭代步」。**
+
+这一节真正的新内容，是 decode 的浪费到底有多大。同一模型、同一硬件、序列长 1024：
+
+- $B=1$ 时，decode 每 token 的时间是 prefill 的 **200 倍**；
+- $B=2$ 时为 **100 倍**；
+- $B=18$ 时降到 **16.7 倍**。
+
+这三个数出自 Sarathi 论文对六层算子的逐一测量（Fig 3），先展示现象，下一节给出解释。
+
+<CpDecodeCostFigure />
+
+*图 1：Decode 每 token 的相对成本随同车人数快速下降；三个标注点（200× / 100× / 16.7×）是论文实测，曲线趋势为示意。*
+
+一个人跑车时 decode 贵 200 倍，凑到 18 个请求就只剩十几倍——这就是值得给它找车拼的原因，也顺带说明：优化 decode 的空间远大于优化 prefill。那为什么人多就能便宜？需要先请出一把旧尺子。
+
+## 2. 理论支点：算术强度
+
+算术强度——每搬 1 字节能做多少次乘加——以及屋顶图的完整教学，在[《一次推理的旅程》第 4 节](/blog/一次推理的旅程-Prefill与Decode/)里讲过。这里不重教，直接拿它来定位这台机器上的两个工作点。
+
+**Prefill 在平台区。** LLaMA-13B 的所有主要算子，在 batch=1 时算术强度已经很高；单个请求的序列长到 512 token，就足以打满 A6000 的算力，每 token 成本几乎不随 batch 变化。注意一个口径坑：论文 Fig 4a 里那个约 **180 tokens/ms 的峰值**是单层微观数字（图注原文就是 single layer）；整机单请求的口径是 $1/0.229 \approx 4.4$ tokens/ms，batch=4 时四个请求并行推进、聚合约 17.4 tokens/ms。
+
+**Decode 在斜线区。** Decode 的算术强度比 prefill 低两个数量级以上，在实际能装下的 batch 范围内——13B、1K 上下文的 A6000 最多装 18 个请求——始终是带宽受限。只有 batch 大到 256 那种形状才开始滑上平台，但那形状因 KV 占用根本装不下。
+
+现在可以解释第 1 节的三个倍数了：decode 每 token 成本随同车人数从 200 倍降到 16.7 倍，就是工作点**沿屋顶斜线向折点移动**的过程——搬一趟权重喂的行数越多，每行摊到的搬运越少。
+
+<CpRooflineFigure />
+
+*图 2：屋顶图上的两个工作点——Prefill 在算力平台区，Decode 在带宽斜线上；橙色虚线箭头是 decode 随同车人数增大沿斜线上移。*
+
+这张图还藏着混合批的物理基础，一句话：**Prefill 不缺算力；Decode 缺的，正是 Prefill 富余的那部分算力。** 但在把两者放进同一个迭代步之前，先要回答一个更根本的问题：一个 prompt 被切成两半、分两步算，结果凭什么不变？
+
+## 3. 切块为什么数学正确
+
+先给结论：**切块只改变 K、V 在什么时刻被重读，不改变任何一个 query 能看到的 key 集合。**
+
+### 先有两条铺垫，再命名
+
+回忆两条旧知识：第一，因果掩码是「并行计算与串行计算结果等价」的保证（见[《一次推理的旅程》2.1](/blog/一次推理的旅程-Prefill与Decode/)）；第二，前序块算完之后，它的 K、V 作为历史存在 KV cache 里，而前序块的 query 不会在后面的步骤里重新出现。
+
+在这两条之上，才好命名本节的机制：**分块因果掩码**。
+
+### 最小例子：8 个 token 切两块
+
+把 8 个 token 的 prompt 切成各 4 个 token 的两块，分两个迭代步：
+
+- 第 1 块：$q_1 \ldots q_4$ 只看 $k_1 \ldots k_4$，就是标准的下三角因果掩码；
+- 第 2 块：$q_5 \ldots q_8$ 中每个 query，能看 $k_1 \ldots k_8$ 里所有不晚于它位置的 key。前一块的 KV 已在显存里，被重新读入；前一块的 query 则不再出现。
+
+于是每个 $q_i$ 的可见集合，与一次性算完整个 prefill 时**完全一致**。可见集合一致、权重相同，每个 attention 分数自然一个不变。
+
+<CpMaskFigure />
+
+*图 3：8×8 掩码分两步计算——蓝色左上三角是第 1 步，绿色右下三角加左下矩形是第 2 步，右上整块从不计算；右侧逐行对照可见集合。*
+
+### 论证闭环：还有两个前提
+
+光讲注意力还不够，「数学等价」要补两条才闭环：
+
+1. **位置编码必须用全局位置。** 每个 token 的 position_ids 按整个序列编号，不能每块从 0 重新开始；RoPE 因此也不会算错。变长注意力内核靠 cu_seqlens（各请求 token 区间的索引数组）区分请求边界、靠位置参数区分全局位置。
+2. **投影和 FFN 是逐 token 算子。** 它们对每个 token 独立计算，token 被怎么分组、分几步喂进来，都不影响各自的结果。
+
+### KV 重读的账：块次 O(N²)，字节 O(LN)
+
+第 2 块要重读第 1 块的 KV，这确实是切块引入的额外搬运，但计量单位必须钉死，两种口径分开算。设 prompt 总长为 $L$、切成 $N$ 个等长块：
+
+- 第 1 块的 KV 被读 $N$ 次、第 2 块被读 $N-1$ 次……**块次合计 $N(N+1)/2$，是 $O(N^2)$**；
+- 按字节算，每块长 $L/N$，总读取量为 $\frac{L}{N}\cdot\frac{N(N+1)}{2}=\frac{L(N+1)}{2}$，**随块数 $N$ 线性增长**，相对不切块的额外部分约 $L(N-1)/2$。
+
+这里要配一个围栏，防止把这笔账理解错：**$n^2$ 是注意力本身的形状，不是切块的罚单。** FlashAttention 按 tile 执行时，靠前的 K 块本来就被多个 query tile 重读，只是那种重读发生在内核内的 SRAM 复用里；切块把其中一部分变成了跨迭代的 HBM 冷读。而且注意力只占前向时间的小头——Table 2 的 prefill 行里，$10/234.8 \approx 4\%$。
+
+「切块基本免费」也不是无条件的，论文 §5.4 的实测给了明确分界：
+
+<Expand title="展开：分块大小的实测代价（Sarathi §5.4，LLaMA-13B/A6000）">
+
+- Chunk = **64**：注意力开销 **3 倍**，整机 prefill 时间慢约 **5 倍**——块切到这个量级，低算术强度和重读双重计费；
+- Chunk = **128**：prefill 本身慢 **2 倍以上**，但因为能捎带更多 decode，在整批口径上反而扳回 **1.16 倍**；
+- Chunk = **256 / 512**：整机 prefill 损失分别在 **20% / 10%** 以内。
+
+所以「注意力重读可忽略」由 chunk 大小和注意力在前向中的占比共同决定，不是「切多碎都免费」。翻转条件：超长 prompt、小块很多（重读字节线性累积）、注意力占比高的架构，需要重新评估。
+
+</Expand>
+
+正确性的问题解决了。下一节回到钩子那张表：为什么 decode 一搭车，每 token 成本就能从 12.49ms 掉到 1.2ms？
+
+## 4. Decode-Maximal：为什么搭车近乎免费
+
+这一节走三级台阶：先看形状，再给意象，最后命名。
+
+### 第一级：旧做法的形状
+
+Decode 每步每个请求只产出 1 个 token，输入在形状上是「1 行」。线性算子于是退化成矩阵乘向量；而矩阵（模型权重）有几千列，搬一遍权重却只算了 1 行——[《连续批处理》第 3 节](/blog/连续批处理-为什么推理引擎不凑够一批再发车/)算过，70B 模型这一趟约 42ms，几乎全花在搬运上。
+
+### 第二级：校车末座
+
+换个意象：1021 个 prefill token 本来就要包一辆「算力大巴」——这趟权重本来就非搬不可，车的座位也是按 1024 行铺的。3 个 decode 请求把自己的 3 行拼进这辆车的末座，**不添一趟新的搬运**，车照样跑这一趟。
+
+### 第三级：命名 GEMV 与 GEMM
+
+矩阵×向量叫 GEMV，矩阵×矩阵叫 GEMM。**Decode-maximal batching 把一个 prefill 块和同车 decode 的所有线性算子融成同一个 GEMM：权重只搬一趟，两类 token 一起算。** Decode 的那几行从 GEMV 变成了融合 GEMM 的一部分。
+
+<CpFusedGemmFigure />
+
+*图 4：W 只搬一趟，1021 个 prefill 行与 3 个 decode 行拼进同一个 GEMM；虚线下方对比旧做法 GEMV——1 个 decode token 就要再搬一趟 W。*
+
+### 边际限定：不是 decode 自己变了
+
+这里的机制因果要加一道限定，避免过度声称：**不是 decode 自己单独从带宽受限变成了算力受限**，而是它搭进了一个不小于饱和块（约 512 token）的融合 GEMM，整个 kernel 落在屋顶平台区，所以 decode 那几行的**边际算力近乎免费**。如果 prefill 块本身小到没饱和，这趟车的收益也要打折——这正是下一节要讲的 chunk 选择问题。
+
+### 哪部分成本没被消掉
+
+融合只发生在线性算子上，**注意力不融合**：论文实现里 prefill 注意力和 decode 注意力仍按请求边界分开执行、成本相加。一个仅作定性的物证：Table 2 中 maximal 行的注意力是 15.2ms，接近 prefill-only 的 10.0 与 decode-only 的 5.68 之和；15.2 与 15.68 的小差距来自两行 batch 形状不同（maximal 只有 3 个 decode）。这个数不属于钩子的三条闭合恒等式，只用来证明「注意力各算各的」。此外，decode 自己要读的 KV 也一样不少。
+
+至此，钩子表的三行全部有了归属：12.49ms 是 GEMV 下每步重搬权重；1.2ms 是搭进融合 GEMM 后的边际归因；混合步的墙钟仍是 238.4ms，而小块存在的意义，就是把这个墙钟压到服务的延迟目标之内。下一节就回答：块该怎么切。
+
+## 5. chunk 大小的一阶权衡
+
+Chunk 不是越小越好，它由三个理论量共同决定，顺序是：先看地板，再看离散悬崖，最后看需求侧。
+
+### 5.1 最小饱和块（地板）
+
+第一约束是 prefill 块本身要能打满算力：**能让 prefill 吞吐达峰的最小长度，就是 chunk 的地板**。LLaMA-13B / A6000 上这个长度是 512——chunk 取 256 时，峰值吞吐掉 12.5%。模型的隐藏维度越大，饱和块越小：单层 GPT-3（hidden 12288）在 A100 上 256 就饱和了。这和[《一次推理的旅程》第 4 节](/blog/一次推理的旅程-Prefill与Decode/)讲的「很短的 prefill 会滑下屋顶」是同一件事。
+
+### 5.2 tile 料盒（离散悬崖）
+
+先给意象：GPU 算矩阵乘时，把矩阵切成固定大小的 tile（料盒）分给各线程块，每个线程块干一样多的活；当矩阵维度正好是 tile 的整数倍时没有空算，否则多出来的那一点也要一整个线程块兜住。
+
+论文里的实测非常直观（单请求 prefill 迭代，LLaMA-13B/A6000，tile 取 128）：
+
+- 序列长 128 → 256：迭代时间 55 → 69.8ms，**+27%**，这是 token 翻倍的正常增长；
+- 序列长 256 → 257：69.8 → 92.33ms，**+32%**——只多 1 个 token，却多踩了一整个 tile。
+
+这就是 tile quantization（瓦片量化）。因此理想配置还要让「chunk 大小 + 同车拼车的 decode 数」凑成 tile 的整数倍。
+
+<Expand title="展开：论文给的对齐公式">
+
+论文的建议：若选 chunk 为 256、tile 为 128、最大批大小为 $B$，则实际 chunk 长度取 $256-(B-1)$，使得 chunk 与最多 $B-1$ 个拼车 decode 行相加后仍为 tile 的整数倍。这只是对齐手段，chunk 的下限仍由 5.1 的饱和块决定。
+
+</Expand>
+
+### 5.3 P:D 比（需求侧）
+
+前两个量看供给侧（一块能不能高效算），第三个量看需求侧（总共有多少 decode 等着搭车）。定义 **P:D 比**为一个批次中 prefill token 数与 decode token 数之比。
+
+推导先于结论。设一辆车有 4 个请求槽位，其中 1 个在 prefill、3 个在 decode，chunk 取 128：一段长度为 $P$ 的 prefill 会产生 $P/128$ 个块，每个块能捎这 3 个 decode，总共能捎 $3P/128$ 个 decode token。要把全部 decode 捎完，需要 $P/128 \ge 1$ 对应的总量关系，代入后即 **P:D 比大于 42**；chunk 取 256 时同样的推导给出的门槛是 **84**。
+
+<CpTradeoffFigure />
+
+*图 5：Chunk 增大时 prefill 效率上升、可搭车的 decode 量下降，两条曲线夹出推荐区间。概念示意，非实测；交叉点由实际 P:D 比决定。*
+
+收口成一句可操作的话：**在 TBT 预算允许的前提下，chunk 不小于最小饱和块、让「块 + 拼车数」对齐 tile，并尽量满足实际的 P:D 比。** 这套权衡从 Sarathi 到今天的 vLLM 一直成立；但「每步预算具体取多少、由谁来定」，则是引擎实现的事。
+
+## 6. 机制谱系
+
+在进入 vLLM 之前，先用三句话理清这套机制的来历，增益数字不再重复（需要数字的读者见[《连续批处理》第 4 节](/blog/连续批处理-为什么推理引擎不凑够一批再发车/)）：
+
+- **Sarathi**（2023，arXiv 2308.16369）：提出 chunked-prefills 与 decode-maximal batching，即第 3–5 节的批结构。
+- **Sarathi-Serve**（OSDI 2024，arXiv 2403.02310）：两个增量。其一，**从 TBT 服务目标反推每步 token 预算**——先按「单请求迭代耗时的若干倍」定出预算，再让所有批次不超过它；其二，**stall-free batching**（无停顿打包），每步的顺序固定为：全部 running decode → 一个在建 prefill 块 → 新请求。论文实测，naive 混合批（整段 prefill 与 decode 同批）的 TBT 峰值相对 decode-only 膨胀 **28.3 倍**；机制上的推论是——一步内的计算量没有上界，TBT 就没有上界——切块之后才有紧上界。此外，每步计算量均匀，还顺带显著减少了流水线并行里的气泡（Sarathi 原文措辞为 significantly reducing，并非完全消除）。
+- **SplitFuse**（DeepSpeed-FastGen，arXiv 2401.08671）：与 Sarathi 独立、同期把同类分块思想工程化。
+
+<Expand title="展开：Sarathi-Serve 算法 3 的打包顺序">
+
+每个调度迭代：先把所有 running 的 decode 装进下一批；再装一个未完成 prefill 的下一块；只有在这两类都安顿好之后，才在剩余 token 预算内容纳新请求，且新请求的首块同样不能超出剩余预算。vLLM V1 的调度顺序与这一顺序一致——下一节就讲。
+
+</Expand>
+
+## 7. vLLM 现状：用理论推导官方默认值
+
+涉及 vLLM，按三个时间戳区分：
+
+- **论文时代**（2023）：没有 chunked prefill，抢占还有 swap 与 recompute 两条路；
+- **V0 引擎**：靠 `--enable-chunked-prefill` 显式开启；
+- **V1 引擎**（0.21，当前默认）：只要模型支持，chunked prefill **默认开启**。每步顺序是 running 的 decode 先占预算 → 在建 prefill 吃剩余预算 → 才接纳 waiting 里的新请求；默认 threshold 为 0 时，FCFS 加预算分配自然保证每步至多有一个未完成的 prefill 块。
+
+### 默认预算为什么这么定
+
+0.21 的默认预算按硬件分两档，具体数字（8192/2048 与 16384/8192）在[《连续批处理》第 5 节的折叠表](/blog/连续批处理-为什么推理引擎不凑够一批再发车/)里，这里不重复贴；用前面五节的理论，可以推出这张表为什么长这样：
+
+- **在线与离线的预算为什么不同**：在线流量 decode 比例高，预算要给「prefill 块 + decode 搭车」留出余量，就是第 5 节的 P:D 结构；离线没有 decode 混部，可以整块吃满。倍数要绑定档位看：小显存档（含 A100）差 **4 倍**（8192/2048）；70GiB 以上的非 A100 档差 **2 倍**（16384/8192）。
+- **为什么有「70GiB 以上且设备名排除 A100」这条特判**：PR #17885 实测，盲目给 A100 大预算会伤吞吐——A100 的算力/带宽代际比与 H100 不同。
+
+### PR #17885 的数字与全部条件
+
+这条 PR 是默认档分 A100/H100 的直接原因，数字和实验条件要一起看：模型 Llama-3.1-70B、A100、`--max-model-len 10000`、显存占用比例 0.95、benchmark_serving 跑 ShareGPT、**请求到达率**为 `--request-rate inf`（灌满，即离线口径，不是在线 SLO 压测）、400 个 prompt：
+
+- TP=2：1054 → 1438 tokens/s，小预算**快 36%**；
+- TP=4：3053 → 2994 tokens/s，约 **−2%**，基本中性。
+
+没有一个数字来自在线压测，所以结论不是「A100 必须调小」，而是：**调整方向随硬件代际、张量并行度、在线/离线而反转**，上线必须按自己的负载复测。
+
+### 关闭 chunked prefill 的三层代价
+
+如果显式关掉它（`--no-enable-chunked-prefill`），代价有三层，别笼统说成「可能出问题」：
+
+1. **配置校验直接报错**：当 $\tau < \text{max\_model\_len}$ 且关闭分块时，V1 抛出 ValueError、确定性拒绝启动（严格小于，**等于可以**；config/scheduler.py 的 verify_max_model_len）。官方 optimization 文档的措辞是「must be greater / may crash」，与代码略有出入，以代码口径为准。
+2. **官方另有 warning**：对生成式模型手动关闭时，提示「may crash or produce incorrect outputs」（arg_utils.py:2318-2322）。
+3. **默认用户其实踩不到这个坑**：关闭时引擎会把预算兜底为 $\max(\text{max\_model\_len}, \text{default})$；只有显式把预算设小的人才会撞上。
+
+适用场景只有一种：纯离线、长 prefill、没有 decode 混部的作业。
+
+<Expand title="展开：0.29 快照与模型支持边界（2026-09，以官方文档为准）">
+
+- 0.29（2026-09-09）新增一档：显存 **≥160GB**（B200/B300 类）时在线预算也是 16384；两个 partial-prefills 计数旋钮在 0.29 的核心调度器里仍不被读取。
+- 模型边界：encoder-decoder 模型不支持 chunked prefill，且配置会**连带强制关闭 prefix caching**；pooling（池化）模型需要显式开启才分块。
+
+</Expand>
+
+默认值讲完，下一节是本文的工程重点：0.21 里每一个相关旋钮，分别改了什么、是真生效还是只摆样子。
+
+## 8. vLLM 调参全旋钮
+
+先用一个贯穿场景把这一节和下一节串起来：假设你在维护多卡 A100 上的一个 70B 在线服务，流量形状接近 ShareGPT。正确流程永远是先跑基准、看四个指标，然后**一次只动一个旋钮**，再用相同形状压测复测。
+
+### 四个常用旋钮
+
+| 旋钮 | 控制什么 / 方向 | 在 0.21 里谁在读它 |
+| --- | --- | --- |
+| **max_num_batched_tokens**（即 $\tau$） | 每步总 token 预算。调小→ITL 更稳；调大→TTFT 更快。注意它**不是 chunk size**：chunk 是 $\tau$ 扣掉全部 decode 之后的剩余量 | 核心调度器硬约束 |
+| **max_num_seqs** | 同车请求数上限。调小省 KV、ITL 稳；调大利于吞吐但 TBT 涨 | 核心调度器硬约束 |
+| **max_num_partial_prefills**（默认 1） | 文档声称：同时处于未完成 prefill 的请求数 | 0.21 的核心调度器**不读它**；默认下「至多一块」由 FCFS+预算自然保证。设为 >1 时，配置后置处理会自动把 threshold 置为 max_model_len 的 4%（见下）。全树唯一的执行路径读取点在 ROCm 的 AITER 后端（rocm_aiter_fa.py:478），且那里只用它给 CUDA graph capture 定尺寸，**不参与调度决策** |
+| **scheduler_reserve_full_isl**（默认 True） | 准入时按完整输入长度估算 KV 块；是可行性估算、不是物理预留 | KV cache manager 生效 |
+
+关于 $\tau$ 还有两条官方口径要挂条件：文档说「最优吞吐建议 $\tau > 8192$」，原文限定是 *especially for smaller models on large GPUs*，属于**吞吐口径**，不能拿它做在线 ITL 决策；文档同时明确，2048 这样的小预算才有更好的 ITL。
+
+### 折叠：冷门旋钮与周边旋钮
+
+<Expand title="展开：threshold、预留字段、async、性能模式、并行度、APC">
+
+- **long_prefill_token_threshold**（默认 0）有「双身份」：它的 docstring 意图是长/短 prompt 的分类线（为限制长 prompt 并发而设）；但在 0.21 的执行路径里，它实际生效为**每请求每步 token 数的硬截断**——scheduler.py:371-372（running）与 636-638（waiting）都是在 $0 < \text{threshold} < \text{num\_new\_tokens}$ 时把该请求本步的 token 数封顶为 threshold。0 表示不截断。设为 >1 个 partial prefill 后，多个块确实可以在同一步共存，但它们的**个数没有任何代码按计数值硬限制**，真正的上限只有 token 预算和 max_num_seqs。
+- **max_long_partial_prefills**（默认 1）：0.21 全树 grep 无任何消费方，0.29 已核核心调度器也不读——是**仅预留字段**，调了不产生调度效果；升级版本前要重新全树复核。
+- **async_scheduling**（异步调度）：默认值（None）在 **generate 模型且 executor 支持**时自动开启，用来消除调度气泡；pooling 模型或不支持的 executor 默认关。它与 EAGLE / MTP / Draft Model / NGram-GPU 类投机方法不兼容，显式强开遇到不兼容的投机方法会硬报错。
+- **性能模式**：0.21 有 balanced / interactivity / throughput 三档。throughput 把默认预算和座位数都翻倍，但**只对没有显式设置的值生效**，在线场景可能恶化 TBT；interactivity 主要改 CUDA graph 的细粒度，不动预算。
+- **并行度**：TP 把权重分片、单卡腾出更多 KV 空间，但过大会有同步代价；PP 按层分布，有延迟代价。
+- **APC 交互**：KV 块为 16 token、只缓存写满的块；命中长度还有「num_tokens − 1」规则——哪怕全对齐全命中，最后一个 token 为了拿 logits 也必须重算，块对齐下整个末块（最多 16 token）都要重算；请求带 prompt_logprobs 时会直接跳过 APC 读取。
+- 两个可选关注项：max_num_scheduled_tokens（投机解码下与 $\tau$ 分离的硬帽）、num_requests_waiting_by_reason（按原因统计等待请求）。
+
+</Expand>
+
+<CpTuningLoopFigure />
+
+*图 6：指标驱动的调参闭环——看指标 → 定位 → 一次一旋钮 → 同形状压测，不达标带新数据回到起点；下方附症状速查。*
+
+旋钮认得清，还得知道怎么读数——最后一节讲指标口径、一个关于抢占的关键修正，以及压测方法论。
+
+## 9. 指标口径、抢占的 ITL 口径与压测闭环
+
+指标的逐项定义在[《一次推理的旅程》第 8 节](/blog/一次推理的旅程-Prefill与Decode/)，这里只做口径辨析和诊断，不重写定义。
+
+### 抢占与 ITL：一个必须修正的口径
+
+很多资料（包括本文大纲的初稿）会说「抢占重算不产生 ITL 样本」。这句话只对了一半，0.21 的代码给出的真实行为是：
+
+- decode 中发生抢占后，重算的各个迭代步没有输出，确实不产生样本；
+- **但重 prefill 并不会把请求的 is_prefilling 重置为 True**（output_processor 里没有任何抢占处理做这件事，它在首个 token 之后就一直是 False）；
+- 于是恢复后发出第一个 token 时，这一步走 decode 分支，记录的是 $\text{itl} = \text{now} - \text{last\_token\_ts}$，而 last_token_ts 在整个抢占+重算期间冻结在抢占前最后一个 token 上——**这一条 ITL 样本横跨整个 stall**（stats.py:396-402）。
+
+设计文档的原话也一致：decode 期间发生抢占，会影响 inter-token、decode、inference 三个区间；客户端 benchmark_serving 按实际收到 token 的时间差统计，同样会把这个 gap 记成一个大 TPOT。**只有抢占发生在 prefill 阶段时，才并入 TTFT、不产生 ITL 样本。**
+
+这条口径直接决定诊断方法：抢占既能被 num_preemptions 抓到，也会在 ITL P99 上留一个与重算长度同量级的样本，所以 ITL 鼓包不能直接等同于 chunk 太大。
+
+### 其他口径
+
+- **TTFT** 从请求到达（tokenization 开始）计时、包含排队；轻载时约等于 prefill 耗时，过载升高是容量信号，不是模型变慢。
+- **ITL** 一律看分位（P99），不看均值。
+- **num_preemptions** 是只增的 Counter；**kv_cache_usage_perc** 的分母排除 null block，且**只有被请求持有的块计为已用**（ref_cnt > 0）——无主的 APC 缓存块仍在 free_block_queue 里、可被驱逐、不计 usage。所以轻载高占用不等于压力，判据是「高占用 + 抢占数」。
+- running / waiting 是 Gauge。
+
+### 诊断四象限
+
+1. **ITL P99 周期鼓包**：先和 num_preemptions 交叉验证。抢占数为 0、且鼓包与长 prompt 提交时间同步 → 是 chunk 占站，调小 $\tau$；
+2. **抢占数上涨**：ITL 的大样本是抢占造成，别误诊为 chunk 问题；若同时 kv_cache_usage 打满 → 是容量不足，扩容或降 max_num_seqs，而不是拧 $\tau$；
+3. **TTFT 高 + waiting 持续堆积** → prefill 堵（预算偏小或 prefill 算力不足）；
+4. **轻载 TTFT 就高** → 查 APC：命中率、「−1/末块」重算规则、请求是否因 prompt_logprobs 跳过了 APC。
+
+### 压测方法论
+
+- benchmark_serving 在有限到达率下默认按 **Poisson 过程**发压（固定平均速率的随机到达，刻画真实流量）；`--request-rate inf` 则是离线灌满——这正是 PR #17885 的口径，两者必须区分。
+- 固定随机种子和数据集长度分布，每次只改一个旋钮，对比 TTFT P50、ITL P99、达标 QPS 三项。
+- **不能用离线 LLM_CLASS 的 tokens/s 推断在线 ITL**，形状不同、瓶颈也不同。
+- 多实例聚合：Counter **求和**；Gauge **不能求和**（取 max 或按容量加权）；Histogram 需分桶合并；服务端数字与客户端体感之间还差着网络和客户端排队。
+
+<Expand title="展开：goodput 与几个名词对照">
+
+Goodput（有效服务吞吐）沿用 DistServe 的口径：TTFT 与 ITL 两个延迟目标**同时满足**时的请求速率，不是裸吞吐。TBT、ITL 是同一个东西（相邻两 token 的间隔）；TPOT 是 DistServe 按输出 token 数归一化的口径，引用论文数字时留意区别。更详细的辨析见[《连续批处理》第 7 节](/blog/连续批处理-为什么推理引擎不凑够一批再发车/)。
+
+</Expand>
+
+## 10. 边界、下游与收束
+
+显式列出本文结论的翻转条件：
+
+- **轻载或 batch=1**：没有车可拼，两类机制都不带来收益；
+- **纯离线大批量 prefill**：切块反而拆碎算力，应关闭或调大预算；
+- **流水线并行的大模型**：均匀切块反而显著减少气泡，方向与在线混部相反；
+- **MoE 模型**：decode 的权重搬运口径与 dense 模型不同，默认建议要重新自测；
+- **超长 prompt 且小块很多**：重读字节随块数线性累积，开始计费。
+
+下游怎么走：如果 chunk 已经压得很小、高混部下 P99 仍被干扰打爆，问题就在 prefill/decode 共用节拍器本身——那是[《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署/)的场景（拆成两个节拍器，代价约 2 倍实例、依赖 RDMA，0.21/0.29 官方仍标 experimental、原话不提升裸吞吐）。同车的邻居还有[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改/)（草稿 token 的校验行也吃同一套预算）和 APC（前序块复用，见[《PagedAttention》4.3](/blog/PagedAttention-给KV-Cache装上虚拟内存/)）。想看本文这套机制的代码实现，去推理加速专栏的[《调度与 KV Cache》](/inference/)。
+
+最后回头算钩子那笔账：同样一趟权重搬运，GEMV 下每个 decode token 要 12.49ms；拼进融合 GEMM，每个只摊 1.2ms。**Chunked Prefill 做的事，就是把「一趟搬运喂更多 token」的时间安排标准化**；它不让这趟搬运消失，只让尖刺有界——剩下的差距，只属于 PD 那样的部署形态。
+
+## 11. 常见误解
+
+- **「切块会改变结果」**——不会。分块因果掩码加全局位置编码，保证与完整 prefill 数学等价。
+- **「chunk 越小体验越好」**——小块降低 prefill 效率、触发 tile 浪费；ITL 好看但 TTFT 变差。
+- **「开了 chunked prefill 裸吞吐更高」**——典型情况下它用少量裸吞吐和长 prompt 的 TTFT，换 ITL 稳定与 SLO 约束下的 goodput。
+- **「max_num_batched_tokens 就是 chunk size」**——$\tau$ 是每步总预算，chunk 是扣掉 decode 之后的余量。
+- **「关掉它只是少个优化」**——$\tau < \text{max\_model\_len}$ 时关闭会确定性 ValueError、拒绝启动。
+- **「TTFT 升高就是模型变慢」**——TTFT 含排队，过载时是容量信号。
+- **「$O(N^2)$ 重读是切块的罚单」**——块次是 $O(N^2)$，但字节随块数线性；$n^2$ 是注意力本身的形状。
+
+## 12. 自测（答案点击展开）
+
+**1.** 用 8 token、切两块的最小例子，说出第 2 块每个 query 的可见集合。为什么每个 attention 分数不变？
+
+**2.** Decode-maximal 使 decode 的瓶颈性质发生了什么变化？这里的边际限定是什么？哪部分成本没有被消掉？
+
+**3.** Chunk=128、4 个槽位时，为什么 P:D 比大于 42 就能把全部 decode 捎完？给出推导。
+
+**4.**（数字题）只给三个整步总量（234.8 / 49.96 / 238.4ms），重建 0.229、12.49、1.2 三个数；**为什么不能用 238.4 ÷ 3 算 decode 的成本**？
+
+**5.**（诊断题）ITL 每隔十几秒鼓包一次、num_preemptions 为 0、waiting 请求持续增加，怎么处置？如果鼓包的同时 num_preemptions 在涨、kv_cache_usage 接近 1，结论有什么不同？
+
+**6.**（加分辨析）有人把在线预算从 2048 直接调到 16384，理由是官方说「最优吞吐建议 >8192」。这个推理漏掉了哪些条件？
+
+**7.** 为什么全局 position_ids 是等价性的前提？如果每块从位置 0 重新编号，会发生什么？
+
+<Expand title="参考答案">
+
+1. 第 2 块的 $q_5 \ldots q_8$，每个能看 $k_1 \ldots k_8$ 中位置不晚于自己的全部 key（如 $q_5$ 看 $k_1 \ldots k_5$）。每个 query 的可见集合与完整 prefill 完全一致、权重相同，所以 attention 分数一个不变。
+2. Decode 行从 GEMV 变成融合 GEMM 的一部分，权重只搬一趟、边际算力近免费。边际限定：不是 decode 自己转成算力受限，是它搭进了不小于饱和块的 kernel；chunk 不饱和则收益打折。没消掉的：注意力不融合（仍按请求边界分开算）、decode 自己的 KV 照读。
+3. 1 个 prefill 请求加 3 个 decode，长度 $P$ 的 prefill 产生 $P/128$ 个块，每块捎 3 个 decode，共捎 $3P/128$；要覆盖全部 decode 需要的总量关系代入 P:D 定义即 P:D > 42。chunk=256 时门槛是 84。
+4. $234.8 \div 1024 \approx 0.229$；$49.96 \div 4 = 12.49$；$(238.4 - 234.8) \div 3 = 1.2$。不能用 $238.4 \div 3$：238.4ms 里绝大部分是本来就要发生的 1021 个 prefill 的计算，decode 的成本只应算它「添」的边际部分，即两行总量之差。
+5. 前半：抢占数为 0、鼓包与长 prompt 同步，是 chunk 占站，调小 $\tau$，并结合长 prompt 的 TTFT 权衡。后半：抢占数上涨且显存占用打满，是容量 thrashing，调参无效，该扩容或降 max_num_seqs，别把抢占造成的 ITL 大样本误诊为 chunk 太大。
+6. 至少漏三条：①「>8192」原文限定小模型配大 GPU 的吞吐口径，不是在线 ITL 建议；②在线预算要给 decode 搭车留余量，方向随硬件代际、TP 度、在线/离线反转（A100 上大预算可能反伤吞吐）；③还要让 chunk 加拼车数对齐 tile。上线必须按自己的负载复测，不能直接套用。
+7. RoPE 等位置编码按位置编号计算，切块后每个 token 必须用它在全序列中的全局位置；若每块从 0 编号，不同块里相同位置的 token 会得到相同的位置编码、注意力与前向结果全部错乱，等价性不成立。
+
+</Expand>
+
+## 参考资料
+
+**论文：**
+
+1. [SARATHI: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills](https://arxiv.org/abs/2308.16369)（2023 预印本）
+2. [Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve](https://arxiv.org/abs/2403.02310)（Agrawal et al., OSDI 2024）
+3. [DeepSpeed-FastGen: High-throughput Text Generation via MII and DeepSpeed-Inference](https://arxiv.org/abs/2401.08671)（2024，SplitFuse 为其中调度组件）
+4. [Efficient Memory Management for Large Language Model Serving with PagedAttention](https://arxiv.org/abs/2309.06180)（Kwon et al., SOSP 2023）
+5. [Orca: A Distributed Serving System for Transformer-Based Generative Models](https://www.usenix.org/conference/osdi22/presentation/yu)（Yu et al., OSDI 2022；无 arXiv 预印本）
+6. [DistServe: Disaggregating Prefill and Decode for Goodput-optimized LLM Serving](https://arxiv.org/abs/2401.09670)（OSDI 2024）
+
+**官方文档、源码与发布：**
+
+7. [vLLM 优化配置文档](https://docs.vllm.ai/en/latest/configuration/optimization.html)（2026-09 快照，以官方为准）
+8. vLLM 0.21 源码：vllm/config/scheduler.py、vllm/v1/core/sched/scheduler.py、vllm/v1/metrics/stats.py、vllm/v1/core/block_pool.py、vllm/engine/arg_utils.py
+9. [PR #17885：A100 使用更小的默认 token 预算](https://github.com/vllm-project/vllm/pull/17885)
+10. [vLLM v0.21.0 Release](https://github.com/vllm-project/vllm/releases/tag/v0.21.0)、[v0.29.0](https://github.com/vllm-project/vllm/releases/tag/v0.29.0)
+11. [vLLM 指标设计文档](https://docs.vllm.ai/en/latest/design/metrics.html)
+
+**站内延伸：**
+
+12. [一次推理的旅程：Prefill 与 Decode](/blog/一次推理的旅程-Prefill与Decode/)
+13. [连续批处理：为什么推理引擎不「凑够一批再发车」](/blog/连续批处理-为什么推理引擎不凑够一批再发车/)
+14. [PagedAttention：给 KV Cache 装上「虚拟内存」](/blog/PagedAttention-给KV-Cache装上虚拟内存/)
+15. [PD 分离：把 Prefill 和 Decode 拆开部署](/blog/PD分离-把Prefill和Decode拆开部署/)
+16. [投机解码：小模型打草稿，大模型一次批改](/blog/投机解码-小模型打草稿大模型一次批改/)
+17. [推理加速专栏：调度与 KV Cache](/inference/)

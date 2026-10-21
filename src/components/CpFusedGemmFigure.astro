@@ -1,0 +1,68 @@
+---
+// 图4：融合 GEMM——W 只搬一趟，1021 prefill 行与 3 decode 行拼进同一个矩阵乘
+// 虚线下方对比旧做法 GEMV：1 个 decode token 就要搬一趟 W
+---
+
+<figure>
+  <svg viewBox="0 0 640 350" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="cpArrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/>
+      </marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">权重只搬一趟，两类 Token 一起算——这就是 10× 的来源</text>
+
+      {/* W 矩阵 */}
+      <rect x="36" y="80" width="66" height="150" rx="4" fill="#f4f6f8" stroke="#64748b"/>
+      <text x="69" y="150" font-size="11" font-weight="bold" fill="#334155" text-anchor="middle">W</text>
+      <text x="69" y="168" font-size="9" fill="#64748b" text-anchor="middle">模型权重</text>
+      <text x="69" y="66" font-size="9.5" fill="#0a7a50" text-anchor="middle">只搬一趟 ✓</text>
+
+      <line x1="112" y1="155" x2="148" y2="155" stroke="#64748b" stroke-width="1.6" marker-end="url(#cpArrow)"/>
+
+      {/* 拼接输入矩阵 */}
+      <rect x="156" y="80" width="128" height="116" rx="3" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="220" y="132" font-size="10" font-weight="bold" fill="#006377" text-anchor="middle">1021 个</text>
+      <text x="220" y="148" font-size="10" font-weight="bold" fill="#006377" text-anchor="middle">Prefill token</text>
+      <text x="220" y="176" font-size="8.5" fill="#006377" text-anchor="middle">（本来就要算）</text>
+
+      <rect x="156" y="196" width="128" height="34" rx="3" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="220" y="217" font-size="10" font-weight="bold" fill="#b97a1f" text-anchor="middle">3 个 Decode token</text>
+
+      {/* 拼接大括号意象：左侧竖线把两块括在一起 */}
+      <path d="M150,84 q-6,73 0,146" fill="none" stroke="#94a3b8" stroke-width="1.4"/>
+
+      <text x="306" y="160" font-size="16" font-weight="bold" fill="#334155" text-anchor="middle">×</text>
+      <text x="306" y="178" font-size="9" fill="#64748b" text-anchor="middle">融合</text>
+      <text x="306" y="191" font-size="9" fill="#64748b" text-anchor="middle">GEMM</text>
+
+      <line x1="330" y1="155" x2="366" y2="155" stroke="#64748b" stroke-width="1.6" marker-end="url(#cpArrow)"/>
+
+      {/* 输出 */}
+      <rect x="374" y="92" width="96" height="126" rx="4" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="422" y="150" font-size="10" font-weight="bold" fill="#0a7a50" text-anchor="middle">1024 行输出</text>
+      <text x="422" y="168" font-size="9" fill="#0a7a50" text-anchor="middle">一次前向得到</text>
+
+      {/* 注意力小注 */}
+      <rect x="498" y="96" width="120" height="66" rx="5" fill="#fdf6ec" stroke="#e6a23c"/>
+      <text x="558" y="118" font-size="9" font-weight="bold" fill="#b97a1f" text-anchor="middle">注意：注意力不融合</text>
+      <text x="558" y="135" font-size="8.5" fill="#b97a1f" text-anchor="middle">Prefill / Decode 注意力</text>
+      <text x="558" y="149" font-size="8.5" fill="#b97a1f" text-anchor="middle">仍按请求边界分开算</text>
+
+      {/* 分隔虚线 */}
+      <line x1="36" y1="252" x2="616" y2="252" stroke="#cbd5e1" stroke-dasharray="5,4"/>
+      <text x="52" y="270" font-size="9.5" font-weight="bold" fill="#b14a4a">旧做法（GEMV）：</text>
+
+      {/* 底部 GEMV 对比 */}
+      <rect x="170" y="278" width="40" height="30" rx="3" fill="#f4f6f8" stroke="#64748b"/>
+      <text x="190" y="297" font-size="9" fill="#334155" text-anchor="middle">W</text>
+      <text x="190" y="325" font-size="8" fill="#b14a4a" text-anchor="middle">又搬一趟</text>
+      <text x="228" y="297" font-size="13" fill="#334155">×</text>
+      <rect x="248" y="288" width="120" height="11" rx="2" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="308" y="297" font-size="8.5" fill="#b97a1f" text-anchor="middle">1 个 decode token</text>
+      <line x1="384" y1="293" x2="414" y2="293" stroke="#64748b" stroke-width="1.4" marker-end="url(#cpArrow)"/>
+      <text x="500" y="298" font-size="9" fill="#475569" text-anchor="middle">每步每请求重复——12.49ms 的来源</text>
+    </g>
+  </svg>
+</figure>

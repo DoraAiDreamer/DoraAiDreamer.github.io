@@ -1,0 +1,52 @@
+---
+// 图6：调参闭环——看指标 → 定位瓶颈 → 一次只拧一个旋钮 → 同形状压测 → 回到监控
+---
+
+<figure>
+  <svg viewBox="0 0 640 340" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="cpLoopArrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/>
+      </marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">调 Chunked Prefill 是指标驱动的闭环，不是一锤子</text>
+
+      {/* 四个节点 */}
+      {[
+        { x: 36, title: "① 看指标", items: "TTFT / ITL P99", items2: "抢占数 · 显存占用", color: "#d9eef3", stroke: "#0085a1", tc: "#006377" },
+        { x: 190, title: "② 定位瓶颈", items: "四象限交叉验证", items2: "先排除抢占", color: "#f2f8fa", stroke: "#0085a1", tc: "#0c5f74" },
+        { x: 344, title: "③ 拧旋钮", items: "一次只动一个", items2: "τ · seqs · 准入", color: "#fdf0e0", stroke: "#e6a23c", tc: "#b97a1f" },
+        { x: 498, title: "④ 压测复测", items: "同形状同流量", items2: "比达标 QPS", color: "#e4f5ec", stroke: "#0f9d68", tc: "#0a7a50" },
+      ].map((n) => (
+        <g>
+          <rect x={n.x} y="64" width="118" height="96" rx="8" fill={n.color} stroke={n.stroke} stroke-width="1.5"/>
+          <text x={n.x + 59} y="92" font-size="11.5" font-weight="bold" fill={n.tc} text-anchor="middle">{n.title}</text>
+          <text x={n.x + 59} y="118" font-size="9.5" fill="#475569" text-anchor="middle">{n.items}</text>
+          <text x={n.x + 59} y="136" font-size="9.5" fill="#475569" text-anchor="middle">{n.items2}</text>
+        </g>
+      ))}
+
+      {/* 节点间箭头 */}
+      {[154, 308, 462].map((x) => (
+        <line x1={x} y1="112" x2={x + 32} y2="112" stroke="#64748b" stroke-width="1.8" marker-end="url(#cpLoopArrow)"/>
+      ))}
+
+      {/* 回流弯曲箭头：④ 底部绕回 ① */}
+      <path d="M557,160 C557,236 95,236 95,160" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="6,4" marker-end="url(#cpLoopArrow)"/>
+      <text x="320" y="226" font-size="9.5" fill="#64748b" text-anchor="middle">不达标或形状变化 → 带新数据回到 ①</text>
+
+      {/* 症状速查 */}
+      <text x="40" y="272" font-size="10" font-weight="bold" fill="#0c5f74">症状速查：</text>
+      <line x1="36" y1="280" x2="604" y2="280" stroke="#cbd5e1"/>
+      {[
+        { y: 298, s: "ITL 鼓包 + 抢占数 0 → 调小 τ" },
+        { y: 318, s: "抢占数 ↑ + 显存满 → 扩容" },
+      ].map((r) => (
+        <text x="40" y={r.y} font-size="9.5" fill="#475569">{r.s}</text>
+      ))}
+      <text x="340" y="298" font-size="9.5" fill="#475569">TTFT 高 + 等待堆积 → prefill 堵</text>
+      <text x="340" y="318" font-size="9.5" fill="#475569">轻载 TTFT 即高 → 查前缀缓存</text>
+    </g>
+  </svg>
+</figure>

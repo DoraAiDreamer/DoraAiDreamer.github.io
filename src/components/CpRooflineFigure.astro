@@ -1,0 +1,46 @@
+---
+// 图2：屋顶图上两工作点定位（非教学版）——prefill 在平台区、decode 在斜线区
+// 工作点位置由「这一步的总行数」决定；decode 随 batch 沿斜线向折点移动
+---
+
+<figure>
+  <svg viewBox="0 0 640 320" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">工作点位置由这一步的总行数决定，不由它叫 Prefill 还是 Decode</text>
+
+      {/* 坐标系：x 算术强度、y 可达性能，均示意 */}
+      <line x1="76" y1="250" x2="600" y2="250" stroke="#94a3b8"/>
+      <line x1="76" y1="56" x2="76" y2="250" stroke="#cbd5e1"/>
+      <text x="600" y="270" font-size="10" fill="#475569" text-anchor="end">算术强度（每搬 1 字节能做的乘加数）→</text>
+      <text x="34" y="150" font-size="9.5" fill="#64748b" text-anchor="middle" transform="rotate(-90 34 150)">可达性能 →</text>
+
+      {/* 屋顶：斜线从 (96,238) 到折点 (330,86)，再平台到 (590,86) */}
+      <path d="M96,238 L330,86 L590,86" fill="none" stroke="#0085a1" stroke-width="2.5"/>
+      <text x="356" y="76" font-size="9.5" fill="#006377">算力屋顶（平台区：算力受限）</text>
+      <text x="112" y="182" font-size="9.5" fill="#006377" transform="rotate(-32 112 182)">带宽屋顶（斜线区：带宽受限）</text>
+
+      {/* Prefill 工作点：平台区 */}
+      <line x1="430" y1="86" x2="430" y2="250" stroke="#0f9d68" stroke-dasharray="3,3"/>
+      <circle cx="430" cy="86" r="6" fill="#0f9d68"/>
+      <rect x="404" y="100" width="120" height="34" rx="5" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="464" y="115" font-size="9.5" fill="#0a7a50" text-anchor="middle">Prefill</text>
+      <text x="464" y="128" font-size="9" fill="#0a7a50" text-anchor="middle">≥512 token 即达峰</text>
+
+      {/* Decode 工作点：斜线左下角 */}
+      <line x1="132" y1="218" x2="132" y2="250" stroke="#e6a23c" stroke-dasharray="3,3"/>
+      <circle cx="132" cy="218" r="6" fill="#e6a23c"/>
+      <rect x="150" y="200" width="150" height="34" rx="5" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="225" y="215" font-size="9.5" fill="#b97a1f" text-anchor="middle">Decode（b=1）</text>
+      <text x="225" y="228" font-size="9" fill="#b97a1f" text-anchor="middle">低两个数量级，在斜线区</text>
+
+      {/* decode 随 batch 沿斜线移动的小箭头：从 decode 框右上方伸出，避开坡上标签 */}
+      <path d="M292,198 C306,176 318,156 326,142" fill="none" stroke="#e6a23c" stroke-width="1.6" stroke-dasharray="5,3"/>
+      <polygon points="326,142 317,144 322,152" fill="#e6a23c"/>
+      <text x="336" y="146" font-size="9" fill="#b97a1f">B 增大时沿斜线上移</text>
+
+      <text x="320" y="302" font-size="10.5" fill="#334155" text-anchor="middle">
+        Prefill 不缺算力；Decode 缺的，正是 Prefill 富余的那部分算力——混合批的物理基础
+      </text>
+    </g>
+  </svg>
+</figure>

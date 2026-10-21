@@ -1,0 +1,39 @@
+---
+// 图5：chunk 大小一阶权衡——prefill 效率随块增大而升、可搭车 decode 量随块增大而降
+// 纯概念示意，不画论文实测数；交叉点附近阴影为推荐区间
+---
+
+<figure>
+  <svg viewBox="0 0 640 320" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">Chunk 不是越小越好：两条曲线夹出一个推荐区间</text>
+      <text x="320" y="44" font-size="9.5" fill="#94a3b8" text-anchor="middle">概念示意，非实测；具体交叉点由你的 P:D 比决定</text>
+
+      {/* 坐标系 */}
+      <line x1="80" y1="66" x2="80" y2="240" stroke="#cbd5e1"/>
+      <line x1="80" y1="240" x2="590" y2="240" stroke="#94a3b8"/>
+      <text x="590" y="260" font-size="10" fill="#475569" text-anchor="end">Chunk 大小（小 → 大）→</text>
+
+      {/* 推荐区间阴影 */}
+      <rect x="290" y="70" width="96" height="170" fill="#e4f5ec" opacity="0.55"/>
+      <text x="338" y="86" font-size="9.5" font-weight="bold" fill="#0a7a50" text-anchor="middle">推荐区间</text>
+
+      {/* Prefill 效率：S 形上升 (80,210) → (560,92) */}
+      <path d="M96,214 C180,208 240,196 296,166 C360,130 420,104 560,94"
+            fill="none" stroke="#0085a1" stroke-width="2.4"/>
+      <text x="500" y="86" font-size="10" font-weight="bold" fill="#006377">Prefill 效率 ↑</text>
+
+      {/* 可搭车 decode 量：下降 (96,92) → (560,214)，略下凸 */}
+      <path d="M96,94 C200,100 280,120 338,152 C400,186 470,206 560,214"
+            fill="none" stroke="#e6a23c" stroke-width="2.4"/>
+      <text x="150" y="86" font-size="10" font-weight="bold" fill="#b97a1f">可搭车 Decode 量 ↓</text>
+
+      {/* 交叉点 */}
+      <circle cx="338" cy="152" r="4.5" fill="#0f9d68"/>
+
+      <text x="338" y="292" font-size="10" fill="#334155" text-anchor="middle">
+        选择条件：不小于「最小饱和块」　·　让「块 + 拼车数」对齐 tile　·　在 TBT 预算内尽量满足 P:D
+      </text>
+    </g>
+  </svg>
+</figure>

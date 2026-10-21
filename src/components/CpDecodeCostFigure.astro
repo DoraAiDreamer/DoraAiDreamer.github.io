@@ -1,0 +1,63 @@
+---
+// 图1：decode 每 token 成本随同车人数下降——LLaMA-13B/A6000/序列1024
+// 三个实测点：b=1 为 prefill 的 200×、b=2 为 100×、b=18 为 16.7×（论文 Fig 3 / §3.1）
+---
+
+<figure>
+  <svg viewBox="0 0 640 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">Decode 的浪费，随同车人数快速缩小</text>
+      <text x="320" y="44" font-size="9.5" fill="#94a3b8" text-anchor="middle">LLaMA-13B / A6000 / 序列长 1024；纵轴 = decode 每 token 时间 ÷ prefill 每 token 时间（实测点），曲线趋势为示意</text>
+
+      {/* 坐标系 */}
+      <line x1="72" y1="66" x2="72" y2="232" stroke="#cbd5e1"/>
+      <line x1="72" y1="232" x2="600" y2="232" stroke="#94a3b8"/>
+      <text x="30" y="150" font-size="9.5" fill="#64748b" text-anchor="middle" transform="rotate(-90 30 150)">相对 prefill 的倍数</text>
+      <text x="600" y="252" font-size="10" fill="#475569" text-anchor="end">同车人数 B →</text>
+
+      {/* y 刻度：200 / 100 / 50 / 0 */}
+      {[
+        { v: "200×", y: 66 },
+        { v: "100×", y: 146 },
+        { v: "50×", y: 186 },
+        { v: "0", y: 232 },
+      ].map((t) => (
+        <g>
+          <line x1="68" y1={t.y} x2="72" y2={t.y} stroke="#94a3b8"/>
+          <text x="62" y={t.y + 3} font-size="9" fill="#64748b" text-anchor="end">{t.v}</text>
+        </g>
+      ))}
+
+      {/* x 刻度（对数观感）：1 / 2 / 4 / 8 / 18 */}
+      {[
+        { v: "1", x: 72 },
+        { v: "2", x: 199 },
+        { v: "4", x: 326 },
+        { v: "8", x: 453 },
+        { v: "18", x: 580 },
+      ].map((t) => (
+        <text x={t.x} y="246" font-size="9" fill="#64748b" text-anchor="middle">{t.v}</text>
+      ))}
+
+      {/* 下降曲线：b1 y=66 → b2 y=146 → b4 ≈186 → b8 ≈209 → b18 y=218.6 (16.7×) */}
+      <path d="M72,66 C120,100 160,128 199,146 C250,168 290,180 326,186 C380,196 420,205 453,209 C500,214 545,217 580,218.6"
+            fill="none" stroke="#0085a1" stroke-width="2.2"/>
+
+      {/* 三个实测点 */}
+      {[
+        { x: 72, y: 66, t: "200×", dx: 26, dy: -8 },
+        { x: 199, y: 146, t: "100×", dx: 24, dy: -10 },
+        { x: 580, y: 218.6, t: "16.7×", dx: -10, dy: -12 },
+      ].map((p) => (
+        <g>
+          <circle cx={p.x} cy={p.y} r="4.5" fill="#0f9d68"/>
+          <text x={p.x + p.dx} y={p.y + p.dy} font-size="10.5" font-weight="bold" fill="#0a7a50">{p.t}</text>
+        </g>
+      ))}
+
+      <text x="320" y="284" font-size="10.5" fill="#334155" text-anchor="middle">
+        一个人跑车时 decode 贵 200 倍；凑到 18 个请求，差距只剩十几倍——这就是值得给它找车拼的原因
+      </text>
+    </g>
+  </svg>
+</figure>
