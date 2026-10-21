@@ -1,0 +1,54 @@
+---
+// 图6：请求视角的抢占旅程——running → 踢下（释放KV、归零）→ waiting 队首 → 重新 prefill → running
+---
+
+<figure>
+  <svg viewBox="0 0 640 248" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="cbp-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">V1 的抢占不是「暂停存档」，是归零重算</text>
+
+      <text x="130" y="58" font-size="9.5" fill="#b14a4a" text-anchor="middle">触发：车上的 R 下一站 KV 块分配失败（不是新客抢座）</text>
+
+      {/* 五张卡片：宽104，间距18 */}
+      <rect x="16" y="72" width="104" height="86" rx="9" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="68" y="106" font-size="11" font-weight="bold" fill="#006377" text-anchor="middle">R 在 running</text>
+      <text x="68" y="126" font-size="9" fill="#64748b" text-anchor="middle">（第 k 站）</text>
+
+      <line x1="120" y1="115" x2="136" y2="115" stroke="#94a3b8" marker-end="url(#cbp-arw)"/>
+
+      <rect x="138" y="72" width="104" height="86" rx="9" fill="#fbe3e3" stroke="#b14a4a"/>
+      <text x="190" y="102" font-size="11" font-weight="bold" fill="#b14a4a" text-anchor="middle">抢占：踢下车</text>
+      <text x="190" y="124" font-size="9" fill="#b14a4a" text-anchor="middle">释放全部 KV</text>
+      <text x="190" y="142" font-size="9" fill="#b14a4a" text-anchor="middle">进度归零</text>
+
+      <line x1="242" y1="115" x2="258" y2="115" stroke="#94a3b8" marker-end="url(#cbp-arw)"/>
+
+      <rect x="260" y="72" width="104" height="86" rx="9" fill="#f4f6f8" stroke="#94a3b8"/>
+      <text x="312" y="108" font-size="11" font-weight="bold" fill="#475569" text-anchor="middle">回 waiting</text>
+      <text x="312" y="128" font-size="9.5" fill="#64748b" text-anchor="middle">队首，优先重放</text>
+
+      <line x1="364" y1="115" x2="380" y2="115" stroke="#94a3b8" marker-end="url(#cbp-arw)"/>
+
+      <rect x="382" y="72" width="104" height="86" rx="9" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="434" y="104" font-size="11" font-weight="bold" fill="#006377" text-anchor="middle">重新 Prefill</text>
+      <text x="434" y="124" font-size="9" fill="#006377" text-anchor="middle">拼回 prompt</text>
+      <text x="434" y="142" font-size="9" fill="#006377" text-anchor="middle">一次重算</text>
+
+      <line x1="486" y1="115" x2="502" y2="115" stroke="#94a3b8" marker-end="url(#cbp-arw)"/>
+
+      <rect x="504" y="72" width="104" height="86" rx="9" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="556" y="108" font-size="11" font-weight="bold" fill="#0a7a50" text-anchor="middle">重新</text>
+      <text x="556" y="128" font-size="11" font-weight="bold" fill="#0a7a50" text-anchor="middle">RUNNING</text>
+
+      <text x="320" y="196" font-size="11" font-weight="bold" fill="#334155" text-anchor="middle">
+        V1 只有 recompute 一条路：单个事件不贵，但抢占风暴会叠加成秒级尖刺
+      </text>
+      <text x="320" y="222" font-size="10" fill="#64748b" text-anchor="middle">
+        num_preemptions 持续上涨 = 容量 thrashing，该扩容而非调参
+      </text>
+    </g>
+  </svg>
+</figure>

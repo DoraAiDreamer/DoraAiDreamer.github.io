@@ -1,0 +1,51 @@
+---
+// 图2：每站重新点名——第1站 {A,B} → 一个迭代步 → 第2站 {A,C}
+// B 完成下车、C 站台有座上车，在两次关门之间同时发生
+---
+
+<figure>
+  <svg viewBox="0 0 640 272" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="cbr-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">连续批处理：每站关门后重新点名，名单当场重算</text>
+
+      {/* 第 1 站 */}
+      <rect x="36" y="58" width="190" height="142" rx="12" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="131" y="82" font-size="12" font-weight="bold" fill="#0c5f74" text-anchor="middle">第 1 站</text>
+      <text x="131" y="100" font-size="10" fill="#64748b" text-anchor="middle">批次：A、B</text>
+      <rect x="62" y="112" width="60" height="70" rx="8" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="92" y="152" font-size="15" font-weight="bold" fill="#006377" text-anchor="middle">A</text>
+      <rect x="140" y="112" width="60" height="70" rx="8" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="170" y="152" font-size="15" font-weight="bold" fill="#b97a1f" text-anchor="middle">B</text>
+
+      {/* 第 2 站 */}
+      <rect x="414" y="58" width="190" height="142" rx="12" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="509" y="82" font-size="12" font-weight="bold" fill="#0c5f74" text-anchor="middle">第 2 站</text>
+      <text x="509" y="100" font-size="10" fill="#64748b" text-anchor="middle">批次：A、C</text>
+      <rect x="440" y="112" width="60" height="70" rx="8" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="470" y="152" font-size="15" font-weight="bold" fill="#006377" text-anchor="middle">A</text>
+      <rect x="518" y="112" width="60" height="70" rx="8" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="548" y="152" font-size="15" font-weight="bold" fill="#0a7a50" text-anchor="middle">C</text>
+
+      {/* 中间：一个迭代步箭头 */}
+      <line x1="232" y1="80" x2="406" y2="80" stroke="#94a3b8" marker-end="url(#cbr-arw)"/>
+      <text x="319" y="72" font-size="9.5" fill="#64748b" text-anchor="middle">一个迭代步 = 一次前向</text>
+
+      {/* B 下车 */}
+      <line x1="224" y1="150" x2="244" y2="150" stroke="#94a3b8" marker-end="url(#cbr-arw)"/>
+      <rect x="246" y="136" width="74" height="28" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="283" y="154" font-size="9.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">B：完成下车</text>
+
+      {/* C 站台有座 */}
+      <rect x="322" y="196" width="80" height="28" rx="7" fill="#e4f5ec" stroke="#0f9d68" stroke-dasharray="4,3"/>
+      <text x="362" y="214" font-size="9" fill="#0a7a50" text-anchor="middle">C：站台有座</text>
+      <line x1="402" y1="202" x2="416" y2="180" stroke="#94a3b8" marker-end="url(#cbr-arw)"/>
+
+      <text x="319" y="252" font-size="11.5" font-weight="bold" fill="#334155" text-anchor="middle">
+        一进一出，在两次关门之间同时完成——没有谁需要等整批跑完
+      </text>
+    </g>
+  </svg>
+</figure>

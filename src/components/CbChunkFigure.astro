@@ -1,0 +1,56 @@
+---
+// 图5：chunked prefill——长 prompt 切 4 块、每站一块与 decode 并排；与图4共用 step 网格
+// TTFT 拉长到第 4 站后，换 1–3 站 TBT 不再有尖刺
+---
+
+<figure>
+  <svg viewBox="0 0 640 302" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">分块：每站只带一个 Prefill 块，Decode 每站照常前进</text>
+
+      {/* 站头与网格 */}
+      {["第 1 站","第 2 站","第 3 站","第 4 站"].map((s, i) => (
+        <text x={175 + i * 110} y="52" font-size="10" fill="#64748b" text-anchor="middle">{s}</text>
+      ))}
+      {[230,340,450].map((x) => (
+        <line x1={x} y1="62" x2={x} y2="240" stroke="#e2e8f0"/>
+      ))}
+      <line x1="120" y1="240" x2="560" y2="240" stroke="#94a3b8"/>
+
+      {/* 长 prompt 行：4 个分块 */}
+      <text x="112" y="87" font-size="10" fill="#475569" text-anchor="end">长 prompt</text>
+      {[0,1,2,3].map((i) => (
+        <g>
+          <rect x={128 + i * 110} y="66" width="94" height="34" rx="6" fill="#d9eef3" stroke="#0085a1"/>
+          <text x={175 + i * 110} y="87" font-size="9.5" fill="#006377" text-anchor="middle">Prefill 块 512</text>
+        </g>
+      ))}
+
+      {/* 三排 Decode：每站都有 */}
+      {[
+        { y: 118, label: "请求 A" },
+        { y: 160, label: "请求 B" },
+        { y: 202, label: "请求 C" },
+      ].map((r, i) => (
+        <g>
+          <text x="112" y={r.y + 19} font-size="10" fill="#475569" text-anchor="end">{r.label}</text>
+          {[0,1,2,3].map((j) => (
+            <rect x={120 + j * 110} y={r.y} width="110" height="30" fill="#fdf0e0" stroke="#e6a23c"/>
+          ))}
+          {i === 0 && <text x="175" y={r.y + 19} font-size="9.5" fill="#b97a1f" text-anchor="middle">每站都蹦字</text>}
+        </g>
+      ))}
+
+      {/* TTFT 标记 */}
+      <line x1="560" y1="60" x2="560" y2="240" stroke="#0f9d68" stroke-dasharray="4,3"/>
+      <circle cx="560" cy="66" r="4" fill="#0f9d68"/>
+
+      <text x="320" y="268" font-size="10.5" fill="#334155" text-anchor="middle">
+        长 prompt 的首字（TTFT）拉长到第 4 站后；换来第 1–3 站 TBT 不再有尖刺
+      </text>
+      <text x="320" y="288" font-size="9.5" fill="#94a3b8" text-anchor="middle">
+        Decode 优先：每步先喂 running 请求，Prefill 块只吃剩余预算
+      </text>
+    </g>
+  </svg>
+</figure>

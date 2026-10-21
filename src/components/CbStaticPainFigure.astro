@@ -1,0 +1,59 @@
+---
+// 图1：静态批处理痛点——4 请求包车，按最远的人计费
+// 蓝色=真实产出；浅灰斜纹=完成后干坐；车外新请求干等
+---
+
+<figure>
+  <svg viewBox="0 0 640 310" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <pattern id="cbs1-hatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+        <line x1="0" y1="0" x2="0" y2="6" stroke="#cbd5e1" stroke-width="1"/>
+      </pattern>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">静态批处理：一车拉 4 个请求，必须等最远的人跑完</text>
+      <text x="320" y="46" font-size="10.5" fill="#64748b" text-anchor="middle">（这批 = 一次函数调用，中途成员封死，不能下车也不能捡客）</text>
+
+      {/* 封死批次外框 */}
+      <rect x="140" y="60" width="418" height="172" rx="10" fill="none" stroke="#cbd5e1" stroke-dasharray="5,4"/>
+
+      {/* 四条请求带：x0=150，400px=200 步（2px/步） */}
+      {[
+        { y: 68, label: "A（50 词）", worked: 100 },
+        { y: 106, label: "B（80 词）", worked: 160 },
+        { y: 144, label: "C（100 词）", worked: 200 },
+        { y: 182, label: "D（200 词）", worked: 400 },
+      ].map((r) => (
+        <g>
+          <text x="132" y={r.y + 19} font-size="10.5" fill="#475569" text-anchor="end">请求 {r.label}</text>
+          <rect x="150" y={r.y} width="400" height="28" rx="5" fill="#f4f6f8" stroke="#cbd5e1"/>
+          {r.worked < 400 && <rect x={150 + r.worked} y={r.y} width={400 - r.worked} height="28" fill="url(#cbs1-hatch)"/>}
+          <rect x="150" y={r.y} width={r.worked} height="28" rx="5" fill="#7ec3d8"/>
+        </g>
+      ))}
+
+      {/* 步数轴 */}
+      <line x1="150" y1="240" x2="550" y2="240" stroke="#94a3b8"/>
+      {[
+        { x: 150, t: "0" },
+        { x: 250, t: "50" },
+        { x: 350, t: "100" },
+        { x: 550, t: "200 步" },
+      ].map((g) => (
+        <g>
+          <line x1={g.x} y1="236" x2={g.x} y2="244" stroke="#94a3b8"/>
+          <text x={g.x} y="256" font-size="9" fill="#94a3b8" text-anchor="middle">{g.t}</text>
+        </g>
+      ))}
+
+      {/* 新来的请求 */}
+      <rect x="150" y="266" width="88" height="24" rx="6" fill="#f4f6f8" stroke="#94a3b8" stroke-dasharray="4,3"/>
+      <text x="194" y="282" font-size="9.5" fill="#475569" text-anchor="middle">新来的请求</text>
+      <text x="252" y="282" font-size="10.5" fill="#475569">在车外干等，200 步里上不来</text>
+
+      <text x="320" y="304" font-size="12" font-weight="bold" fill="#b14a4a" text-anchor="middle">
+        空转 370 / 800 座位·步 = 46%，其中 300 / 370 集中在最后 100 步
+      </text>
+    </g>
+  </svg>
+</figure>

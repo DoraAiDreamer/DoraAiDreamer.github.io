@@ -1,0 +1,68 @@
+---
+// 图3：经济账——B=1/8/32 的堆叠柱（权重固定 + 每人 KV 增长）+ 每人每 token 成本下降
+// 数字凑整示意，非实测：70B 抽象设备/TP 聚合口径，W=140GB，每人 2K 上下文 KV≈0.64GB
+---
+
+<figure>
+  <svg viewBox="0 0 640 352" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">单步只慢一点点，每人每 token 的成本掉一个数量级</text>
+
+      {/* 图例 */}
+      <g font-size="9.5">
+        <rect x="96" y="40" width="11" height="11" rx="2" fill="#7ec3d8"/>
+        <text x="113" y="50" fill="#334155">权重 W（每步只搬一遍）</text>
+        <rect x="268" y="40" width="11" height="11" rx="2" fill="#fdf0e0" stroke="#e6a23c"/>
+        <text x="285" y="50" fill="#334155">每人全量历史 KV</text>
+        <rect x="408" y="40" width="11" height="11" rx="2" fill="#0f9d68"/>
+        <text x="425" y="50" fill="#334155">每人每 token 成本</text>
+      </g>
+      <text x="320" y="68" font-size="9.5" fill="#94a3b8" text-anchor="middle">示意，非实测：70B 抽象设备 / TP 聚合口径，忽略计算与开销；每人按 2K 上下文计</text>
+
+      {/* 坐标系：baseline y=232，1.05 px/GB */}
+      <line x1="104" y1="82" x2="104" y2="232" stroke="#cbd5e1"/>
+      <line x1="104" y1="85" x2="560" y2="85" stroke="#eef2f5"/>
+      <text x="76" y="160" font-size="9.5" fill="#64748b" text-anchor="middle" transform="rotate(-90 76 160)">单步搬运量（GB）</text>
+
+      {/* 三根堆叠柱 */}
+      {[
+        { x: 118, kvGB: 0.64, total: "140.6", labelY: 216 },
+        { x: 282, kvGB: 5.1, total: "145.1", labelY: 216 },
+        { x: 446, kvGB: 20.5, total: "160.5", labelY: 196 },
+      ].map((b) => (
+        <g>
+          {/* 权重段：140GB → 147px */}
+          <rect x={b.x} y="85" width="78" height="147" rx="4" fill="#7ec3d8" stroke="#0085a1"/>
+          <text x={b.x + 39} y={b.labelY} font-size="9.5" fill="#006377" text-anchor="middle">权重 140GB</text>
+          {/* KV 段 */}
+          {b.kvGB >= 4 && <rect x={b.x} y={232 - b.kvGB * 1.05} width="78" height={b.kvGB * 1.05} fill="#fdf0e0" stroke="#e6a23c"/>}
+          <text x={b.x + 39} y="100" font-size="10.5" font-weight="bold" fill="#064757" text-anchor="middle">{b.total} GB</text>
+        </g>
+      ))}
+
+      <line x1="104" y1="232" x2="560" y2="232" stroke="#94a3b8"/>
+      <text x="157" y="250" font-size="10.5" fill="#475569" text-anchor="middle">B = 1</text>
+      <text x="321" y="250" font-size="10.5" fill="#475569" text-anchor="middle">B = 8</text>
+      <text x="485" y="250" font-size="10.5" fill="#475569" text-anchor="middle">B = 32（同车人数）</text>
+
+      {/* 每人每 token 成本下降：42 / 5.4 / 1.5 ms */}
+      <text x="100" y="290" font-size="9.5" fill="#0a7a50" text-anchor="end">每人每 token</text>
+      <line x1="157" y1="272" x2="321" y2="292" stroke="#0f9d68" stroke-dasharray="4,3"/>
+      <line x1="321" y1="292" x2="485" y2="312" stroke="#0f9d68" stroke-dasharray="4,3"/>
+      {[
+        { x: 157, y: 272, t: "42ms" },
+        { x: 321, y: 292, t: "5.4ms" },
+        { x: 485, y: 312, t: "1.5ms" },
+      ].map((d) => (
+        <g>
+          <circle cx={d.x} cy={d.y} r="4.5" fill="#0f9d68"/>
+          <text x={d.x} y={d.y - 9} font-size="10" font-weight="bold" fill="#0a7a50" text-anchor="middle">{d.t}</text>
+        </g>
+      ))}
+
+      <text x="320" y="340" font-size="10" fill="#64748b" text-anchor="middle">
+        三把刹车：KV 容量　·　max_num_seqs（座位数）　·　TBT 预算（每站总时长随 B 缓慢变长）
+      </text>
+    </g>
+  </svg>
+</figure>
