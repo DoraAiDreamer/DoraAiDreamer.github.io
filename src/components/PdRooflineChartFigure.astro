@@ -1,0 +1,97 @@
+---
+// 图 4-1：真正的屋顶图（roofline model）
+// 双对数坐标：横轴算术强度 FLOP/byte，纵轴可达性能 TFLOPS
+// 斜线段 = 带宽墙（性能 = 3.35TB/s × 强度），水平段 = 算力墙（989 TFLOPS），折点 ≈ 295
+// Decode 贴在坡脚（带宽受限），Prefill 贴在平顶（算力受限）；虚线箭头表示凑大批沿坡上移
+---
+
+<figure>
+  <svg viewBox="0 0 640 370" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="pd-rf-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#e6a23c"/>
+      </marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">屋顶图（Roofline）：算术强度决定你撞哪堵墙</text>
+
+      {/* 两区淡色底：坡左=带宽受限，顶右=算力受限 */}
+      <polygon points="60,257.6 400.8,67.5 400.8,298 60,298" fill="#e6a23c" opacity="0.07"/>
+      <polygon points="400.8,67.5 612,67.5 612,298 400.8,298" fill="#0085a1" opacity="0.06"/>
+
+      {/* 网格 */}
+      <g stroke="#e8edf1" stroke-width="1">
+        <line x1="60" y1="221" x2="612" y2="221"/>
+        <line x1="60" y1="144" x2="612" y2="144"/>
+        <line x1="60" y1="67.1" x2="612" y2="67.1"/>
+        <line x1="198" y1="67.5" x2="198" y2="298"/>
+        <line x1="336" y1="67.5" x2="336" y2="298"/>
+        <line x1="474" y1="67.5" x2="474" y2="298"/>
+      </g>
+      {/* 坐标轴 */}
+      <line x1="60" y1="60" x2="60" y2="298" stroke="#cbd5e1" stroke-width="1.2"/>
+      <line x1="60" y1="298" x2="612" y2="298" stroke="#cbd5e1" stroke-width="1.2"/>
+
+      {/* 折点竖虚线 */}
+      <line x1="400.8" y1="74" x2="400.8" y2="298" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 4"/>
+
+      {/* 屋顶折线 */}
+      <line x1="60" y1="257.6" x2="400.8" y2="67.5" stroke="#e6a23c" stroke-width="2.5"/>
+      <line x1="400.8" y1="67.5" x2="612" y2="67.5" stroke="#0085a1" stroke-width="2.5"/>
+      <circle cx="400.8" cy="67.5" r="3.5" fill="#0085a1"/>
+
+      {/* 墙的标注 */}
+      <text x="228" y="147" font-size="10.5" fill="#b97a1f" text-anchor="middle" transform="rotate(-29.2 228 147)">带宽墙 = 显存带宽 × 算术强度</text>
+      <text x="606" y="56" font-size="10.5" fill="#006377" text-anchor="end">算力墙 ≈ 989 TFLOPS（H100 BF16 dense 峰值）</text>
+      <text x="400.8" y="91" font-size="10" font-weight="bold" fill="#0c5f74" text-anchor="middle">折点</text>
+
+      {/* 屋顶以上 = 不可达区提示 */}
+      <text x="232" y="104" font-size="9.5" fill="#94a3b8" text-anchor="middle">屋顶线以上：理论上达不到（性能上限），实测点通常还略低于线</text>
+
+      {/* 区域大字 */}
+      <text x="298" y="252" font-size="12" fill="#e6a23c" opacity="0.55" text-anchor="middle">带宽受限区（点贴着斜坡）</text>
+      <text x="520" y="252" font-size="12" fill="#0085a1" opacity="0.45" text-anchor="middle">算力受限区（点贴着平顶）</text>
+
+      {/* Decode 点 + 凑批箭头（与坡平行、下移 18px，避免被屋顶线盖住） */}
+      <line x1="112" y1="247" x2="200" y2="198" stroke="#e6a23c" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#pd-rf-arrow)"/>
+      <text x="192" y="222" font-size="9" fill="#b97a1f" text-anchor="middle" transform="rotate(-29.2 192 222)">凑大批，沿坡上移</text>
+
+      {/* 空心点：很短的 Prefill 也会滑到坡上（强度决定位置，不是阶段名）；I≈25，点落在坡上 */}
+      <circle cx="243" cy="175" r="4.5" fill="#ffffff" stroke="#0085a1" stroke-width="1.8"/>
+      <text x="253" y="171" font-size="9" fill="#006377">很短的 Prefill</text>
+      <text x="253" y="182.5" font-size="8.5" fill="#64748b">小 prompt / 小 chunk 也在坡上</text>
+      <circle cx="84.3" cy="244.2" r="5" fill="#e6a23c" stroke="#fff" stroke-width="2"/>
+      <text x="98" y="262" font-size="11" font-weight="bold" fill="#b97a1f">Decode</text>
+      <text x="98" y="275" font-size="9" fill="#64748b">batch=1 时强度仅约 1–2</text>
+
+      {/* Prefill 点 */}
+      <circle cx="515.5" cy="67.5" r="5" fill="#0085a1" stroke="#fff" stroke-width="2"/>
+      <text x="515.5" y="97" font-size="11" font-weight="bold" fill="#006377" text-anchor="middle">Prefill</text>
+      <text x="515.5" y="110" font-size="9" fill="#64748b" text-anchor="middle">n 个词摊薄一趟搬运，强度高、撞顶</text>
+
+      {/* Y 轴刻度 */}
+      <g font-size="9.5" fill="#64748b" text-anchor="end">
+        <text x="54" y="302">1</text>
+        <text x="54" y="225">10</text>
+        <text x="54" y="148">100</text>
+        <text x="54" y="71">1000</text>
+      </g>
+      {/* X 轴刻度 */}
+      <g font-size="9.5" fill="#64748b" text-anchor="middle">
+        <text x="60" y="314">1</text>
+        <text x="198" y="314">10</text>
+        <text x="336" y="314">100</text>
+        <line x1="400.8" y1="298" x2="400.8" y2="304" stroke="#0085a1" stroke-width="1.2"/>
+        <text x="400.8" y="315" font-weight="bold" fill="#006377">295</text>
+        <text x="474" y="314">1000</text>
+        <text x="612" y="314">10000</text>
+      </g>
+
+      {/* 轴标题 */}
+      <text x="18" y="172" font-size="10.5" fill="#475569" text-anchor="middle" transform="rotate(-90 18 172)">可达性能（TFLOPS，对数刻度）</text>
+      <text x="336" y="337" font-size="10.5" fill="#475569" text-anchor="middle">算术强度（每搬 1 字节能做的乘加数，FLOP/byte，对数刻度）</text>
+
+      <text x="612" y="358" font-size="9" fill="#94a3b8" text-anchor="end">示意，非实测；以 H100 SXM 为例（HBM 3.35 TB/s、BF16 dense 989 TFLOPS），A100 折点约 156</text>
+    </g>
+  </svg>
+</figure>

@@ -1,0 +1,87 @@
+---
+// 图：NVIDIA / 昇腾双泳道产品时间轴（2019–2026），橙色节点为对华特供款；前瞻产品用虚线
+---
+
+<figure>
+  <svg viewBox="0 0 640 326" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="22" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">两条产品线，八年赛跑：橙色是为合规「精准阉割」的特供款</text>
+
+      {/* 年份轴 */}
+      {[2019,2020,2021,2022,2023,2024,2025,2026].map((y)=>{
+        const x = 60+(y-2019)*72;
+        return (
+          <g>
+            <line x1={x} y1="52" x2={x} y2="292" stroke="#eef2f6"/>
+            <text x={x} y="316" font-size="10" fill="#64748b" text-anchor="middle">{y}</text>
+          </g>
+        );
+      })}
+
+      {/* NVIDIA 泳道 */}
+      <text x="14" y="98" font-size="10.5" font-weight="bold" fill="#006377">NVIDIA</text>
+      <line x1="60" y1="112" x2="596" y2="112" stroke="#7ec3d8" stroke-width="2"/>
+      {[
+        {x:150, t:"A100", s:"Ampere", up:true,  w:64},
+        {x:288, t:"H100", s:"Hopper", up:false, w:64},
+        {x:414, t:"H200", s:"只换显存", up:true,  w:72},
+        {x:450, t:"B200", s:"Blackwell 双 die", up:false, w:106},
+        {x:520, t:"B300", s:"Ultra", up:true,  w:64},
+        {x:580, t:"Rubin", s:"HBM4/FP6", up:false, w:64, dash:true},
+      ].map((n)=>{
+        const top = n.up ? 58 : 124;
+        return (
+          <g>
+            <line x1={n.x} y1="112" x2={n.x} y2={n.up?88:124} stroke="#94a3b8"/>
+            <rect x={n.x-n.w/2} y={top} width={n.w} height="30" rx="5"
+              fill={n.dash ? "#fff" : "#d9eef3"} stroke="#0085a1"
+              stroke-dasharray={n.dash ? "3,3" : undefined}/>
+            <text x={n.x} y={top+13} font-size="9.5" font-weight="bold" fill="#006377" text-anchor="middle">{n.t}</text>
+            <text x={n.x} y={top+25} font-size="7.3" fill="#64748b" text-anchor="middle">{n.s}</text>
+          </g>
+        );
+      })}
+
+      {/* 特供泳道：节点统一排在下方，避开 NVIDIA 下排节点 */}
+      <text x="14" y="182" font-size="10" font-weight="bold" fill="#b97a1f">对华特供</text>
+      <line x1="60" y1="188" x2="596" y2="188" stroke="#f3c87f" stroke-width="2"/>
+      {[
+        {x:292, t:"A800/H800", s:"互连砍半 · 2023.10 停售", w:132},
+        {x:430, t:"H20", s:"算力砍至 148TF · 2025 禁/恢", w:140},
+        {x:560, t:"B30A", s:"未放行 · 零出货", w:92},
+      ].map((n)=>{
+        const top = 200;
+        return (
+          <g>
+            <line x1={n.x} y1="188" x2={n.x} y2="200" stroke="#e6a23c"/>
+            <rect x={n.x-n.w/2} y={top} width={n.w} height="30" rx="5" fill="#fdf0e0" stroke="#e6a23c"/>
+            <text x={n.x} y={top+13} font-size="9" font-weight="bold" fill="#b97a1f" text-anchor="middle">{n.t}</text>
+            <text x={n.x} y={top+25} font-size="7.3" fill="#b97a1f" text-anchor="middle">{n.s}</text>
+          </g>
+        );
+      })}
+
+      {/* 昇腾泳道：910 在上，910B/910C/950 在下，避开特供节点与年份轴 */}
+      <text x="14" y="202" font-size="10.5" font-weight="bold" fill="#0a7a50">华为昇腾</text>
+      <line x1="60" y1="252" x2="596" y2="252" stroke="#7fd4ae" stroke-width="2"/>
+      {[
+        {x:102, t:"910", s:"256TF · 达芬奇", up:true, w:104},
+        {x:360, t:"910B", s:"Atlas 800T A2", up:false, w:104},
+        {x:470, t:"910C · CM384", s:"384 卡超节点", up:false, w:110},
+        {x:580, t:"950 系列", s:"PR 26Q1 / DT 26Q4", up:false, w:104, dash:true},
+      ].map((n)=>{
+        const top = n.up ? 214 : 264;
+        return (
+          <g>
+            <line x1={n.x} y1="252" x2={n.x} y2={n.up?244:264} stroke="#94a3b8"/>
+            <rect x={n.x-n.w/2} y={top} width={n.w} height="30" rx="5"
+              fill={n.dash ? "#fff" : "#e4f5ec"} stroke="#0f9d68"
+              stroke-dasharray={n.dash ? "3,3" : undefined}/>
+            <text x={n.x} y={top+13} font-size="9" font-weight="bold" fill="#0a7a50" text-anchor="middle">{n.t}</text>
+            <text x={n.x} y={top+25} font-size="7.3" fill="#5aa588" text-anchor="middle">{n.s}</text>
+          </g>
+        );
+      })}
+    </g>
+  </svg>
+</figure>

@@ -1,0 +1,47 @@
+---
+// 选型决策树：目标货币（存储/算术/端到端）→ 粒度 → 硬件
+---
+
+<figure>
+  <svg viewBox="0 0 640 286" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="prd-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">剪枝怎么选：先问目标货币</text>
+
+      <rect x="250" y="40" width="140" height="40" rx="9" fill="#d9eef3" stroke="#0085a1" stroke-width="1.6"/>
+      <text x="320" y="65" font-size="10.5" font-weight="bold" fill="#006377" text-anchor="middle">你的目标是什么？</text>
+      <line x1="285" y1="80" x2="150" y2="106" stroke="#94a3b8" marker-end="url(#prd-arw)"/>
+      <line x1="320" y1="80" x2="320" y2="106" stroke="#94a3b8" marker-end="url(#prd-arw)"/>
+      <line x1="355" y1="80" x2="490" y2="106" stroke="#94a3b8" marker-end="url(#prd-arw)"/>
+
+      <rect x="60" y="108" width="180" height="44" rx="8" fill="#fff" stroke="#0085a1"/>
+      <text x="150" y="127" font-size="9.5" font-weight="bold" fill="#006377" text-anchor="middle">只减小文件</text>
+      <text x="150" y="143" font-size="8.5" fill="#475569" text-anchor="middle">非结构化 + 稀疏格式</text>
+      <rect x="230" y="108" width="180" height="44" rx="8" fill="#fff" stroke="#e6a23c"/>
+      <text x="320" y="127" font-size="9.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">kernel 算术量</text>
+      <text x="320" y="143" font-size="8.5" fill="#475569" text-anchor="middle">N:M（A100+ 2:4）</text>
+      <rect x="400" y="108" width="180" height="44" rx="8" fill="#fff" stroke="#0f9d68"/>
+      <text x="490" y="127" font-size="9.5" font-weight="bold" fill="#0a7a50" text-anchor="middle">端到端真加速</text>
+      <text x="490" y="143" font-size="8.5" fill="#475569" text-anchor="middle">通道/层剪枝 + 蒸馏</text>
+
+      {/* 硬件行 */}
+      <line x1="150" y1="152" x2="150" y2="176" stroke="#cbd5e1"/>
+      <line x1="320" y1="152" x2="320" y2="176" stroke="#cbd5e1"/>
+      <line x1="490" y1="152" x2="490" y2="176" stroke="#cbd5e1"/>
+      <rect x="60" y="178" width="180" height="40" rx="7" fill="#f4f6f8" stroke="#cbd5e1"/>
+      <text x="150" y="195" font-size="8.8" fill="#334155" text-anchor="middle">CSR/COO 软核（CPU）</text>
+      <text x="150" y="210" font-size="8.8" fill="#334155" text-anchor="middle">x86 稀疏 GEMM</text>
+      <rect x="230" y="178" width="180" height="40" rx="7" fill="#f4f6f8" stroke="#cbd5e1"/>
+      <text x="320" y="195" font-size="8.8" fill="#334155" text-anchor="middle">cuSPARSELt / Sparse-Marlin</text>
+      <text x="320" y="210" font-size="8.8" fill="#334155" text-anchor="middle">形状对齐 Support Matrix</text>
+      <rect x="400" y="178" width="180" height="40" rx="7" fill="#f4f6f8" stroke="#cbd5e1"/>
+      <text x="490" y="195" font-size="8.8" fill="#334155" text-anchor="middle">任意 dense 后端</text>
+      <text x="490" y="210" font-size="8.8" fill="#334155" text-anchor="middle">小模型冗余少，谨慎</text>
+
+      <text x="320" y="248" font-size="9.5" fill="#b14a4a" text-anchor="middle">注意：稀疏率 ≠ 加速；先确认「有没有 kernel 吃你的零」，再谈剪不剪</text>
+      <text x="320" y="268" font-size="8.5" fill="#94a3b8" text-anchor="middle">量化是更稳的推理加速；剪枝在 2026 的主场是造小模型（Llama-3.2/MiniTron）</text>
+    </g>
+  </svg>
+</figure>

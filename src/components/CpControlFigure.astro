@@ -1,0 +1,70 @@
+---
+// 图：出口管制三泳道——美方规则 / NVIDIA 产品 / 中方反制（2022-10 → 2026-01）
+---
+
+<figure>
+  <svg viewBox="0 0 640 352" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="22" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">芯片管制的三年：阈值一变，特供款就跟着生灭</text>
+
+      {[2022,2023,2024,2025,2026].map((y)=>{
+        const x = 60+(y-2022)*130;
+        return (
+          <g>
+            <line x1={x} y1="48" x2={x} y2="312" stroke="#f1f5f9"/>
+            <text x={x} y="42" font-size="9.5" fill="#94a3b8" text-anchor="middle">{y}</text>
+          </g>
+        );
+      })}
+
+      {/* 泳道 1：美方规则 */}
+      <text x="12" y="80" font-size="10" font-weight="bold" fill="#006377">美方规则</text>
+      <line x1="60" y1="92" x2="590" y2="92" stroke="#7ec3d8" stroke-width="2"/>
+      {[
+        {x:66, up:true,  t:"3A090：互连 ≥600 列管", w:116},
+        {x:209,up:false, t:"TPP≥4800，或 ≥1600 且密度≥5.92", w:168},
+        {x:432, up:true,  t:"H20 需许可证", w:96},
+        {x:482, up:false, t:"15% 收入分成（据报道）", w:128},
+        {x:558, up:true,  t:"H200 级转逐案审批", w:112},
+      ].map((n)=>(
+        <g>
+          <line x1={n.x} y1="92" x2={n.x} y2={n.up?82:102} stroke="#94a3b8"/>
+          <rect x={n.x-n.w/2} y={n.up?56:104} width={n.w} height="26" rx="5" fill="#d9eef3" stroke="#0085a1"/>
+          <text x={n.x} y={n.up?72:120} font-size="8.2" fill="#006377" text-anchor="middle">{n.t}</text>
+        </g>
+      ))}
+
+      {/* 泳道 2：NVIDIA */}
+      <text x="12" y="184" font-size="10" font-weight="bold" fill="#b97a1f">NVIDIA</text>
+      <line x1="60" y1="196" x2="590" y2="196" stroke="#f3c87f" stroke-width="2"/>
+      {[
+        {x:66, up:true,  t:"A800 上市（互连 400）", w:120},
+        {x:209, up:false, t:"A800/H800 停售（8-K）", w:128},
+        {x:246, up:true,  t:"H20 上市", w:76},
+        {x:469, up:false, t:"H20 恢复销售", w:92},
+        {x:519, up:true,  t:"B30A 不放行", w:92},
+      ].map((n)=>(
+        <g>
+          <line x1={n.x} y1="196" x2={n.x} y2={n.up?186:206} stroke="#94a3b8"/>
+          <rect x={n.x-n.w/2} y={n.up?160:208} width={n.w} height="26" rx="5" fill="#fdf0e0" stroke="#e6a23c"/>
+          <text x={n.x} y={n.up?176:224} font-size="8.2" fill="#b97a1f" text-anchor="middle">{n.t}</text>
+        </g>
+      ))}
+
+      {/* 泳道 3：中方反制 */}
+      <text x="12" y="288" font-size="10" font-weight="bold" fill="#0a7a50">中方反制</text>
+      <line x1="60" y1="300" x2="590" y2="300" stroke="#7fd4ae" stroke-width="2"/>
+      {[
+        {x:184, up:true,  t:"镓、锗出口管制", w:104},
+        {x:407, up:false, t:"钨/碲/铋/钼/铟管制", w:120},
+        {x:432, up:true,  t:"七类中重稀土管制", w:112},
+      ].map((n)=>(
+        <g>
+          <line x1={n.x} y1="300" x2={n.x} y2={n.up?290:310} stroke="#94a3b8"/>
+          <rect x={n.x-n.w/2} y={n.up?264:312} width={n.w} height="26" rx="5" fill="#e4f5ec" stroke="#0f9d68"/>
+          <text x={n.x} y={n.up?280:328} font-size="8.2" fill="#0a7a50" text-anchor="middle">{n.t}</text>
+        </g>
+      ))}
+    </g>
+  </svg>
+</figure>

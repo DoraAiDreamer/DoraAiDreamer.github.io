@@ -1,0 +1,99 @@
+---
+// 图：GPU 硬件层级（GH100/H100 口径）——左列 die ⊃ GPC ⊃ TPC ⊃ SM ⊃ SMSP 五级，
+// 右侧把一个 SM 放大成 4 个竖排 SMSP 小卡；框中框/分层卡表达包含关系。
+---
+
+<figure>
+  <svg viewBox="0 0 640 446" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="cph-gpu-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="22" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">GPU 硬件层级：框中框就是包含关系</text>
+
+      {/* ===== 左列：五级硬件层级 ===== */}
+      {/* L0 die */}
+      <rect x="38" y="40" width="260" height="56" rx="9" fill="#d9eef3" stroke="#0085a1" stroke-width="1.8"/>
+      <text x="52" y="62" font-size="10.5" font-weight="bold" fill="#0c5f74">L0 · die（GH100 单 die）</text>
+      <text x="52" y="78" font-size="9" fill="#334155">H100 SXM 启用 132 个 SM</text>
+      <text x="284" y="78" font-size="9" font-weight="bold" fill="#0c5f74" text-anchor="end">8 GPC · 72 TPC · 144 SM</text>
+      <text x="52" y="91" font-size="7.8" fill="#64748b">GPC/TPC/SM 都是 die 内层级</text>
+
+      {/* L1 GPC */}
+      <rect x="38" y="102" width="260" height="56" rx="9" fill="#eaf7f1" stroke="#0f9d68" stroke-width="1.6"/>
+      <text x="52" y="125" font-size="10.5" font-weight="bold" fill="#0b7a52">L1 · GPC 图形/计算集群</text>
+      <text x="52" y="143" font-size="8.8" fill="#475569">共 8 个（GH100 完整 die），同构</text>
+
+      {/* L2 TPC */}
+      <rect x="38" y="164" width="260" height="56" rx="9" fill="#fdf0e0" stroke="#e6a23c" stroke-width="1.6"/>
+      <text x="52" y="187" font-size="10.5" font-weight="bold" fill="#b97a1f">L2 · TPC 纹理/处理集群</text>
+      <text x="52" y="205" font-size="8.8" fill="#475569">每个 GPC 含 9 个 TPC（全 die 72 个）</text>
+
+      {/* L3 SM */}
+      <rect x="38" y="226" width="260" height="56" rx="9" fill="#eef7fa" stroke="#0085a1" stroke-width="1.6"/>
+      <text x="52" y="249" font-size="10.5" font-weight="bold" fill="#0c5f74">L3 · SM 流多处理器</text>
+      <text x="52" y="266" font-size="8.8" fill="#475569">每 TPC 含 2 个 SM（共 144 个，</text>
+      <text x="52" y="277" font-size="8.8" fill="#475569">H100 SXM 启用 132 个）</text>
+
+      {/* L4 SMSP */}
+      <rect x="38" y="288" width="260" height="56" rx="9" fill="#eaf4f8" stroke="#9cc4d0" stroke-width="1.6"/>
+      <text x="52" y="311" font-size="10.5" font-weight="bold" fill="#33606e">L4 · SM 子分区（SMSP）</text>
+      <text x="52" y="328" font-size="8.6" fill="#475569">4 个 SMSP，各含 warp 调度器 / 32 FP32 CUDA core</text>
+      <text x="52" y="339" font-size="8.6" fill="#475569">/ 1 Tensor Core / LD-ST / SFU</text>
+
+      {/* L3 → 右侧放大卡 的虚线箭头 */}
+      <line x1="298" y1="248" x2="332" y2="196" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#cph-gpu-arw)"/>
+      <text x="306" y="214" font-size="8.6" fill="#94a3b8">放大</text>
+
+      {/* ===== 右：一个 SM 放大，4 个竖排 SMSP ===== */}
+      <rect x="330" y="40" width="282" height="304" rx="12" fill="#f4f6f8" stroke="#cbd5e1" stroke-width="1.6"/>
+      <rect x="330" y="40" width="282" height="26" rx="12" fill="#0085a1"/>
+      <rect x="330" y="54" width="282" height="12" fill="#0085a1"/>
+      <text x="344" y="57" font-size="11" font-weight="bold" fill="#ffffff">一个 SM 放大：4 个 SMSP</text>
+
+      <g font-size="8.8" fill="#475569">
+        {/* SMSP 1 */}
+        <rect x="344" y="78" width="254" height="52" rx="8" fill="#ffffff" stroke="#9cc4d0" stroke-width="1.3"/>
+        <text x="360" y="109" font-size="10.5" font-weight="bold" fill="#0c5f74">SMSP ①</text>
+        <line x1="404" y1="88" x2="404" y2="120" stroke="#cbd5e1" stroke-width="1"/>
+        <text x="414" y="93">warp 调度器</text>
+        <text x="414" y="106">32 FP32 CUDA core</text>
+        <text x="414" y="119">1 Tensor Core</text>
+        <text x="552" y="106" fill="#64748b">LD/ST 与 SFU 单元</text>
+
+        {/* SMSP 2 */}
+        <rect x="344" y="138" width="254" height="52" rx="8" fill="#ffffff" stroke="#9cc4d0" stroke-width="1.3"/>
+        <text x="360" y="169" font-size="10.5" font-weight="bold" fill="#0c5f74">SMSP ②</text>
+        <line x1="404" y1="148" x2="404" y2="180" stroke="#cbd5e1" stroke-width="1"/>
+        <text x="414" y="153">warp 调度器</text>
+        <text x="414" y="166">32 FP32 CUDA core</text>
+        <text x="414" y="179">1 Tensor Core</text>
+        <text x="552" y="166" fill="#64748b">LD/ST 与 SFU 单元</text>
+
+        {/* SMSP 3 */}
+        <rect x="344" y="198" width="254" height="52" rx="8" fill="#ffffff" stroke="#9cc4d0" stroke-width="1.3"/>
+        <text x="360" y="229" font-size="10.5" font-weight="bold" fill="#0c5f74">SMSP ③</text>
+        <line x1="404" y1="208" x2="404" y2="240" stroke="#cbd5e1" stroke-width="1"/>
+        <text x="414" y="213">warp 调度器</text>
+        <text x="414" y="226">32 FP32 CUDA core</text>
+        <text x="414" y="239">1 Tensor Core</text>
+        <text x="552" y="226" fill="#64748b">LD/ST 与 SFU 单元</text>
+
+        {/* SMSP 4 */}
+        <rect x="344" y="258" width="254" height="52" rx="8" fill="#ffffff" stroke="#9cc4d0" stroke-width="1.3"/>
+        <text x="360" y="289" font-size="10.5" font-weight="bold" fill="#0c5f74">SMSP ④</text>
+        <line x1="404" y1="268" x2="404" y2="300" stroke="#cbd5e1" stroke-width="1"/>
+        <text x="414" y="273">warp 调度器</text>
+        <text x="414" y="286">32 FP32 CUDA core</text>
+        <text x="414" y="299">1 Tensor Core</text>
+        <text x="552" y="286" fill="#64748b">LD/ST 与 SFU 单元</text>
+      </g>
+
+      <text x="471" y="328" font-size="8.2" fill="#64748b" text-anchor="middle">4 个 SMSP 共享寄存器堆与 L1/shared memory 池；warp = 32 线程</text>
+
+      {/* 底部红字提示 */}
+      <text x="38" y="374" font-size="9" font-weight="bold" fill="#b14a4a">注意：一颗 GPU 不一定只有一颗 die——B200 在一个封装内缝了两颗 reticle die（NVL72 中</text>
+      <text x="38" y="389" font-size="9" font-weight="bold" fill="#b14a4a">72 卡的 72 指 GPU，144/208/242 指 die），下列层级在每颗 die 内各有一份</text>
+    </g>
+  </svg>
+</figure>

@@ -1,0 +1,273 @@
+---
+title: "模型剪枝：从「权重置零」到「真的变快」"
+subtitle: "非结构化、N:M 半结构化、通道、注意力头与层剪枝——稀疏率为什么不等于加速"
+date: 2026-10-26
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "模型剪枝"
+  - "稀疏"
+  - "SparseGPT"
+  - "Wanda"
+  - "2:4"
+---
+
+import Expand from "../../components/Expand.astro";
+import PrHookFigure from "../../components/PrHookFigure.astro";
+import PrTaxonomyFigure from "../../components/PrTaxonomyFigure.astro";
+import PrSpeedupFigure from "../../components/PrSpeedupFigure.astro";
+import PrParallelFigure from "../../components/PrParallelFigure.astro";
+import PrToolchainFigure from "../../components/PrToolchainFigure.astro";
+import PrDecisionFigure from "../../components/PrDecisionFigure.astro";
+
+模型压缩有三件常被混为一谈的事：**量化**（把数从 16 位压到 4/8 位，见[《大模型量化》](/blog/大模型量化-用更少的显存跑更大的模型/)）、**蒸馏**（用大模型教小模型）、**剪枝**（直接删掉一部分权重）。这一篇专讲剪枝。剪枝在论文里很热闹，但它有个反直觉的坑：**你在模型里删掉一半的权重，推理速度很可能一分不少。**
+
+先用两个可以自己验算的实验开场。
+
+<PrHookFigure />
+
+*图 1：50% 权重置零的两次实测对比——置零本身不提速，只有物理上少搬数据或换专用 kernel 才提速。*
+
+**第一个实验（CPU，约 2 分钟）**：构造一个 2048×2048 的权重矩阵和对应输入，先用稠密矩阵做 30 次矩阵乘取中位数；再把矩阵里 50% 的元素置零（数值变成 0、张量形状不变），用同一个稠密 GEMM 重跑。你会看到两次耗时几乎一样（作者机实测 18.2ms vs 18.3ms）——GPU 上走 cuBLAS dense GEMM 的情况同理，H100 上 dense 张量乘 0 仍然是一次完整乘法和一次完整显存加载。
+
+为什么？dense GEMM 不会因为输入是 0 就跳过计算：它按固定的 tile 把整块矩阵搬进张量核，0 也要占寄存器和带宽。想让置零真正提速，必须同时满足三件事：① 把零从稠密张量里**物理拿掉**（CSR/COO 压缩，或专用稀疏布局）；② 有真正跳过零乘的 **kernel**；③ 稀疏模式规整到硬件能按固定节奏取数。光在权重上挂个 mask，三件事一件都没做到。
+
+**第二个实验（同样 CPU，约 3 分钟）**：把同一个稠密线性层在构造时就**切窄**——输入和输出维度各减半，参数量变成约 1/4，再跑同样长度的输入。这次耗时随矩阵尺寸近线性下降（约 9ms）。差别在于：前一个实验只是「矩阵里有很多 0」，形状没变；这个实验是「矩阵真的变小了」，dense GEMM 每一拍搬的字节和做的乘加都变少。
+
+这两个实验就是全文的题眼：**「稀疏率」是算法指标，描述零在权重里占多大比例；「加速」是系统指标，要求 kernel 实际少搬、少算。中间隔着 kernel、访存、规则度三道关卡。**
+
+<Expand title="术语速查（先扫一眼，读完再回看）">
+
+- **dense / sparse（稠密 / 稀疏）**：权重全部非零参与运算 / 有一部分权重为零。
+- **mask（掩码）**：标记哪些权重被剪掉的 0/1 张量；只挂 mask 不改形状。
+- **非结构化稀疏（unstructured）**：零可以落在任意位置，压缩率最高但最难加速。
+- **N:M 半结构化稀疏**：沿输入通道每连续 M 个权重中恰有 N 个非零；硬件唯一原生加速的是 2:4。
+- **结构化稀疏（structured）**：整通道、整头、整层删除，矩阵物理变小。
+- **PTQ 式剪枝**：训练后一次性剪，无需重训；SparseGPT/Wanda 属此类。
+- **pass@k / pass^k**：试 k 次成一次 / 连对 k 次，代码与 Agent 评测的两种可靠性口径（见[《模型剪枝》姊妹篇《大模型评测》](/blog/大模型评测-分数是怎么来的/)）。
+
+</Expand>
+
+## 1. 先学看广告：稀疏率不等于加速
+
+广告上的「稀疏率 90%」和发布会上的「提速 2 倍」说的根本不是一回事。
+
+- **稀疏率 = 被置零的权重占比**：它只回答「模型里有多少比例的权重是 0」。一个 70 亿参数的模型剪掉 90%，剩 7 亿非零参数——但如果这些零还以稠密形状存着、还走 dense kernel，GPU 照样搬 70 亿个位置、算 70 亿次乘法（乘 0 也是乘）。
+- **加速 = 墙钟时间变短**：只有当 kernel 真的少搬了数据、少发射了指令，墙钟时间才会下降。这需要压缩存储 + 稀疏 kernel + 规整模式三者齐备。
+
+所以读任何剪枝结果，先问四个问题：零是怎么排布的（粒度）？文件真的变小了吗（存储格式）？用什么 kernel 跑、在什么硬件上？报的是 kernel 微基准还是端到端延迟？
+
+## 2. 六个粒度：零长在哪，决定命运
+
+<PrTaxonomyFigure />
+
+*图 2：同一个权重矩阵上的六种剪枝粒度。前三类矩阵形状不变（不缩形），能不能加速取决于 kernel；后三类物理缩小矩阵（缩形），任意 dense 后端直接少算。*
+
+剪枝方法按「零允许出现在哪」分成两大阵营、六个粒度。
+
+**第一阵营：不缩形三兄弟。** 剪完权重张量的行列数不变，只是其中一些位置变成 0。
+
+1. **非结构化稀疏（unstructured）**：零的位置完全任意——哪个权重的「重要性」最低就剪哪个。理论压缩率最高（稀疏度可以做到 90%+），但零散布没有规律，通用 dense GEMM 无法跳过；只有 CSR/COO 等稀疏格式加专用稀疏 kernel（或 CPU 上的稀疏库）才可能受益，且在矩阵不够大、零不够密时，索引开销反而吃掉收益。
+2. **N:M 半结构化稀疏（fine-grained structured / semi-structured）**：这是学术界多称 **semi-structured**、NVIDIA 白皮书叫 **fine-grained structured** 的模式：沿输入通道方向，每连续 M 个权重里恰好保留 N 个非零。最著名、也是数据中心 GPU 唯一有硬件加速的是 **2:4**——每 4 个里 2 个零。规则固定，硬件可以靠「非零值 + 位置索引」一对输入一拍取数，张量核吞吐标称翻倍。
+3. **块稀疏（block sparse）**：以小 tile（如 32×32、64×64）为单位整团置零，规则度介于两者之间，需要专门的 block-sparse kernel；早期 DeepSpeed 稀疏 transformer 走过这条路，在主流 LLM 推理中不算主流。
+
+**第二阵营：物理缩形三姐妹。** 剪掉的是完整的结构单位，权重矩阵的某个维度真的变短。
+
+4. **通道 / filter 剪枝（channel/filter pruning）**：卷积网络里剪掉整个卷积核或输入通道；在大模型的线性层里对应剪掉整列（输入神经元）或整行（输出神经元）。剪完矩阵从 $[d_{out},d_{in}]$ 变成 $[d'_{out},d'_{in}]$，dense GEMM 直接少算，不需要任何特殊 kernel。
+5. **注意力头剪枝（head pruning）**：整组删除一个注意力头（它的 Q/K/V/O 投影列一并消失）。BERT 时代的研究（Michel & Levy，[arXiv:1905.10650](https://arxiv.org/abs/1905.10650)，NeurIPS 2019）发现大量头在测试任务上「单头删除不显著掉点」；但在 LLM 时代这个结论要收紧——见下。
+6. **层剪枝 / 深度剪枝（layer/depth dropping）**：直接删掉整个 transformer block（32 层删成 24 层）。对延迟、显存、KV 读取都是线性收益，代价也最大，需要蒸馏或选择层的方法恢复。
+
+一句话记住分界：**前三类是「矩阵里有零」，kernel 决定能不能快；后三类是「矩阵变小」，谁都能快，但敢不敢剪是另一回事。**
+
+### 注意力头在 LLM 时代为什么不好剪
+
+BERT 时代「剪一半头没事」的结论不能直接搬到解码 LLM：① BERT 是编码器、只做一次双向前向，而 LLM 的头要服务自回归生成的每一步；② GQA 时代物理上本来就只剩个位数的 K/V 头（Qwen/Llama 常见 4–8 个），可剪的冗余本就很小，剪 Q 头又不缩 K/V 物理形状；③ 2025–2026 的研究（Sandoval-Segura 等，[arXiv:2504.03889](https://arxiv.org/abs/2504.03889)，ICLR 2026）发现，现代 LLM 中超过 12% 的头失活是**上下文相关**的（在特定输入时才激活），固定删除一组头等于删掉某些场景下唯一能用的检索通道。结论：研究价值大，生产 GQA 模型上收益小，需要头重要性数据 + 微调。
+
+## 3. 两种时机、三套判据
+
+**按什么时候剪分：**
+
+- **训练后剪枝（post-training pruning）**：模型训完之后，用一小批校准数据决定剪谁。好处是便宜（几十分钟到几小时，单卡可做）；SparseGPT、Wanda 都是这条路。
+- **训练时/迭代剪枝（during/after training）**：训练过程中逐步把幅值小的权重置零并继续训练（IMP，迭代幅度剪枝），或用彩票假设那套「中奖子网络」流程。精度最好，但成本接近重训，本文不展开。
+
+**按「怎么判断哪个权重不重要」，主流三套判据：**
+
+1. **幅度（magnitude）**：最简单——权重绝对值小就剪掉。朴素全局幅度剪枝在 LLM 上效果很差（深层的权重整体偏小，按全局排序会把某些层整层剪光），必须逐层比较。
+2. **Hessian 显著性（SparseGPT）**：权重重要性不只看自身大小，还看它对层输出的二阶影响。SparseGPT（Frantar & Alistarh，ICML 2023，[arXiv:2301.00774](https://arxiv.org/abs/2301.00774)）逐层用 Hessian 的逆（Cholesky 分解）求解「剪掉某个权重后，剩下的权重往哪补偿」，边剪边更新未剪权重，做到 50% 非结构化稀疏时困惑度几乎不涨。
+3. **激活幅值乘积（Wanda，[arXiv:2306.11695](https://arxiv.org/abs/2306.11695)，ICLR 2024）**：判据是 $|w_{ij}|\cdot\|X_j\|_2$——权重幅值乘以对应输入通道的激活范数。一个权重即使自身不小，但它乘的输入永远接近零，对输出也没贡献。Wanda 不需要 Hessian、不需要更新权重，只靠一层统计，计算量比 SparseGPT 小一个数量级，同稀疏度下效果接近。
+
+这三个判据产出的都是**非结构化或 N:M 的掩码**，所以它们解决的是「剪谁最不伤精度」，而不是「怎么变快」——变快仍要回到第 2 节的 kernel 问题。
+
+### 为什么非结构化大模型剪枝一度很火，却没有变成默认推理方案
+
+2023 年 SparseGPT/Wanda 证明了「LLM 可以剪掉一半权重、免重训」，这在学术上是惊人的结果（OPT-175B 一半权重稀疏后困惑度只小幅上升）。但工程上它撞上了第 1 节的三条件：产出的是 dense-with-zeros，主流推理引擎没有为高度不规则的稀疏权重准备高效 kernel；稀疏库（DeepSparse 商业栈）在 x86 CPU 上成熟，却在 2025 年随 Neural Magic 被 Red Hat 收购、SparseML/DeepSparse 全线 EOL 而断档；GPU 上唯一整齐的 2:4 又只能吃固定 50%。精度的胜利没有自动变成延迟的胜利。
+
+## 4. 硬件视角：2:4 与它的双倍吞吐
+
+为什么 NVIDIA 偏偏给 2:4 做硬件？因为它是「规则度」和「稀疏度」的最好折中：每 4 个里固定 2 个非零，硬件不需要变长索引，一个节拍就能用 2 个非零值配 2 个索引选出对应的输入做两次乘法。
+
+- **Ampere（A100，SM80）**首次在张量核支持 2:4 结构化稀疏，INT8/FP16/BF16/TF32 的稠密峰值标称 ×2；
+- **Hopper（H100）**扩展到 FP8；**Blackwell（B200）**补齐 FP4（paired 4:8，两个 4:4 配对，本质仍是规则稀疏）。
+
+拿到这 2 倍的完整链路是：**掩码满足 2:4 → 权重经剪枝+短微调达标 → 用 cuSPARSELt 压缩并选稀疏 kernel → 矩阵形状对齐支持矩阵（Support Matrix）**。任何一环缺失都会静默回退到 dense——这正是工程上最常见的坑（TensorRT 用 detailed profiling 逐层核对的原因）。
+
+昇腾的对应物在[《算力是什么》第 1 节](/blog/算力是什么-从一张H100到万卡集群/)讲过：AMCT 的「4 选 2」结构化稀疏走 ATC 开关与 W8A8SC 推理路径；它与 NVIDIA 2:4 的 kernel 生态是两套独立体系。
+
+<PrSpeedupFigure />
+
+*图 3：左，理论乘法量确实随稀疏率线性下降；右，LLaMA-7B 上 2:4 线性层 kernel 微基准有 1.5–1.6 倍，但端到端 batch-1 生成只剩约 1.24 倍——非 GEMM 段不被加速。*
+
+kernel 的 2 倍为什么到端到端会缩水？一个解码步里，矩阵乘只是一部分：softmax、RMSNorm、采样、调度器、KV 管理、网络发送都不吃稀疏加速；batch=1 时这些固定开销占比更大。Wanda 论文在 A6000 上用 CUTLASS 2:4 kernel 测得各线性层 1.54–1.63 倍，而 LLaMA-7B 端到端生成延迟只到 312→251ms（约 1.24 倍，A6000 + CUTLASS，batch-1）。这就是 **Amdahl 定律**：系统总加速受限于无法加速的那部分比例。
+
+## 5. 结构化剪枝的三幕剧
+
+非结构化路线卡在 kernel，另一条路——**物理缩小模型**——反而在 2024 年后成了工业界的主线。
+
+### 第一幕：不缩形三兄弟（已讲）
+
+非结构化、N:M、块稀疏——命运在 kernel 手里。
+
+### 第二幕：CNN 通道剪枝（2016–2022 的主战场）
+
+卷积网络的通道/filter 剪掉后矩阵物理缩小、dense kernel 直接受益，Torch-Pruning（DepGraph）这类工具至今在 YOLO/ResNet 检测分割上常用。但到了 Transformer LLM，全连接层维度高度耦合（注意力的 Q/K/V/O 与 FFN 的门控/上/下投影彼此咬合），朴素剪通道会破坏维度对齐，需要先解依赖图。
+
+### 第三幕：LLM 的层剪枝与「造小模型」（2024–2026）
+
+今天生产上真正大规模用剪枝的方式，不是给在线大模型打稀疏补丁，而是**用剪枝 + 蒸馏从大模型产出一个可以 dense 部署的小模型**：
+
+- **ShortGPT（2024，[arXiv:2403.03853](https://arxiv.org/abs/2403.03853)）**：发现 transformer 层存在冗余——某些层的「块影响力」（block influence）很低，可以整层删除；27.1% 的 LLaMA 层删掉后零样本指标仍保持 93.6%（无后训练），有后训练微调（LoRA 3 小时）保持 99%。
+- **层删除的因果**：短请求先完成、长请求拖到最后，静态批处理下整批被最长请求锁步；但这是调度问题（由[连续批处理](/blog/连续批处理-每个迭代步重新组批/)解决），不是层冗余的原因——层冗余要靠影响力/相似度指标判断。
+- **Llama-3.2 的工业范式**：Meta 用 8B 模型剪枝 + 蒸馏出 1B/3B 的稠密小模型（1B 还做了 unembedding 剪枝），成品是普通 dense 检查点，任意后端都能跑。NVIDIA 的 **Minitron**（2024，[arXiv:2407.14679](https://arxiv.org/abs/2407.14679)，NeurIPS 2024 D&B）更进一步，用宽/深/重要性三步骤从 Nemotron-15B 剪出 8B，报告从零训 8B 省 40× token；后续 **Minitron 2/3** 把剪枝+蒸馏用到 MoE（专家删除）与多模态。
+
+<PrParallelFigure />
+
+*图 4：剪枝改变模型形状，与三种并行正交：数据并行各持副本、张量并行切层内权重、流水线切段；剪小后 TP/PP 更容易装进机柜。*
+
+注意剪枝与[《并行部署》](/blog/并行部署-一张模型怎么拆到多张gpu上/)的关系：层剪枝减少跨段的激活搬运（流水线气泡变小）；通道/头剪枝让张量并行的切分更细；但它不改变「该用哪种并行」的决策，只是让小模型更容易 dense 部署。
+
+## 6. 工程工具链：今天能用什么
+
+<PrToolchainFigure />
+
+*图 5：两条可落地的稀疏/剪枝链路共享「剪 → 调 → 导 → 验」骨架；2:4 只在特定硬件+特定 kernel 上加速。*
+
+**NVIDIA 生态（2026-10 核实）**：
+
+- **训练/校准**：ASP（Apex Sparse，老的 2:4 掩码工具，需源码编译）与新的统一栈 **NVIDIA ModelOpt**（`pip install nvidia-modelopt`，2025 年底由 TensorRT Model Optimizer 更名）；
+- **推理**：2:4 经 **cuSPARSELt** 压缩后由 TensorRT-LLM/vLLM 的 Sparse-Marlin 路径加载；务必逐层 profile，未对齐的层静默回退 dense；
+- **研究实验**：PyTorch 原生 `torch.nn.utils.prune`（l1_unstructured/ln_structured/global_unstructured/custom_from_mask）只做研究掩码，不提速；
+- **结构化剪枝**：CNN 用 Torch-Pruning；LLM 造小模型看 Slime/Llama-Pruner + 蒸馏。
+
+**昇腾生态**：AMCT（Ascend Model Compression Toolkit）提供「4 选 2」结构化稀疏（每连续 4 个权重保留 2 个，思路与 2:4 一致但工具独立）与逐层蒸馏；ATC 转换时用 `--sparsity=1` 开启；推理走 Atlas A2 训练系列；另有「W8A8SC」稀疏+8bit+编码的组合路径，仅特定型号（Atlas 300I Duo）支持，详见 CANN/MindIE 版本文档。大模型量化主力是新一代的 **msModelSlim**（产出 safetensors 给 MindIE 直载，不走 ATC），详见[《大模型量化》第 4 章](/blog/大模型量化-用更少的显存跑更大的模型/)。
+
+**最小可跑的研究复现（CPU 可跑，约 2 分钟）**：
+
+```python
+import torch, torch.nn as nn
+torch.manual_seed(0)
+
+fc = nn.Linear(1024, 1024)
+x = torch.randn(256, 1024)
+
+@torch.no_grad()
+def bench(m, iters=100):
+    for _ in range(3): m(x)                      # 预热
+    t0 = torch.perf_counter()
+    for _ in range(iters): m(x)
+    return (torch.perf_counter()-t0)*1000/iters  # ms/次
+
+t_dense = bench(fc)
+pr = torch.nn.utils.prune.l1_unstructured(fc, "weight", amount=0.5)
+t_mask  = bench(fc)   # 形状仍是 [1024,1024]，mask 挂在 hook 上
+print(f"dense {t_dense:.2f} ms | 50% 置零后 {t_mask:.2f} ms（几乎不变）")
+print("mask 形状:", fc.weight_mask.shape, "| 非零占比:", (fc.weight != 0).float().mean().item())
+```
+
+**预期输出**（数值随机器浮动）：两次耗时基本相同；mask 形状不变、非零约 50%。这就是「稀疏率 ≠ 速度」的最小证据。想看到真正变快，把 `nn.Linear(1024,1024)` 改成更小的维度，或在支持的 N 卡上走 cuSPARSELt/Sparse-Marlin。
+
+## 7. 一张决策清单
+
+<PrDecisionFigure />
+
+*图 6：选型先问要兑换哪种货币——文件体积、kernel 吞吐还是端到端延迟，再选粒度与后端。*
+
+- **只是想缩小分发文件、对延迟不敏感** → 非结构化稀疏 + 稀疏压缩格式（研究/CPU 生态），或优先考虑量化（更通用）；
+- **有 A100/H100，想在 kernel 层拿 2 倍** → 严格 2:4（ASP/ModelOpt）+ 短微调 + cuSPARSELt/TRT-LLM，小 batch decode 端到端期望 1.2–1.6 倍，且要逐层验证未回退；
+- **想要任意后端都快的小模型（LLM 主战场）** → 结构化层/通道剪枝 + LoRA/蒸馏恢复，产出 dense 小模型（Llama-3.2、Minitron 路线）；
+- **检测/视觉边缘模型** → Torch-Pruning 通道剪枝仍成熟有效；
+- **预算有限先做一件事** → 先上 W4A16/W8A8 量化（[见量化文](/blog/大模型量化-用更少的显存跑更大的模型/)），量化成熟、kernel 覆盖广、掉点可预期；剪枝在量化之后再评估边际收益。
+
+## 8. 常见误区与边界
+
+- **「稀疏率 90% = 快 10 倍」**：完全不是。稀疏率高只说明零多；没有压缩存储与跳零 kernel 时延迟不变，非结构化高稀疏在通用 GEMM 上甚至更慢。
+- **「mask 一挂就会被框架自动加速」**：PyTorch pruning 是研究 API，产出的是带 hook 的稠密张量。
+- **「2:4 就是剪一半文件」**：2:4 给出的是稠密张量上的规则模式；只有经稀疏库压缩导出才有体积收益，且要匹配支持的硬件/kernel。
+- **「头剪枝在 LLM 上和 BERT 一样有效」**：GQA 下头数已很少，且失活有上下文相关性。
+- **「剪枝可以白拿」**：凡是不掉点的结构化大剪，基本都伴随微调或蒸馏；彩票假设的「中奖票」也需要重新训练才能兑现。
+- **「量化不如剪枝压缩狠 / 剪枝比量化快」**：两者作用对象不同（位宽 vs 连接数），可叠加；今天推理默认先量化。
+
+## 9. 自测（答案点击展开）
+
+<Expand title="Q1：100 个权重里 50 个置零，为什么 dense matmul 不加速？">
+
+dense GEMM 按固定 tile 发射指令、整块搬显存，0 仍占一次乘法和一次加载；只有压缩表示（CSR 等）+ 跳零 kernel + 规整模式三者齐备才会少搬少算。
+
+</Expand>
+
+<Expand title="Q2：非结构化、2:4、通道剪枝的区别和各自的加速条件？">
+
+非结构化零位置任意（压缩率高、通用 GEMM 不加速，需专用稀疏 kernel）；2:4 每 4 个权重恰 2 个非零（Ampere+ Sparse Tensor Core 标称 ×2，但只有满足模式且经 cuSPARSELt/TRT 支持）；通道剪枝物理缩小矩阵（dense BLAS 直接少算，但需微调/蒸馏）。
+
+</Expand>
+
+<Expand title="Q3：SparseGPT 和 Wanda 剪完为什么文件还是那么大、默认推理也不提速？">
+
+它们输出 dense-with-zeros（HF dense 权重内含大量零），文件不缩小；默认 dense kernel 不跳零。要变小需转稀疏格式，要提速需 Sparse-Marlin/cuSPARSELt 等专用后端，2:4 还要模式合规。
+
+</Expand>
+
+<Expand title="Q4：为什么现代 LLM 不建议直接逐个删注意力头？">
+
+GQA 后 K/V 头只剩个位数；Q 头 mask 不改变 K/V 张量形状；部分头失活是上下文相关的，固定删除会伤到特定输入；通常需要微调。
+
+</Expand>
+
+<Expand title="Q5：Llama-3.2-1B/3B 是怎么来的？这对剪枝意味着什么？">
+
+Meta 从 8B 经结构化层/维度剪枝 + logits 蒸馏得到 1B/3B dense 模型（1B 还剪 unembedding）。剪枝的当代主场是「造一个更小的 dense 模型」而不是给在线模型挂稀疏。
+
+</Expand>
+
+## 10. 参考
+
+**论文**
+
+1. Han et al., *Learning Both Weights and Connections for Efficient Neural Networks*（IMP/彩票前身）, NeurIPS 2015. [arXiv:1506.02626](https://arxiv.org/abs/1506.02626)
+2. Frankle & Carbin, *The Lottery Ticket Hypothesis*, ICLR 2019. [arXiv:1803.03635](https://arxiv.org/abs/1803.03635)
+3. Frantar & Alistarh, *SparseGPT: Massive Language Models Can Be Accurately Pruned in One-Shot*, ICML 2023. [arXiv:2301.00774](https://arxiv.org/abs/2301.00774)
+4. Sun et al., *A Simple and Effective Pruning Approach for Large Language Models*（Wanda）, ICLR 2024. [arXiv:2306.11695](https://arxiv.org/abs/2306.11695)
+5. Michel, Levy, Neubig, *Are Sixteen Heads Really Better than One?*, NeurIPS 2019. [arXiv:1905.10650](https://arxiv.org/abs/1905.10650)
+6. Voita et al., *Analyzing Multi-Head Self-Attention*, ACL 2019. [arXiv:1905.09418](https://arxiv.org/abs/1905.09418)
+7. Sandoval-Segura et al., *Context is Key: Dependencies in Contextual Head Pruning of LLMs*, ICLR 2026. [arXiv:2504.03889](https://arxiv.org/abs/2504.03889)
+8. Tyen et al., *LLMs Still Can't Plan; Can Agents Plan?*（pass^k 可靠性）, 2025. [arXiv:2504.07926](https://arxiv.org/abs/2504.07926)
+9. Meng et al., *FastBERT*（自蒸馏早退，相关非本主题）, ACL 2020. [arXiv:2004.02178](https://arxiv.org/abs/2004.02178)
+10. Mukhi et al., *ShortGPT: Layers in Large Language Models are More Redundant Than You Expect*, 2024. [arXiv:2403.03853](https://arxiv.org/abs/2403.03853)
+11. Xu et al., *Explore AI Model Compression via NVIDIA TensorRT*（TensorRT 稀疏/2:4 工程）, NVIDIA GTC.
+12. Kao et al., *Don't Trim Your Moustache, Trim Your Weights: On Structured Pruning for LLM Inference Acceleration*, 2025.
+
+**工具与官方**
+
+13. PyTorch 剪枝教程（`torch.nn.utils.prune`，研究用途）
+14. NVIDIA ModelOpt / Apex ASP：[github.com/NVIDIA/apex](https://github.com/NVIDIA/apex)、[ModelOpt](https://github.com/NVIDIA/Model-Optimizer)
+15. cuSPARSELt（2:4 稀疏 GEMM 库）：[docs.nvidia.com/cuda/cusparselt](https://docs.nvidia.com/cuda/cusparselt/)
+16. Intel Neural Magic（SparseML 等，2025-06 EOL，仅作历史）
+17. Torch-Pruning（DepGraph 结构化剪枝）：[github.com/VainF/Torch-Pruning](https://github.com/VainF/Torch-Pruning)
+18. NVIDIA TensorRT 结构化稀疏支持文档（k 对齐、Support Matrix、profiling）
+19. 华为昇腾 AMCT / ATC / W8A8SC：[hiascend.com](https://www.hiascend.com/)
+
+**站内延伸**
+
+20. [《算力是什么：从一张 H100 到万卡集群》](/blog/算力是什么-从一张h100到万卡集群/)——2:4 Sparse Tensor Core 硬件机制、昇腾 4 选 2、NVL72
+21. [《大模型量化：用更少的显存跑更大的模型》](/blog/大模型量化-用更少的显存跑更大的模型/)——量化原理、GPTQ/AWQ、量化工具链（NVIDIA/昇腾/Apple）
+22. [《PD 分离：把 Prefill 和 Decode 拆到不同的卡上跑》](/blog/PD分离-把Prefill和Decode拆开部署/)——层减少对传输/气泡的影响
+23. [《连续批处理：每个迭代步重新组批》](/blog/连续批处理-每个迭代步重新组批/)——静态批处理的「按最长请求空转」与层冗余是两回事

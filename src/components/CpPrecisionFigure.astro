@@ -1,0 +1,54 @@
+---
+// 图：H100 SXM 各精度稠密算力阶梯（数字为官方 dense 峰值，单位 TFLOPS）+ 2:4 稀疏小图
+---
+
+<figure>
+  <svg viewBox="0 0 640 340" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">同一张 H100，用越短的数字格式，峰值算力越高</text>
+      <text x="320" y="42" font-size="10" fill="#94a3b8" text-anchor="middle">均为稠密（dense）峰值，单位 TFLOPS；短格式靠牺牲有效数位换速度</text>
+
+      {/* 阶梯条形，基线 y=250，比例按 sqrt 压缩 */}
+      {(() => {
+        const data = [
+          {name:"FP64", sub:"科学计算", v:34, w:26, c:"#94a3b8"},
+          {name:"FP32", sub:"基准精度", v:67, w:42, c:"#7fc3d8"},
+          {name:"TF32", sub:"19 位", v:495, w:96, c:"#3aa5c4"},
+          {name:"BF16/FP16", sub:"训练主力", v:989, w:150, c:"#0085a1"},
+          {name:"FP8", sub:"H100 新增", v:1979, w:205, c:"#0f9d68"},
+        ];
+        const baseX = 34, gap = 10, bw = 86, baseY = 270;
+        return data.map((d,i)=>{
+          const x = baseX + i*(bw+gap);
+          return (
+            <g>
+              <rect x={x} y={baseY-d.w} width={bw} height={d.w} rx="4" fill={d.c} opacity={0.85}/>
+              <text x={x+bw/2} y={baseY-d.w-8} font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">{d.v}</text>
+              <text x={x+bw/2} y={baseY+18} font-size="10.5" font-weight="bold" fill="#334155" text-anchor="middle">{d.name}</text>
+              <text x={x+bw/2} y={baseY+33} font-size="9" fill="#94a3b8" text-anchor="middle">{d.sub}</text>
+            </g>
+          );
+        });
+      })()}
+      <text x="34" y="322" font-size="9.5" fill="#64748b">从 FP64 到 FP8，纸面峰值差约 58 倍——但它们是不同精度，数字不能横向当成「快了 58 倍」</text>
+
+      {/* 2:4 稀疏小图：上下两排权重格，对比 4 次乘法与 2 次乘法 */}
+      <line x1="516" y1="60" x2="516" y2="200" stroke="#e2e8f0"/>
+      <text x="573" y="74" font-size="10.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">2:4 结构化稀疏</text>
+
+      <text x="518" y="92" font-size="8" fill="#64748b">稠密：4 个都算</text>
+      {[0,1,2,3].map((i)=>(
+        <rect x={524+i*25} y="98" width="21" height="21" rx="4" fill="#fde2b8" stroke="#e6a23c"/>
+      ))}
+      <text x="518" y="138" font-size="8" fill="#64748b">剪枝后：只算 2 个非零</text>
+      {[0,1,2,3].map((i)=>(
+        <rect x={524+i*25} y="146" width="21" height="21" rx="4"
+          fill={i===1||i===2 ? "#fff" : "#fde2b8"}
+          stroke={i===1||i===2 ? "#cbd5e1" : "#e6a23c"}
+          stroke-dasharray={i===1||i===2 ? "3,3" : undefined}/>
+      ))}
+      <text x="524" y="180" font-size="7.5" fill="#94a3b8">实色＝非零，虚线格＝被剪掉的零</text>
+      <text x="573" y="194" font-size="8.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">跳过零乘 → 吞吐 ×2</text>
+    </g>
+  </svg>
+</figure>

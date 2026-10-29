@@ -1,0 +1,60 @@
+---
+// 图：三种并行——每种都显性画出通信动作（对账 / 每层传纸条 / 气泡与半成品搬运）
+---
+
+<figure>
+  <svg viewBox="0 0 640 346" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="cpp-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">140GB 的模型放不进一张 80GB 的卡：三种拆法，都躲不开通信</text>
+
+      {/* 数据并行 */}
+      <text x="20" y="58" font-size="11.5" font-weight="bold" fill="#006377">数据并行</text>
+      {[0,1,2].map((r)=>{
+        const y = 68 + r*26;
+        return (
+          <g>
+            <rect x="110" y={y} width="150" height="20" rx="4" fill="#d9eef3" stroke="#0085a1"/>
+            <text x="185" y={y+14} font-size="9" fill="#006377" text-anchor="middle">同一份权重 W · 不同批次 B{r+1}</text>
+          </g>
+        );
+      })}
+      <line x1="270" y1="78" x2="300" y2="78" stroke="#94a3b8" marker-end="url(#cpp-arw)"/>
+      <line x1="270" y1="104" x2="300" y2="104" stroke="#94a3b8" marker-end="url(#cpp-arw)"/>
+      <line x1="270" y1="130" x2="300" y2="130" stroke="#94a3b8" marker-end="url(#cpp-arw)"/>
+      <rect x="308" y="72" width="150" height="60" rx="6" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="383" y="98" font-size="9.5" fill="#b97a1f" text-anchor="middle">每轮下班「对账」</text>
+      <text x="383" y="114" font-size="9.5" fill="#b97a1f" text-anchor="middle">AllReduce 同步梯度</text>
+      <text x="490" y="106" font-size="9" fill="#94a3b8">通信一轮一次</text>
+
+      <line x1="20" y1="156" x2="620" y2="156" stroke="#e2e8f0" stroke-dasharray="4,4"/>
+
+      {/* 张量并行 */}
+      <text x="20" y="180" font-size="11.5" font-weight="bold" fill="#006377">张量并行</text>
+      <text x="110" y="180" font-size="9.5" fill="#64748b">同一层的权重切块</text>
+      {[0,1,2,3].map((i)=>(
+        <g>
+          <rect x={120+i*78} y="192" width="68" height="34" rx="4" fill="#d9eef3" stroke="#0085a1"/>
+          <text x={154+i*78} y="213" font-size="9" fill="#006377" text-anchor="middle">权重块 {i+1}</text>
+          {i<3 && <line x1={188+i*78} y1="209" x2={196+i*78} y2="209" stroke="#e6a23c" stroke-width="1.6" marker-end="url(#cpp-arw)"/>}
+        </g>
+      ))}
+      <text x="20" y="252" font-size="9.5" fill="#b97a1f">→ 每算一层、每个词都要互传两次中间结果（前向 + 反向各一次 AllReduce），所以只能关在机柜内</text>
+
+      <line x1="20" y1="268" x2="620" y2="268" stroke="#e2e8f0" stroke-dasharray="4,4"/>
+
+      {/* 流水线并行 */}
+      <text x="20" y="292" font-size="11.5" font-weight="bold" fill="#006377">流水线并行</text>
+      {[0,1,2,3].map((i)=>(
+        <g>
+          <rect x={120+i*110} y="278" width="100" height="30" rx="4" fill="#d9eef3" stroke="#0085a1"/>
+          <text x={170+i*110} y="297" font-size="9" fill="#006377" text-anchor="middle">第 {i+1} 段（若干层）</text>
+          {i<3 && <line x1={220+i*110} y1="293" x2={228+i*110} y2="293" stroke="#94a3b8" marker-end="url(#cpp-arw)"/>}
+        </g>
+      ))}
+      <text x="20" y="330" font-size="9.5" fill="#b97a1f">→ 半成品（激活）逐段往下搬；上游没做完下游只能干等，空出来的时间叫「气泡」</text>
+    </g>
+  </svg>
+</figure>

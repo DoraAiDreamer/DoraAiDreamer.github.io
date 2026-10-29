@@ -1,0 +1,43 @@
+---
+// 图：尺度阶梯——1 张卡 → 8 卡 HGX 服务器（NVLink 全互联）→ 72 卡 NVL72 机柜（单一 NVLink 域）
+---
+
+<figure>
+  <svg viewBox="0 0 640 286" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="cps-arw" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto"><path d="M0,0 L8,3.5 L0,7 Z" fill="#94a3b8"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">机柜正在变成「一台计算机」：卡 → 8 卡服务器 → 72 卡机柜</text>
+
+      {/* 1 卡 */}
+      <rect x="40" y="120" width="60" height="60" rx="6" fill="#d9eef3" stroke="#0085a1" stroke-width="1.6"/>
+      <text x="70" y="155" font-size="11" fill="#006377" text-anchor="middle">1 张 GPU</text>
+      <text x="70" y="202" font-size="9.5" fill="#475569" text-anchor="middle">插在 PCIe 上</text>
+      <text x="70" y="217" font-size="9" fill="#94a3b8" text-anchor="middle">SXM 模组供电更足</text>
+
+      <line x1="112" y1="150" x2="150" y2="150" stroke="#94a3b8" stroke-width="2" marker-end="url(#cps-arw)"/>
+
+      {/* 8 卡 HGX：2x4 */}
+      <rect x="158" y="78" width="150" height="150" rx="8" fill="#f4f6f8" stroke="#cbd5e1"/>
+      {Array.from({length:8}).map((_,i)=>(
+        <rect x={170+(i%4)*34} y={100+Math.floor(i/4)*44} width="28" height="38" rx="4" fill="#d9eef3" stroke="#0085a1"/>
+      ))}
+      <text x="233" y="204" font-size="11" font-weight="bold" fill="#006377" text-anchor="middle">8 卡服务器（HGX）</text>
+      <text x="233" y="220" font-size="9" fill="#64748b" text-anchor="middle">NVLink + NVSwitch 全互联</text>
+      <text x="233" y="66" font-size="9" fill="#94a3b8" text-anchor="middle">H100 代：每卡双向 900 GB/s</text>
+
+      <line x1="320" y1="150" x2="358" y2="150" stroke="#94a3b8" stroke-width="2" marker-end="url(#cps-arw)"/>
+
+      {/* 72 卡机柜：12x6 网格 */}
+      <rect x="366" y="60" width="232" height="186" rx="8" fill="#f4f6f8" stroke="#cbd5e1"/>
+      {Array.from({length:72}).map((_,i)=>(
+        <rect x={378+(i%12)*18} y={92+Math.floor(i/12)*22} width="14" height="16" rx="2" fill={i%5===0 ? "#0f9d68" : "#7fc3d8"} stroke="#0085a1" stroke-width="0.5"/>
+      ))}
+      <text x="482" y="232" font-size="11" font-weight="bold" fill="#0a7a50" text-anchor="middle">72 卡机柜（GB200 NVL72）</text>
+      <text x="482" y="48" font-size="9" fill="#94a3b8" text-anchor="middle">Blackwell 代：每卡双向 1.8 TB/s，整柜 NVLink 聚合 130 TB/s</text>
+
+      <text x="320" y="270" font-size="9.5" fill="#64748b" text-anchor="middle">scale-up：机柜内卡与卡直接对话，像一个大平层；卡数再多，就只能走机房网络（scale-out）</text>
+    </g>
+  </svg>
+</figure>

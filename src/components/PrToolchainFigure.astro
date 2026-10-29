@@ -1,0 +1,38 @@
+---
+// 双泳道：剪→调→导→验（NVIDIA）与昇腾 AMCT/ATC（国产）共享"剪→调→导→验"骨架
+---
+
+<figure>
+  <svg viewBox="0 0 640 252" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="prt2-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">生产链路：剪 → 调 → 导 → 验</text>
+
+      {[
+        {y:44, fill:"#d9eef3", sc:"#0085a1", name:"NVIDIA 链路", tools:["ASP / ModelOpt\n2:4 掩码","短微调\n恢复精度","TRT-LLM / vLLM\nSparse-Marlin","逐层 profile\n静默回退 dense"]},
+        {y:146, fill:"#e4f5ec", sc:"#0f9d68", name:"昇腾链路", tools:["AMCT\n4选2校准","短微调\n（CANN 版本文档）","ATC\n--sparsity=1\n（4选2开关）","MindIE\nW8A8SC 仅 300I Duo"]},
+      ].map((lane)=> (
+        <g>
+          <rect x="30" y={lane.y} width="580" height="92" rx="10" fill="#fff" stroke={lane.sc} stroke-width="1.2"/>
+          <text x="46" y={lane.y+20} font-size="10" font-weight="bold" fill={lane.sc}>{lane.name}</text>
+          {lane.tools.map((t,i)=>{
+            const x=60+i*140;
+            return (
+              <g>
+                <rect x={x} y={lane.y+30} width="124" height="50" rx="7" fill={lane.fill} stroke={lane.sc}/>
+                {t.split("\n").map((line,j)=>(
+                  <text key={j} x={x+62} y={lane.y+50+j*13} font-size="8.6" fill="#334155" text-anchor="middle">{line}</text>
+                ))}
+                {i<3 && <line x1={x+124} y1={lane.y+55} x2={x+136} y2={lane.y+55} stroke="#94a3b8" marker-end="url(#prt2-arw)"/>}
+              </g>
+            );
+          })}
+        </g>
+      ))}
+
+      <text x="320" y="246" font-size="9" fill="#64748b" text-anchor="middle">版本/开关随 CANN、TRT 版本变化，落地前查官方文档并逐层验证；国产昇腾 AMCT 4选2 与 W8A8SC 为不同特性，别混</text>
+    </g>
+  </svg>
+</figure>
