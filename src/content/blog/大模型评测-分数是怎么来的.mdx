@@ -207,7 +207,7 @@ lm_eval run --model hf \
 
 其他工具按用途选：**OpenCompass**（上海 AI Lab 司南，配置驱动、题库最全，`python run.py configs/eval_demo.py`，中文生态首选）；**Inspect AI**（UK AISI，Agent/多轮评测，`inspect eval myeval.py --model openai/gpt-4o`，2026 年最活跃）；**promptfoo**（YAML 声明式多模型/prompt 对比与红队，`npx promptfoo@latest eval`，注意要求 Node ≥22.22，旧环境先用 nvm 升级）；RAG 指标用 RAGAS（0.4.x：Faithfulness、Response Relevancy、Context Precision/Recall、FactualCorrectness），业务回归测试可用 DeepEval。HuggingFace 的 LightEval 已支持以 inspect-ai 为后端，轻量场景可选。
 
-**成本**要分两档算：短答案判分一轮每千题通常几到几十美元（输入为主，prompt cache 还能再省）；Agent 轨迹单条 2–10 万 token，千题可能到数百至数千美元，实践中用「小裁判初筛 + 大裁判复核」分层。裁判模型一升级就会基线漂移，判分结果要落库、分歧样本每周抽检。最后，选型永远回到三角：质量分之外必须算每百万 token 价格、TTFT 与输出速度（推理模型还要算隐藏思考 token）、P50/P95 延迟——这部分和[《算力是什么》](/blog/算力是什么-从一张h100到万卡集群/)、[《PD 分离》](/blog/pd分离-把prefill和decode拆开部署/)讲的成本结构直接相关。
+**成本**要分两档算：短答案判分一轮每千题通常几到几十美元（输入为主，prompt cache 还能再省）；Agent 轨迹单条 2–10 万 token，千题可能到数百至数千美元，实践中用「小裁判初筛 + 大裁判复核」分层。裁判模型一升级就会基线漂移，判分结果要落库、分歧样本每周抽检。最后，选型永远回到三角：质量分之外必须算每百万 token 价格、TTFT 与输出速度（推理模型还要算隐藏思考 token）、P50/P95 延迟——这部分和[《算力是什么》](/blog/算力是什么-从一张h100到万卡集群/)、[《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署/)讲的成本结构直接相关。
 
 ## 7. 收束：看到一个新分数，按什么顺序问
 
@@ -302,5 +302,5 @@ held-out 题防污染但由厂商内部施测、无外部监考；公开基准�
 **站内延伸**
 
 16. [《算力是什么：从一张 H100 到万卡集群》](/blog/算力是什么-从一张h100到万卡集群/)——速度、利用率与成本三角
-17. [《PD 分离：把 Prefill 和 Decode 拆到不同的卡上跑》](/blog/pd分离-把prefill和decode拆开部署/)——TTFT 与生成延迟的部署来源
+17. [《PD 分离：把 Prefill 和 Decode 拆到不同的卡上跑》](/blog/PD分离-把Prefill和Decode拆开部署/)——TTFT 与生成延迟的部署来源
 18. [《模型剪枝：从「权重置零」到「真的变快」》](/blog/模型剪枝-从权重置零到真的变快/)——pass@k/pass^k 之外，可靠性与压缩的姊妹篇

@@ -224,7 +224,7 @@ Prefill 典型是算力 bound，Decode 典型是显存带宽 bound。两阶段�
 - **并行**：张量并行要求卡间高速互联（NVLink），流水线并行可以跨机；怎么拆先看硬件拓扑，不是参数越大越好。
 - **量化**：FP8 需要 Hopper/Ada/Blackwell 代际，**A100 不支持 FP8**；AWQ、GPTQ 适用面更广。省显存的代价是校准和精度验证，见[《大模型量化》](/blog/大模型量化-用更少的显存跑更大的模型)。
 - **投机解码**：小模型打草稿、大模型一次批改，1.5–3× 是有条件的区间、收益非单调，见[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改)。
-- **PD 分离**：把 Prefill 和 Decode 拆到两个专用卡池。当前仍是 experimental，官方文档有一句加粗原话：**「DOES NOT improve throughput」**——它改善的是 SLO 内的 goodput、压制尾部 ITL，代价是多一整套 KV 迁移和双池运维，见[《PD 分离》](/blog/pd分离-把prefill和decode拆开部署)。
+- **PD 分离**：把 Prefill 和 Decode 拆到两个专用卡池。当前仍是 experimental，官方文档有一句加粗原话：**「DOES NOT improve throughput」**——它改善的是 SLO 内的 goodput、压制尾部 ITL，代价是多一整套 KV 迁移和双池运维，见[《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署)。
 
 <AIOpsRecFig4 />
 
@@ -443,7 +443,7 @@ L2 机制按顺序读，每篇配一个「达 3 分」的动作标准：
 - [《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)——能对别人讲清两阶段和 42ms 的条件；
 - [《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存)——能说清块管理解决什么、2–4× 的时代条件；
 - [《连续批处理》](/blog/连续批处理-每个迭代步重新组批)——能对照指标说明批是怎么动态组成的；
-- [《大模型量化》](/blog/大模型量化-用更少的显存跑更大的模型)、[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改)、[《PD 分离》](/blog/pd分离-把prefill和decode拆开部署)——能分别说出它们动哪笔账、代价条件。
+- [《大模型量化》](/blog/大模型量化-用更少的显存跑更大的模型)、[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改)、[《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署)——能分别说出它们动哪笔账、代价条件。
 
 L1/L3/L4 以官方文档为主：DCGM 字段手册、Kubernetes（含 DRA）、vLLM 官方文档、Google SRE 书，并在实验环境把钩子故事亲手复现一遍。想动手看实战，去[推理加速专栏](/inference/)。
 
@@ -521,5 +521,5 @@ PD 分离当前仍是 experimental，官方文档原话是「DOES NOT improve th
 - [《连续批处理：每个迭代步重新组批》](/blog/连续批处理-每个迭代步重新组批)
 - [《大模型量化：用更少的显存跑更大的模型》](/blog/大模型量化-用更少的显存跑更大的模型)
 - [《投机解码：小模型打草稿大模型一次批改》](/blog/投机解码-小模型打草稿大模型一次批改)
-- [《PD 分离：把 Prefill 和 Decode 拆开部署》](/blog/pd分离-把prefill和decode拆开部署)
+- [《PD 分离：把 Prefill 和 Decode 拆开部署》](/blog/PD分离-把Prefill和Decode拆开部署)
 - [推理加速专栏](/inference/)

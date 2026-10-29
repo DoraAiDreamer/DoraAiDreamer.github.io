@@ -26,7 +26,7 @@ import PdRooflineChartFigure from "../../components/PdRooflineChartFigure.astro"
 
 算力这个词，你一定听过无数遍了：发布会说「算力提升 4 倍」，新闻说「万卡集群」，电商说「这台服务器有多少 T」。但如果追问一句——这个「4 倍」是什么精度下的、万张卡是怎么连成一台机器的、为什么有些卡有钱也买不到——大部分资料就开始含糊。
 
-本文只做一件事：**把「算力」从广告数字还原成一笔可以自行验算的账。** 它与本系列已有的几篇文章互为补充：[《一次推理的旅程：Prefill 与 Decode》](/blog/一次推理的旅程-prefill与decode/)分析单次请求的计算时间线，[《PD 分离：把 Prefill 和 Decode 拆到不同的卡上跑》](/blog/pd分离-把prefill和decode拆开部署/)讨论部署架构，[《PagedAttention：给 KV Cache 装上虚拟内存》](/blog/pagedattention-给kv-cache装上虚拟内存/)讨论显存管理；本文则介绍它们之下的硬件层——芯片、机柜、网络、电力，以及芯片背后的供给格局。
+本文只做一件事：**把「算力」从广告数字还原成一笔可以自行验算的账。** 它与本系列已有的几篇文章互为补充：[《一次推理的旅程：Prefill 与 Decode》](/blog/一次推理的旅程-prefill与decode/)分析单次请求的计算时间线，[《PD 分离：把 Prefill 和 Decode 拆到不同的卡上跑》](/blog/PD分离-把Prefill和Decode拆开部署/)讨论部署架构，[《PagedAttention：给 KV Cache 装上虚拟内存》](/blog/pagedattention-给kv-cache装上虚拟内存/)讨论显存管理；本文则介绍它们之下的硬件层——芯片、机柜、网络、电力，以及芯片背后的供给格局。
 
 先用三笔可以自己算的账开场。
 
@@ -264,7 +264,7 @@ $$
 
 **速率与设备。** IB 约每 3–4 年翻一代（SDR 8Gb/s 起，当前主流 NDR 400Gb/s 合 50GB/s，新一代 XDR 800Gb/s 合 100GB/s；小 b 比特、大 B 字节）。组网采用胖树（fat-tree，多级 CLOS）：服务器先接叶交换机（leaf），再经脊交换机（spine）逐级汇聚，原则是越往上层聚合带宽不收敛、做到无阻塞；NVIDIA 当前旗舰 **Quantum-X800**（Q3400：144 个 800Gb/s 端口、115.2Tb/s；NDR 代 Quantum-2 51.2Tb/s）。量级要摆正：scale-out IB 是百 GB/s、微秒级，机柜内 NVLink 是数百 GB/s、纳秒级——差一个数量级，所以通信最密的张量并行必须留在 NVLink 域，跨域只放数据并行、流水线并行这类对延迟不敏感的通信。
 
-**以太网阵营并没有出局。** RDMA 也能跑在以太网上：主流实现 **RoCEv2**（UDP 封装，需要无损以太网——PFC 优先级流控 + DCQCN 拥塞调优），基于 TCP 的 iWARP 已基本边缘化。NVIDIA 自己也有以太网版 AI 网络 **Spectrum-X**（自适应路由+拥塞控制的交换机网卡）；2023 年成立的 **Ultra Ethernet Consortium（UEC）**（AMD、Intel、博通、Meta、微软等，2025 年发布 1.0 规范）正用开放标准对标 InfiniBand。选型现状：超大规模训练集群仍以 InfiniBand 为主，规模较小或已有以太网运维积累的集群用 RoCE/Spectrum-X——前者开箱即用、后者成本与生态更开放。**RDMA** 是两条路线共同的地基，也是 PD 分离中 GB 级 KV 传输能藏进计算缝隙的前提，具体机制见[《PD 分离：把 Prefill 和 Decode 拆到不同的卡上跑》](/blog/pd分离-把prefill和decode拆开部署/)。
+**以太网阵营并没有出局。** RDMA 也能跑在以太网上：主流实现 **RoCEv2**（UDP 封装，需要无损以太网——PFC 优先级流控 + DCQCN 拥塞调优），基于 TCP 的 iWARP 已基本边缘化。NVIDIA 自己也有以太网版 AI 网络 **Spectrum-X**（自适应路由+拥塞控制的交换机网卡）；2023 年成立的 **Ultra Ethernet Consortium（UEC）**（AMD、Intel、博通、Meta、微软等，2025 年发布 1.0 规范）正用开放标准对标 InfiniBand。选型现状：超大规模训练集群仍以 InfiniBand 为主，规模较小或已有以太网运维积累的集群用 RoCE/Spectrum-X——前者开箱即用、后者成本与生态更开放。**RDMA** 是两条路线共同的地基，也是 PD 分离中 GB 级 KV 传输能藏进计算缝隙的前提，具体机制见[《PD 分离：把 Prefill 和 Decode 拆到不同的卡上跑》](/blog/PD分离-把Prefill和Decode拆开部署/)。
 
 <Expand title="扩展阅读：InfiniBand 速率代际表">
 
@@ -404,7 +404,7 @@ CloudMatrix 384（CM384）值得单独说，因为它代表国产阵营的核心
 2. **系统账**：机柜内靠 NVLink/灵衢这样的 scale-up 总线，跨机柜靠 InfiniBand/RoCE 这样的 scale-out 网络；真实产出还要乘上 MFU、扣掉电力与散热约束、留出故障冗余。超节点是 2024 年以来最重要的形态变化——72 卡乃至数百卡被做成「一台计算机」；
 3. **生态与地缘账**：CUDA 二十年的软件生态是比晶体管更深的护城河，出口管制用三个可计算的硬指标重塑全球供给；国产阵营以系统工程、更多电力和自研总线缩小单芯片差距，制程、HBM、生态三道关仍在攻关。
 
-给实践者的直觉（是经验起点，不是投资建议）：**训练看互联与 MFU，推理看带宽与每百万 token 成本，PD 分池后两类卡可以各选其长**——而 MoE、量化、短 prompt、超长上下文都会翻转具体结论（相关机制可分别参阅[《MoE 混合专家模型：以 DeepSeek 为例》](/blog/moe混合专家模型-以deepseek为例/)、[《大模型量化：用更少的显存跑更大的模型》](/blog/大模型量化-用更少的显存跑更大的模型/)与[《PD 分离：把 Prefill 和 Decode 拆到不同的卡上跑》](/blog/pd分离-把prefill和decode拆开部署/)）。比较 NVL72 与 CM384 这类超节点时，务必把功耗、供货和单位 token 成本放在同一张表里。
+给实践者的直觉（是经验起点，不是投资建议）：**训练看互联与 MFU，推理看带宽与每百万 token 成本，PD 分池后两类卡可以各选其长**——而 MoE、量化、短 prompt、超长上下文都会翻转具体结论（相关机制可分别参阅[《MoE 混合专家模型：以 DeepSeek 为例》](/blog/moe混合专家模型-以deepseek为例/)、[《大模型量化：用更少的显存跑更大的模型》](/blog/大模型量化-用更少的显存跑更大的模型/)与[《PD 分离：把 Prefill 和 Decode 拆到不同的卡上跑》](/blog/PD分离-把Prefill和Decode拆开部署/)）。比较 NVL72 与 CM384 这类超节点时，务必把功耗、供货和单位 token 成本放在同一张表里。
 
 ## 10. 自测（答案点击展开）
 
@@ -477,7 +477,7 @@ Decode 每步只算一个新词、却要搬整套权重和全部 KV，算术强�
 **站内延伸**
 
 17. [《一次推理的旅程：Prefill 与 Decode》](/blog/一次推理的旅程-prefill与decode/)——42ms 推导与 Roofline 模型的完整出处
-18. [《PD 分离：把 Prefill 和 Decode 拆到不同的卡上跑》](/blog/pd分离-把prefill和decode拆开部署/)——RDMA、KV 搬家与分池选型
+18. [《PD 分离：把 Prefill 和 Decode 拆到不同的卡上跑》](/blog/PD分离-把Prefill和Decode拆开部署/)——RDMA、KV 搬家与分池选型
 19. [《PagedAttention：给 KV Cache 装上虚拟内存》](/blog/pagedattention-给kv-cache装上虚拟内存/)——显存容量怎么省
 20. [《大模型量化：用更少的显存跑更大的模型》](/blog/大模型量化-用更少的显存跑更大的模型/)——FP8/INT8/INT4 的精度取舍
 21. [《MoE 混合专家模型：以 DeepSeek 为例》](/blog/moe混合专家模型-以deepseek为例/)、[《注意力机制演进：从 MHA 到 GQA 与 MLA》](/blog/注意力机制演进-从mha到gqa与mla/)、[《连续批处理》](/blog/连续批处理-每个迭代步重新组批/)、[《并行部署：一张模型怎么拆到多张 GPU 上》](/blog/并行部署-一张模型怎么拆到多张gpu上/)——影响算力利用率的模型、调度与并行机制

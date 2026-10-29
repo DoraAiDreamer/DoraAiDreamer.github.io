@@ -18,7 +18,7 @@ import ParaRecFig8 from "../../components/ParaRecFig8.astro";
 
 TP、PP、DP、EP、CP 五种并行机制图解——切什么、传什么、为什么这条网络不能走
 
-在[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)里我们算过一笔账：70B 模型 FP16 权重约 140GB，而一张 H100 只有 80GB 显存——**模型根本装不进去**。后来在[《PD 分离》](/blog/pd分离-把prefill和decode拆开部署)里我们又认识了 rank、三级网络和”TP 留在节点内、PP 可以跨节点”这条工程经验，在[《MoE 混合专家模型》](/blog/moe混合专家模型-以deepseek为例)里瞥见过 all-to-all 通信，在[《Chunked Prefill》](/blog/chunkedprefill-把长prompt切成节拍器能消化的小块)里听说过流水线气泡。
+在[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)里我们算过一笔账：70B 模型 FP16 权重约 140GB，而一张 H100 只有 80GB 显存——**模型根本装不进去**。后来在[《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署)里我们又认识了 rank、三级网络和”TP 留在节点内、PP 可以跨节点”这条工程经验，在[《MoE 混合专家模型》](/blog/moe混合专家模型-以deepseek为例)里瞥见过 all-to-all 通信，在[《Chunked Prefill》](/blog/chunkedprefill-把长prompt切成节拍器能消化的小块)里听说过流水线气泡。
 
 这些片段散落在各处，始终缺一张总地图。本文把地图补上：多卡部署一张模型，一共只有五种本质不同的并行机制——**TP、PP、DP、EP、CP**。本文逐一图解它们各自在切什么、谁和谁通信、要求什么档次的网络，最后给出拿到机器和模型时的决策顺序。工程配置以 vLLM 0.21（2026-10 快照）为准，接口仍在快速演进，上线请以官方文档为准。
 
@@ -346,7 +346,7 @@ vLLM 0.21 的相关参数快照如下（2026-10，以官方文档为准）：
 
 - [《一次推理的旅程：Prefill 与 Decode》](/blog/一次推理的旅程-prefill与decode)（42ms 锚点、两阶段的瓶颈性质）
 - [《PagedAttention：给 KV Cache 装上虚拟内存》](/blog/pagedattention-给kv-cache装上虚拟内存)（KV cache 的组织）
-- [《PD 分离：把 Prefill 和 Decode 拆开部署》](/blog/pd分离-把prefill和decode拆开部署)（rank、三级网络、DistServe 的 TP/副本实验、KV 传输）
+- [《PD 分离：把 Prefill 和 Decode 拆开部署》](/blog/PD分离-把Prefill和Decode拆开部署)（rank、三级网络、DistServe 的 TP/副本实验、KV 传输）
 - [《Chunked Prefill》](/blog/chunkedprefill-把长prompt切成节拍器能消化的小块)（切块机制、TBT 上界、调参闭环）
 - [《连续批处理》](/blog/连续批处理-每个迭代步重新组批)（迭代级调度与 Sarathi 仿真表）
 - [《MoE 混合专家模型》](/blog/moe混合专家模型-以deepseek为例)（路由、稀疏激活的入门）

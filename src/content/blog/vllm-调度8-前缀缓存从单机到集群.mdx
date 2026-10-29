@@ -23,7 +23,7 @@ block_size、实际命中与命中率：为什么同样的前缀在集群里会�
 
 这背后是一项在单机上近乎免费、在集群上却很容易用坏的优化：**前缀缓存（Prefix Caching）**——把算过的前缀 KV 存下来，让重复的前缀只算一次。
 
-在之前的三篇文章里，地基已经打好：[《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存)讲了分页块表与 APC 的工作原理，[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)讲了 Prefill 和 Decode 是两种完全不同的计算，[《PD 分离》](/blog/pd分离-把prefill和decode拆开部署)讲了 KV 如何跨节点交接。这篇不再从零讲 KV，而是把「**复用**」这条线从单机一路追到集群：单机上两种索引怎么选？为什么实例越多、命中率反而可能塌掉？集群有哪几条手段把命中率救回来？以及——为什么「命中率高」并不自动等于「省钱」？
+在之前的三篇文章里，地基已经打好：[《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存)讲了分页块表与 APC 的工作原理，[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)讲了 Prefill 和 Decode 是两种完全不同的计算，[《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署)讲了 KV 如何跨节点交接。这篇不再从零讲 KV，而是把「**复用**」这条线从单机一路追到集群：单机上两种索引怎么选？为什么实例越多、命中率反而可能塌掉？集群有哪几条手段把命中率救回来？以及——为什么「命中率高」并不自动等于「省钱」？
 
 <Expand title="▸术语速查（先扫一眼，读完再回看）">
 
@@ -274,7 +274,7 @@ CacheRoute 的负结果值得单独在正文留一句：**当低命中流量被�
 
 ### PD 交接：命中率视角
 
-PD 交接的完整机制（接法 A/B、逐层薄片、SplitWise 数字）在 [《PD 分离》](/blog/pd分离-把prefill和decode拆开部署) 里讲过，这里只看命中率：P 节点算完，把 KV 写进共享池或传给 D，D 不必重算 prompt；而这份 KV 同时就进了跨请求的池子，供后来的请求复用——**P 是前缀的「生产者」，D 是「消费者」**。开服时要灌的公共前缀，也可以直接在 P 池里预热好。
+PD 交接的完整机制（接法 A/B、逐层薄片、SplitWise 数字）在 [《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署) 里讲过，这里只看命中率：P 节点算完，把 KV 写进共享池或传给 D，D 不必重算 prompt；而这份 KV 同时就进了跨请求的池子，供后来的请求复用——**P 是前缀的「生产者」，D 是「消费者」**。开服时要灌的公共前缀，也可以直接在 P 池里预热好。
 
 口径对齐：「PD 分离不提升裸吞吐、只提 goodput」是 **vLLM 当前连接器实现**的文档原句；DistServe、SplitWise 在各自的系统里报告的是 SLO 之内的吞吐增益，别把这句话当成学界共识。
 
@@ -482,7 +482,7 @@ $P+R\cdot U=4000+1000\times500=504{,}000$ token；无缓存是 $1000\times4500=4
 
 prefix_caching.md、automatic_prefix_caching.md、data_parallel_deployment.md、metrics.md、disagg_prefill.md、mooncake_store_connector_usage.md；vllm/config/`{cache,model}.py`、vllm/v1/core/kv_cache_manager.py、vllm/v1/metrics/`{loggers,stats}.py`；[GIE 官方文档](https://gateway-api-inference-extension.sigs.k8s.io/)；[llm-d KV Indexer](https://llm-d.ai/)。
 
-**站内延伸**：前置必读 [《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存)、[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)、[《PD 分离》](/blog/pd分离-把prefill和decode拆开部署)；相关 [《注意力机制演进》](/blog/注意力机制演进-从mha到gqa与mla)、[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改)、[《连续批处理》](/blog/连续批处理-为什么推理引擎不等一批跑完)；动手实践见[推理加速专栏](/inference/)。
+**站内延伸**：前置必读 [《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存)、[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)、[《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署)；相关 [《注意力机制演进》](/blog/注意力机制演进-从mha到gqa与mla)、[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改)、[《连续批处理》](/blog/连续批处理-每个迭代步重新组批)；动手实践见[推理加速专栏](/inference/)。
 
 <Expand title="▸附：术语对照表（读完回看）">
 
