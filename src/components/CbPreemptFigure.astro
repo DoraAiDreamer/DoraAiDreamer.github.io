@@ -10,17 +10,17 @@
     <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
       <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">V1 的抢占不是「暂停存档」，是归零重算</text>
 
-      <text x="130" y="58" font-size="9.5" fill="#b14a4a" text-anchor="middle">触发：车上的 R 下一站 KV 块分配失败（不是新客抢座）</text>
+      <text x="130" y="58" font-size="9.5" fill="#b14a4a" text-anchor="middle">触发：在跑请求 R 在下一步 KV 块分配失败（不是新请求抢占）</text>
 
       {/* 五张卡片：宽104，间距18 */}
       <rect x="16" y="72" width="104" height="86" rx="9" fill="#f2f8fa" stroke="#0085a1"/>
       <text x="68" y="106" font-size="11" font-weight="bold" fill="#006377" text-anchor="middle">R 在 running</text>
-      <text x="68" y="126" font-size="9" fill="#64748b" text-anchor="middle">（第 k 站）</text>
+      <text x="68" y="126" font-size="9" fill="#64748b" text-anchor="middle">（第 k 步）</text>
 
       <line x1="120" y1="115" x2="136" y2="115" stroke="#94a3b8" marker-end="url(#cbp-arw)"/>
 
       <rect x="138" y="72" width="104" height="86" rx="9" fill="#fbe3e3" stroke="#b14a4a"/>
-      <text x="190" y="102" font-size="11" font-weight="bold" fill="#b14a4a" text-anchor="middle">抢占：踢下车</text>
+      <text x="190" y="102" font-size="11" font-weight="bold" fill="#b14a4a" text-anchor="middle">抢占：移出 running</text>
       <text x="190" y="124" font-size="9" fill="#b14a4a" text-anchor="middle">释放全部 KV</text>
       <text x="190" y="142" font-size="9" fill="#b14a4a" text-anchor="middle">进度归零</text>
 

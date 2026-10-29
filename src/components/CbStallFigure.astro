@@ -11,10 +11,10 @@
       </pattern>
     </defs>
     <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
-      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">不分块：长 Prefill 连续占 3 站，全车 Decode 原地不动</text>
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">不分块：长 Prefill 连续独占 3 个迭代步，其他 Decode 零推进</text>
 
-      {/* 站头与网格 */}
-      {["第 1 站","第 2 站","第 3 站","第 4 站"].map((s, i) => (
+      {/* 步标签与网格 */}
+      {["第 1 步","第 2 步","第 3 步","第 4 步"].map((s, i) => (
         <text x={175 + i * 110} y="52" font-size="10" fill="#64748b" text-anchor="middle">{s}</text>
       ))}
       {[230,340,450].map((x) => (
@@ -25,7 +25,7 @@
       {/* 长 prompt 行 */}
       <text x="112" y="87" font-size="10" fill="#475569" text-anchor="end">长 prompt</text>
       <rect x="120" y="66" width="330" height="34" rx="6" fill="#7ec3d8" stroke="#0085a1"/>
-      <text x="285" y="87" font-size="10.5" font-weight="bold" fill="#006377" text-anchor="middle">长 prompt 的 Prefill：一口气连续算 3 站</text>
+      <text x="285" y="87" font-size="10.5" font-weight="bold" fill="#006377" text-anchor="middle">长 prompt 的 Prefill：连续占用 3 个迭代步</text>
 
       {/* 三排 Decode */}
       {[
@@ -36,14 +36,14 @@
         <g>
           <text x="112" y={r.y + 19} font-size="10" fill="#475569" text-anchor="end">{r.label}</text>
           <rect x="120" y={r.y} width="330" height="30" fill="url(#cbs4-hatch)"/>
-          {i === 0 && <text x="285" y={r.y + 19} font-size="10" font-weight="bold" fill="#b14a4a" text-anchor="middle">第 1–3 站：零推进</text>}
+          {i === 0 && <text x="285" y={r.y + 19} font-size="10" font-weight="bold" fill="#b14a4a" text-anchor="middle">第 1–3 步：零推进</text>}
           <rect x="450" y={r.y} width="110" height="30" fill="#fdf0e0" stroke="#e6a23c"/>
-          <text x="505" y={r.y + 19} font-size="9.5" fill="#b97a1f" text-anchor="middle">恢复蹦字</text>
+          <text x="505" y={r.y + 19} font-size="9.5" fill="#b97a1f" text-anchor="middle">恢复生成</text>
         </g>
       ))}
 
       <text x="320" y="268" font-size="10.5" fill="#334155" text-anchor="middle">
-        每一站是全批共用的节拍器：3 站里所有 Decode 一步未推进，TBT 出现数百 ms 量级尖刺
+        迭代步是全批共享的：3 步内所有 Decode 零推进，TBT 出现数百 ms 量级尖刺
       </text>
       <text x="320" y="288" font-size="9.5" fill="#94a3b8" text-anchor="middle">
         （「数百 ms」为量级示意，随模型与硬件变化；对应关闭 chunked prefill 的旧引擎）

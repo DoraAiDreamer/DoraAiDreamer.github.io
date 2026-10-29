@@ -43,7 +43,7 @@
       <line x1="104" y1="232" x2="560" y2="232" stroke="#94a3b8"/>
       <text x="157" y="250" font-size="10.5" fill="#475569" text-anchor="middle">B = 1</text>
       <text x="321" y="250" font-size="10.5" fill="#475569" text-anchor="middle">B = 8</text>
-      <text x="485" y="250" font-size="10.5" fill="#475569" text-anchor="middle">B = 32（同车人数）</text>
+      <text x="485" y="250" font-size="10.5" fill="#475569" text-anchor="middle">B = 32（在批请求数）</text>
 
       {/* 每人每 token 成本下降：42 / 5.4 / 1.5 ms */}
       <text x="100" y="290" font-size="9.5" fill="#0a7a50" text-anchor="end">每人每 token</text>
@@ -61,7 +61,7 @@
       ))}
 
       <text x="320" y="340" font-size="10" fill="#64748b" text-anchor="middle">
-        三把刹车：KV 容量　·　max_num_seqs（座位数）　·　TBT 预算（每站总时长随 B 缓慢变长）
+        三个硬约束：KV 容量　·　max_num_seqs（在批上限）　·　TBT 预算（单步时长随 B 缓慢变长）
       </text>
     </g>
   </svg>

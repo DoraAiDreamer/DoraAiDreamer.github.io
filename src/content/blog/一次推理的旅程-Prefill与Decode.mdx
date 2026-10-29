@@ -217,8 +217,8 @@ KV 在显存里怎么分页、怎么共享、怎么回收，本文不展开—�
 
 ### ② 把固定搬运摊薄
 
-- **连续批处理（continuous batching）**：出自 [Orca](https://www.usenix.org/conference/osdi22/presentation/yu)（OSDI 2022，论文叫 iteration-level scheduling，"continuous batching"是后来叫开的名字）。单个请求的 Decode 在等显存，但一张卡同时服务几十个请求时，权重搬一遍可以同时喂 $B$ 个请求——第 4 节说的"大 batch 把算术强度抬过折点"就是它的原理。实现上调度器在**每个 token 步**插入新请求、送走已完成的（Orca 称之为 selective batching），而不是等一整批跑完。
-- **Chunked Prefill**：长 prompt 的 Prefill 又长又重，如果让它一口气跑完，同卡所有 Decode 请求当步都被堵住、ITL 出现尖峰。做法是把 Prefill 切成固定预算的小块，逐块插进 Decode 流里（[Sarathi](https://arxiv.org/abs/2308.16369) 预印本提出，[Sarathi-Serve](https://arxiv.org/abs/2403.02310) 与 DeepSpeed 的 [SplitFuse](https://arxiv.org/abs/2401.08671) 独立发展了同构思想）。它是一个 **TTFT↔ITL 的双向旋钮**：块预算小则 Decode 平稳但 Prefill 被切更多步、TTFT 变长，反之亦然。切块不增加注意力总算力（忽略 padding，跨块 dense + 块内三角严格等于 $n^2/2$ 个格子），效率损失只有小矩阵乘规模与 padding 带来的数个百分点量级。vLLM V1 默认开启且 Decode 优先（剩余预算才喂 Prefill）；每步 token 预算随硬件/场景分档（v0.21：H100 级在线服务约 8192、A100 约 2048，离线 16384/8192，2048 只是配置兜底值且会漂移，以官方调优文档为准）。
+- **连续批处理（continuous batching）**：出自 [Orca](https://www.usenix.org/conference/osdi22/presentation/yu)（OSDI 2022，论文叫 iteration-level scheduling，"continuous batching"是后来叫开的名字）。单个请求的 Decode 在等显存，但一张卡同时服务几十个请求时，权重搬一遍可以同时喂 $B$ 个请求——第 4 节说的"大 batch 把算术强度抬过折点"就是它的原理。实现上调度器在**每个 token 步**插入新请求、送走已完成的（Orca 称之为 selective batching），而不是等一整批跑完。完整机制、经济账与 Prefill 侧的边界（含 Chunked Prefill）见[《连续批处理：每个迭代步重新组批》](/blog/连续批处理-每个迭代步重新组批/)。
+- **Chunked Prefill**：长 prompt 的 Prefill 又长又重，如果让它一口气跑完，同卡所有 Decode 请求当步都被堵住、ITL 出现尖峰。做法是把 Prefill 切成固定预算的小块，逐块插进 Decode 流里（[本站专文：为什么切块结果不变、块该多大、V1 怎么调参](/blog/ChunkedPrefill-把长Prompt切成节拍器能消化的小块/)；[Sarathi](https://arxiv.org/abs/2308.16369) 预印本提出，[Sarathi-Serve](https://arxiv.org/abs/2403.02310) 与 DeepSpeed 的 [SplitFuse](https://arxiv.org/abs/2401.08671) 独立发展了同构思想）。它是一个 **TTFT↔ITL 的双向旋钮**：块预算小则 Decode 平稳但 Prefill 被切更多步、TTFT 变长，反之亦然。切块不增加注意力总算力（忽略 padding，跨块 dense + 块内三角严格等于 $n^2/2$ 个格子），效率损失只有小矩阵乘规模与 padding 带来的数个百分点量级。vLLM V1 默认开启且 Decode 优先（剩余预算才喂 Prefill）；每步 token 预算随硬件/场景分档（v0.21：H100 级在线服务约 8192、A100 约 2048，离线 16384/8192，2048 只是配置兜底值且会漂移，以官方调优文档为准）。
 
 ### ③ 改变计算的组织方式
 

@@ -1,6 +1,6 @@
 ---
-// 图1：静态批处理痛点——4 请求包车，按最远的人计费
-// 蓝色=真实产出；浅灰斜纹=完成后干坐；车外新请求干等
+// 图1：静态批处理——批次被最长请求锁满，空槽位空转
+// 蓝色=有效前向；斜纹=完成后仍占槽位；批次外新请求等待
 ---
 
 <figure>
@@ -11,8 +11,8 @@
       </pattern>
     </defs>
     <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
-      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">静态批处理：一车拉 4 个请求，必须等最远的人跑完</text>
-      <text x="320" y="46" font-size="10.5" fill="#64748b" text-anchor="middle">（这批 = 一次函数调用，中途成员封死，不能下车也不能捡客）</text>
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">静态批处理：4 个请求的批次被最长请求锁满 200 个迭代步</text>
+      <text x="320" y="46" font-size="10.5" fill="#64748b" text-anchor="middle">（一次函数调用，中途成员固定：完成的请求仍占槽位，新请求不能加入）</text>
 
       {/* 封死批次外框 */}
       <rect x="140" y="60" width="418" height="172" rx="10" fill="none" stroke="#cbd5e1" stroke-dasharray="5,4"/>
@@ -49,10 +49,10 @@
       {/* 新来的请求 */}
       <rect x="150" y="266" width="88" height="24" rx="6" fill="#f4f6f8" stroke="#94a3b8" stroke-dasharray="4,3"/>
       <text x="194" y="282" font-size="9.5" fill="#475569" text-anchor="middle">新来的请求</text>
-      <text x="252" y="282" font-size="10.5" fill="#475569">在车外干等，200 步里上不来</text>
+      <text x="252" y="282" font-size="10.5" fill="#475569">批次外等待，200 步内无法加入</text>
 
       <text x="320" y="304" font-size="12" font-weight="bold" fill="#b14a4a" text-anchor="middle">
-        空转 370 / 800 座位·步 = 46%，其中 300 / 370 集中在最后 100 步
+        空转 370 / 800 槽位·步 = 46%，其中 300 / 370 集中在最后 100 步
       </text>
     </g>
   </svg>
