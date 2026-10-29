@@ -4,6 +4,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 // 新增模型时：把交互 HTML 放入 public/models/，在此数组追加一项即可（按录入时间倒序也可）
 const models = [
   {
+    href: "/models/deepseek-v4.1-flash.html",
+    name: "DeepSeek-V4.1-Flash",
+    vendor: "深度求索",
+    added: "2026-10 录入",
+    tags: ["MoE", "CED 因果编解码器", "CSA2 稀疏注意力", "Engram", "多模态"],
+    desc: "换代架构：40 层 = 20 因果编码器 + 20 解码器，解码器全局 KV 由编码器末层投影，prefill 只跑一半层（激活 8B → decode 16B）；CSA2 全模型仅 4 份压缩 KV、8 个 indexer；384 专家 top-6 + 1 共享；层 1/14 挂 196B Engram n-gram 记忆；FP4 KV 仅 890 字节/token；DSpark 投机解码。552B 骨干 + 196B Engram，1M 上下文。",
+  },
+  {
     href: "/models/kimi-k3.html",
     name: "Kimi-K3",
     vendor: "月之暗面",

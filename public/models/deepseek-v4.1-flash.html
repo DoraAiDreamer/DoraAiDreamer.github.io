@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DeepSeek-V4.1-Flash 模型结构可视化（CED）</title>
+<style>
+  :root { color-scheme: light dark;
+    --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Roboto,Helvetica,Arial,sans-serif;
+    --font-mono:"SFMono-Regular",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  .viz-root{color-scheme:light;
+    --surface-0:#fff;--surface-1:#fcfcfb;--surface-2:#f3f3f0;--surface-3:#e9e8e3;
+    --border:#e0dfd9;--text-primary:#0b0b0b;--text-secondary:#52514e;--text-muted:#827f78;
+    --ink-on-accent:#fff;
+    --full:#2a78d6;   /* blue - Full mode / encoder */
+    --reindex:#d08a1e;/* amber - Reindex mode */
+    --reuse:#9a93b8;  /* muted violet - Reuse mode */
+    --swa:#7d7d7a;    /* neutral - SWA-only layers 0,1 */
+    --moe:#4a3aa7;    /* violet - MoE */
+    --vis:#e87ba4;    /* magenta - vision */
+    --engram:#0e9488; /* teal - Engram memory */
+    --neutral:#827f78;--good:#1b8f5f;--warn:#b87700;--focus:#256abf;
+    --shadow:0 1px 2px rgba(11,11,11,.04),0 4px 16px rgba(11,11,11,.06);
+  }
+  @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .viz-root{color-scheme:dark;
+    --surface-0:#141413;--surface-1:#1a1a19;--surface-2:#232321;--surface-3:#2e2e2b;
+    --border:#383835;--text-primary:#fff;--text-secondary:#c3c2b7;--text-muted:#9a988f;
+    --ink-on-accent:#fff;
+    --full:#3987e5;--reindex:#e0a038;--reuse:#a8a1c6;--swa:#969690;--moe:#9085e9;--vis:#d55181;--engram:#26b3a4;
+    --neutral:#9a988f;--good:#2fae7c;--warn:#d9a441;--focus:#6da7ec;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.35);
+  }}
+  :root[data-theme="dark"] .viz-root{color-scheme:dark;
+    --surface-0:#141413;--surface-1:#1a1a19;--surface-2:#232321;--surface-3:#2e2e2b;
+    --border:#383835;--text-primary:#fff;--text-secondary:#c3c2b7;--text-muted:#9a988f;
+    --ink-on-accent:#fff;
+    --full:#3987e5;--reindex:#e0a038;--reuse:#a8a1c6;--swa:#969690;--moe:#9085e9;--vis:#d55181;--engram:#26b3a4;
+    --neutral:#9a988f;--good:#2fae7c;--warn:#d9a441;--focus:#6da7ec;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box;}html,body{margin:0;padding:0;}
+  body{background:var(--surface-2);color:var(--text-primary);font-family:var(--font-sans);line-height:1.55;-webkit-font-smoothing:antialiased;}
+  .viz-root{max-width:1180px;margin:0 auto;padding:32px 28px 56px;background:var(--surface-0);min-height:100vh;}
+  .hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;}
+  .hdr h1{font-size:26px;margin:0 0 4px;letter-spacing:-.01em;}
+  .hdr .sub{color:var(--text-secondary);font-size:14px;margin:0;max-width:90ch;}
+  .hdr .sub code{font-family:var(--font-mono);font-size:12.5px;color:var(--text-secondary);}
+  .theme-btn{appearance:none;border:1px solid var(--border);background:var(--surface-1);color:var(--text-secondary);border-radius:8px;padding:7px 12px;font-size:13px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;}
+  .theme-btn:hover{border-color:var(--text-muted);color:var(--text-primary);}
+  .theme-btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px;}
+  .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:24px 0 8px;}
+  @media(max-width:900px){.stats{grid-template-columns:repeat(3,1fr);}}
+  @media(max-width:520px){.stats{grid-template-columns:repeat(2,1fr);}}
+  .stat{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:var(--shadow);}
+  .stat .k{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:6px;}
+  .stat .v{font-size:21px;font-weight:650;letter-spacing:-.01em;color:var(--text-primary);font-variant-numeric:tabular-nums;}
+  .stat .u{font-size:12px;color:var(--text-muted);margin-left:3px;font-weight:500;}
+  section{margin-top:30px;}
+  h2{font-size:17px;margin:0 0 6px;letter-spacing:-.005em;}
+  .sec-desc{color:var(--text-secondary);font-size:13.5px;margin:0 0 14px;max-width:100ch;}
+  .sec-desc code{font-family:var(--font-mono);font-size:12.5px;background:var(--surface-2);padding:1px 5px;border-radius:4px;color:var(--text-primary);}
+  .pipeline{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;}
+  .pipe-node{flex:1 1 0;min-width:130px;background:var(--surface-1);border:1px solid var(--border);border-radius:10px;padding:12px;box-shadow:var(--shadow);}
+  .pipe-node .tag{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);}
+  .pipe-node .nm{font-size:13.5px;font-weight:600;margin-top:3px;}
+  .pipe-node .meta{font-size:11.5px;color:var(--text-secondary);margin-top:4px;font-family:var(--font-mono);line-height:1.5;}
+  .pipe-node.full{border-top:3px solid var(--full);}.pipe-node.ri{border-top:3px solid var(--reindex);}
+  .pipe-node.moe{border-top:3px solid var(--moe);}.pipe-node.vis{border-top:3px solid var(--vis);}.pipe-node.io{border-top:3px solid var(--neutral);}
+  .pipe-node.ced{border-top:3px solid var(--engram);}
+  .pipe-arrow{display:flex;align-items:center;color:var(--text-muted);font-size:18px;}
+  .pipe-note{font-size:12px;color:var(--text-secondary);margin-top:8px;}
+  .pipe-note code{font-family:var(--font-mono);font-size:11.5px;background:var(--surface-2);padding:1px 5px;border-radius:4px;color:var(--text-primary);}
+  .strip-wrap{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:16px;box-shadow:var(--shadow);}
+  .strip-legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:13px;color:var(--text-secondary);}
+  .legend-item{display:inline-flex;align-items:center;gap:7px;}
+  .swatch{width:13px;height:13px;border-radius:3px;display:inline-block;}
+  .swatch.full{background:var(--full);}.swatch.reindex{background:var(--reindex);}.swatch.reuse{background:var(--reuse);}.swatch.swa{background:var(--swa);}
+  .strip-band{display:flex;align-items:center;gap:10px;margin:8px 0;}
+  .band-tag{flex:0 0 96px;font-size:12.5px;font-weight:600;color:var(--text-secondary);}
+  .strip{display:grid;grid-template-columns:repeat(20,1fr);gap:4px;flex:1;}
+  @media(max-width:700px){.strip{grid-template-columns:repeat(10,1fr);}.band-tag{flex:0 0 64px;font-size:11px;}}
+  .cell{aspect-ratio:1/1.25;border-radius:4px;cursor:pointer;position:relative;transition:transform .12s,box-shadow .12s;border:1px solid rgba(0,0,0,.08);}
+  .cell.full{background:var(--full);}.cell.reindex{background:var(--reindex);}.cell.reuse{background:var(--reuse);}.cell.swa{background:var(--swa);}
+  .cell:hover,.cell:focus-visible{transform:translateY(-2px);box-shadow:0 3px 10px rgba(0,0,0,.18);outline:none;}
+  .cell.active{outline:2px solid var(--text-primary);outline-offset:2px;z-index:2;}
+  .cell.engram::after{content:"";position:absolute;right:2px;top:2px;width:6px;height:6px;border-radius:50%;background:var(--engram);box-shadow:0 0 0 1px var(--surface-1);}
+  .layer-detail{margin-top:14px;border-top:1px dashed var(--border);padding-top:12px;display:grid;grid-template-columns:150px 1fr;gap:8px 18px;font-size:13px;align-items:baseline;}
+  .layer-detail .ld-k{color:var(--text-muted);font-size:12px;}
+  .layer-detail .ld-v{color:var(--text-primary);}
+  .layer-detail .ld-v code{font-family:var(--font-mono);font-size:12.5px;background:var(--surface-2);padding:1px 5px;border-radius:4px;}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600;color:var(--ink-on-accent);}
+  .pill.full{background:var(--full);}.pill.reindex{background:var(--reindex);}.pill.reuse{background:var(--reuse);}.pill.swa{background:var(--swa);}
+  .cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;}
+  @media(max-width:820px){.cards{grid-template-columns:1fr;}}
+  .card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:16px;box-shadow:var(--shadow);}
+  .card h3{margin:0 0 2px;font-size:15px;display:flex;align-items:center;gap:9px;}
+  .card .card-sub{color:var(--text-muted);font-size:12.5px;margin:0 0 12px;}
+  .card ul{margin:0;padding-left:18px;font-size:12.5px;color:var(--text-secondary);}
+  .card li{margin:5px 0;line-height:1.55;}
+  .card li code{font-family:var(--font-mono);font-size:11.5px;background:var(--surface-2);padding:1px 4px;border-radius:4px;color:var(--text-primary);}
+  .card.full{border-top:3px solid var(--full);}.card.reindex{border-top:3px solid var(--reindex);}.card.reuse{border-top:3px solid var(--reuse);}
+  .two-col{display:grid;grid-template-columns:1.15fr 1fr;gap:16px;}
+  @media(max-width:820px){.two-col{grid-template-columns:1fr;}}
+  .table-wrap{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2);}
+  tbody td{padding:8px 14px;border-bottom:1px solid var(--border);vertical-align:top;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody td.code{font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);white-space:nowrap;}
+  tbody td.val{font-family:var(--font-mono);font-size:12.5px;text-align:right;white-space:nowrap;color:var(--text-primary);}
+  tbody tr:hover{background:var(--surface-2);}
+  .cat-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle;}
+  .callout{background:var(--surface-1);border:1px solid var(--border);border-left:3px solid var(--engram);border-radius:10px;padding:14px 16px;font-size:13px;color:var(--text-secondary);box-shadow:var(--shadow);}
+  .callout strong{color:var(--text-primary);}
+  .callout code{font-family:var(--font-mono);font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:4px;color:var(--text-primary);}
+  .callout .big{font-size:15px;font-weight:700;color:var(--text-primary);}
+  .callout + .callout{margin-top:14px;}
+  .callout.vis{border-left-color:var(--vis);}.callout.moe{border-left-color:var(--moe);}.callout.full{border-left-color:var(--full);}
+  .moe-dia{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:16px;box-shadow:var(--shadow);}
+  .moe-row{display:flex;gap:10px;align-items:stretch;margin:6px 0;}
+  .moe-box{flex:1;border:1px solid var(--border);border-radius:8px;padding:9px 10px;background:var(--surface-2);font-size:12.5px;text-align:center;}
+  .moe-box .mb-nm{font-weight:600;}.moe-box .mb-dim{font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);margin-top:2px;}
+  .moe-box.gate{border-left:3px solid var(--warn);}.moe-box.shared{border-left:3px solid var(--good);}.moe-box.expert{border-left:3px solid var(--moe);}
+  .moe-experts{display:grid;grid-template-columns:repeat(24,1fr);gap:3px;margin:8px 0;}
+  .exp-chip{background:var(--moe);color:var(--ink-on-accent);border-radius:3px;padding:5px 1px;font-size:8.5px;text-align:center;font-family:var(--font-mono);opacity:.25;}
+  .exp-chip.on{opacity:1;box-shadow:0 0 0 2px var(--surface-1),0 0 0 3px var(--moe);}
+  .moe-note{font-size:12px;color:var(--text-secondary);text-align:center;margin-top:6px;line-height:1.6;}
+  .moe-note code{font-family:var(--font-mono);font-size:11.5px;background:var(--surface-2);padding:1px 4px;border-radius:4px;color:var(--text-primary);}
+  .asym{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;margin-top:10px;}
+  @media(max-width:640px){.asym{grid-template-columns:1fr;}}
+  .asym-box{border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center;background:var(--surface-2);}
+  .asym-box .ab-v{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;}
+  .asym-box .ab-k{font-size:11.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-top:2px;}
+  .asym-box.enc{border-top:3px solid var(--full);}.asym-box.dec{border-top:3px solid var(--reindex);}
+  .asym-mid{text-align:center;color:var(--text-muted);font-size:12.5px;line-height:1.5;}
+  footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);}
+  footer code{font-family:var(--font-mono);}
+</style>
+</head>
+<body>
+<div class="viz-root" data-palette="full,reindex,reuse,swa,moe,vis,engram">
+
+  <header class="hdr">
+    <div>
+      <h1>DeepSeek-V4.1-Flash 模型结构（CED）</h1>
+      <p class="sub">
+        多模态 MoE · <code>DeepseekV41ForCausalLM</code> · 因果编码器-解码器（Causal Encoder-Decoder）·
+        40 层 = 20 编码器 + 20 解码器 · 384 专家(top-6)+1 共享 · CSA2 跨层 KV 复用 + FP4 KV · 552B 骨干 + 196B Engram
+      </p>
+    </div>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="切换明暗主题">
+      <span id="themeIcon">🌙</span><span id="themeLabel">深色</span>
+    </button>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><div class="k">CED 层（编+解）</div><div class="v">40<span class="u">20+20</span></div></div>
+    <div class="stat"><div class="k">路由专家 / top-k</div><div class="v">384<span class="u">/6</span></div></div>
+    <div class="stat"><div class="k">激活参数（prefill→decode）</div><div class="v">8B<span class="u">→16B</span></div></div>
+    <div class="stat"><div class="k">骨干 + Engram</div><div class="v">552B<span class="u">+196B</span></div></div>
+    <div class="stat"><div class="k">全局 KV / token</div><div class="v">890<span class="u">字节</span></div></div>
+    <div class="stat"><div class="k">最大上下文</div><div class="v">1,048,576<span class="u">tokens</span></div></div>
+  </div>
+
+  <section>
+    <h2>整体前向流水线：CED 怎样省掉一半 prefill</h2>
+    <p class="sec-desc">
+      40 层 Transformer 从中间劈开：下面 20 层是<strong>因果编码器</strong>，上面 20 层是<strong>解码器</strong>。解码器各层的<strong>全局 KV 不取自本层隐状态</strong>，
+      而是用各自的投影矩阵直接从编码器末层隐状态 <code>H₂₀</code> 投影得到。于是 prefill 时 prompt token 不必跑完解码器全套计算（FFN/MoE 整体跳过，
+      只保留各层局部滑窗 SWA），prefill 复杂度从 O(NL) 降到约 O(NL/2)；decode 时 40 层照跑，这就是「8B 激活 prefill / 16B 激活 decode」非对称账的由来。
+    </p>
+    <div class="pipeline">
+      <div class="pipe-node vis"><div class="tag">视觉</div><div class="nm">DeepSeek-ViT + Projector</div><div class="meta">32 层 · 1024 维 · patch 14 · 3×3 pixel-unshuffle</div></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-node io"><div class="tag">嵌入</div><div class="nm">Token Embedding</div><div class="meta">vocab 129,280 · dim 5120</div></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-node full"><div class="tag">因果编码器 ×20</div><div class="nm">Causal Encoder（层 0–19）</div><div class="meta">2 层纯 SWA + 18 层 CSA2 (m=2)</div></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-node ced"><div class="tag">CED 投影</div><div class="nm">H₂₀ → 解码器全局 KV</div><div class="meta">每层各自 W_KV / W_Z · prefill 跳过解码器 FFN</div></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-node ri"><div class="tag">解码器 ×20</div><div class="nm">Decoder（层 20–39）</div><div class="meta">CSA2 (m=1) · 仅 SWA 逐层计算</div></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-node moe"><div class="tag">输出</div><div class="nm">FinalNorm + LM Head</div><div class="meta">DSpark 3 草稿层投机解码 · 无 MTP</div></div>
+    </div>
+    <p class="pipe-note">
+      层间是 <strong>Single-Pass mHC</strong>（4 条残差流，20 次 Sinkhorn 混合，部署时融合成单遍 Mega-mHC 核）；每层注意力之外都有 SWA 滑窗分支（窗口 128），
+      前两层只有 SWA。多轮短 prompt 的解码器 SWA 用 <code>SWA Bounded Replay</code> 只重放末尾 128 token 近似重建，持久化 KV（SSD/主机内存）约为 V4-Flash 的 <strong>1/8</strong>。
+    </p>
+  </section>
+
+  <section>
+    <h2>40 层排布：CSA2 三种静态模式 × CED 两段</h2>
+    <p class="sec-desc">
+      每个色块是一层，颜色 = CSA2 模式（由官方 <code>compress_ratios</code> / <code>kv_source_layer_ids</code> / <code>index_source_layer_ids</code> 决定）。
+      编码器 18 个 CSA2 层分 3 组（每组 6 层：1 Full + 5 Reuse）；解码器 20 层分 5 组（每组 4 层：首层 Full/Reindex + 3 Reuse）。
+      <span style="color:var(--engram);font-weight:600;">●</span> 绿点 = Engram 记忆模块所在层（1、14）。悬停/点击查看每层细节。
+    </p>
+    <div class="strip-wrap">
+      <div class="strip-legend">
+        <span class="legend-item"><span class="swatch swa"></span> 纯 SWA（层 0,1）</span>
+        <span class="legend-item"><span class="swatch full"></span> Full：自建压缩 KV + Top-512（层 2,8,14,20）</span>
+        <span class="legend-item"><span class="swatch reindex"></span> Reindex：复用 KV，重选 Top-512（层 24,28,32,36）</span>
+        <span class="legend-item"><span class="swatch reuse"></span> Reuse：KV 与索引全复用</span>
+      </div>
+      <div class="strip-band">
+        <div class="band-tag">编码器<br/>0–19（m=2）</div>
+        <div class="strip" id="stripEnc"></div>
+      </div>
+      <div class="strip-band">
+        <div class="band-tag">解码器<br/>20–39（m=1）</div>
+        <div class="strip" id="stripDec"></div>
+      </div>
+      <div class="layer-detail">
+        <div class="ld-k">当前层</div><div class="ld-v" id="ldTitle">将鼠标移到上方色块查看层细节</div>
+        <div class="ld-k">CSA2 模式</div><div class="ld-v" id="ldType">—</div>
+        <div class="ld-k">KV / 索引来源</div><div class="ld-v" id="ldSrc">—</div>
+        <div class="ld-k">本层计算</div><div class="ld-v" id="ldCalc">—</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>CSA2 三种模式：每层只算自己的 Q 与滑窗 KV</h2>
+    <p class="sec-desc">
+      三种模式都计算<strong>本层主 Q</strong> 与<strong>层本地 SWA KV</strong>（窗口 128），区别只在「压缩主 KV、indexer K、Top-K 索引」从哪来——
+      这三个量的复用是相互解耦的。主 KV 经 FP4 量化常驻 HBM，全局仅 <strong>890 字节/token</strong>（约 V4-Flash 的 1/4）。
+    </p>
+    <div class="cards">
+      <div class="card full">
+        <h3><span class="swatch full" style="width:14px;height:14px;border-radius:4px;"></span> Full Mode <span class="pill full" style="margin-left:auto;">4 层</span></h3>
+        <p class="card-sub">2, 8, 14（编码器 m=2）· 20（解码器 m=1）</p>
+        <ul>
+          <li>本层自建压缩主 KV（<code>wgate</code> 软门控池化）</li>
+          <li>自带 indexer Q/K，32 头 × 128 维，选自己的 <code>Top-512</code></li>
+          <li>解码器层 20 额外构建候选池：<code>2048 块 × 8 = 16,384</code> 位置（层级稀疏索引器）</li>
+          <li>第 20 层的全局 KV 由 <code>H₂₀</code> 投影而来（CED）</li>
+        </ul>
+      </div>
+      <div class="card reindex">
+        <h3><span class="swatch reindex" style="width:14px;height:14px;border-radius:4px;"></span> Reindex Mode <span class="pill reindex" style="margin-left:auto;">4 层</span></h3>
+        <p class="card-sub">24, 28, 32, 36（解码器）</p>
+        <ul>
+          <li>复用第 20 层的主 KV 与 indexer K</li>
+          <li>自带 indexer Q，在 16,384 候选池内<strong>重打分</strong>，选自己的 Top-512</li>
+          <li>每层的稀疏选择可以不同，但无需扫描全上下文</li>
+          <li>后续 indexer 的打分成本与上下文长度无关（常数）</li>
+        </ul>
+      </div>
+      <div class="card reuse">
+        <h3><span class="swatch reuse" style="width:14px;height:14px;border-radius:4px;"></span> Reuse Mode <span class="pill reuse" style="margin-left:auto;">30 层</span></h3>
+        <p class="card-sub">编码器 15 层 · 解码器 15 层</p>
+        <ul>
+          <li>复用最近 Full/Reindex 层的主 KV <strong>和</strong> Top-512 索引</li>
+          <li>不跑 indexer，不算 indexer 分</li>
+          <li>仍算自己的主 Q 与 SWA KV，注意力输出独立</li>
+          <li>40 层里只有 4 份压缩 KV、8 个 indexer——存储与算力双省</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>非对称激活：prefill 8B，decode 16B</h2>
+    <p class="sec-desc">
+      Agent 工作流（频繁工具调用、上下文越滚越长）是<strong>输入密集型</strong>的：prefill 量大、每 token 只 decode 几步。CED 让贵的 MoE FFN 在 prefill 时只跑编码器一半，
+      decode 时再跑全部 40 层——把算力花在真正随输出增长的一侧。
+    </p>
+    <div class="callout full">
+      <div class="asym">
+        <div class="asym-box enc"><div class="ab-v">8B</div><div class="ab-k">prefill / token 激活</div></div>
+        <div class="asym-mid">prompt token 只走<br/><strong>20 层编码器全套</strong> +<br/>解码器 SWA 有界重放</div>
+        <div class="asym-box dec"><div class="ab-v">16B</div><div class="ab-k">decode / token 激活</div></div>
+      </div>
+      <div style="margin-top:10px;font-size:12.5px;">
+        prefill 复杂度 O(NL/2 + n_win·L/2) ≈ <strong>O(NL/2)</strong>（N ≫ 128）。每层 MoE 同构：384 路由专家 top-6 + 1 共享专家，无 dense 前缀层；
+        因此激活参数量大致与「跑到第几层」成正比，半层即半账。
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>每层 MoE 前馈（40 层同构，无 dense 前缀）</h2>
+    <p class="sec-desc">
+      延续 DeepSeekMoE 的共享专家 + 细粒度路由专家；新增<strong>图文双偏置</strong>的无辅助损失负载均衡（文本/图像 token 各自维护一套路由修正偏置）。
+      激活函数为带钳位的 SwiGLU（clamp 阈值 10）。
+    </p>
+    <div class="moe-dia">
+      <div class="moe-row">
+        <div class="moe-box" style="flex:0 0 120px;"><div class="mb-nm">Hidden</div><div class="mb-dim">5120</div></div>
+        <div class="moe-box gate"><div class="mb-nm">Router / Gate</div><div class="mb-dim">sqrtsoftplus · noaux_tc 偏置 · scale 1.5 · norm_topk</div></div>
+      </div>
+      <div class="moe-experts" id="expChips"></div>
+      <div class="moe-row">
+        <div class="moe-box expert"><div class="mb-nm">6 个选中的路由专家（SwiGLU 钳位 10）</div><div class="mb-dim">每专家 intermediate 2304 · FP4 (MXFP4 E2M1) 权重</div></div>
+        <div class="moe-box shared" style="flex:0 0 190px;"><div class="mb-nm">1 个共享专家（常驻）</div><div class="mb-dim">同宽 2304</div></div>
+      </div>
+      <div class="moe-row"><div class="moe-box"><div class="mb-nm">输出（归一化加权求和）</div><div class="mb-dim">5120</div></div></div>
+      <div class="moe-note">
+        路由分用 <code>sqrt(softplus(x))</code>（上无界），按概率归一后加权；图像 token 走独立的 <code>bias_vl</code> 偏置，图文负载各自均衡。
+        发布权重：主干 FP8（e4m3，32×32 块 ue8m0 缩放），路由专家 FP4。
+      </div>
+    </div>
+  </section>
+
+  <section class="two-col">
+    <div>
+      <h2>配置参数明细</h2>
+      <p class="sec-desc">逐项来自 HuggingFace 官方 <code>config.json</code>（text_config / vision_config），并与技术报告 §4.2.1 交叉核对。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>分组</th><th>参数</th><th style="text-align:right;">值</th></tr></thead>
+          <tbody id="cfgBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div class="callout">
+        <strong>Engram：196B 稀疏条件记忆</strong><br/>
+        两个可训练哈希大表放在第 <code>1</code>、<code>14</code> 层（各约 98B），把记忆与计算解耦：
+        n-gram 阶 {2,3,4} × 8 个哈希头，每阶总嵌入维 2048，每头约 16M 条质数大小表项；
+        tokenizer 先把 129,280 个 token id 压缩到 <code>99,092</code> 个归一化 id 再哈希。
+        FP8 表项 + K/V 投影，确定性寻址支持主机内存 RDMA 后台预取（不占 HBM）。
+      </div>
+      <div class="callout moe">
+        <strong>DSpark：替代 MTP 的投机解码头</strong><br/>
+        主干预训练阶段<strong>不挂 MTP</strong>；之后单独训练 DSpark（主干冻结）：
+        3 个 Transformer 草稿块（SWA 窗口 128、自带 128 专家 top-3），单遍并行出 5 个草稿位，
+        Markov 头建模草稿间依赖，置信度头按引擎吞吐曲线动态决定每请求验证长度。
+      </div>
+      <div class="callout vis">
+        <strong>视觉分支：DeepSeek-ViT</strong><br/>
+        从头训练的 32 层 ViT：1024 维、16 头、patch 14，2D-RoPE 替代绝对位置编码、RMSNorm、SwiGLU；
+        3×3 pixel-unshuffle 把视觉 token 数降到 1/9（支持约 1344×1344 输入），再经 2 层 MLP 投影到 5120。
+        预训练起就图文融合（45T token 中文本:多模态 = 7:1）。
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    来源：HuggingFace <code>deepseek-ai/DeepSeek-V4.1-Flash</code> 官方 config.json + 技术报告《DeepSeek-V4.1-Flash: Pushing the Limits of KV Cache Compression》(arXiv:2609.19969，2026-09-10)。
+    2026-10-17 的 V4.1-Flash-1017 为后训练（自反馈 RL）更新，网络结构不变，本图同样适用。色块采用经 CVD 校验的分类调色板。
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var root=document.documentElement,btn=document.getElementById("themeBtn"),icon=document.getElementById("themeIcon"),label=document.getElementById("themeLabel");
+  function applyTheme(t){root.setAttribute("data-theme",t);icon.textContent=t==="dark"?"☀️":"🌙";label.textContent=t==="dark"?"浅色":"深色";try{localStorage.setItem("qwenviz-theme",t);}catch(e){}}
+  var saved=null;try{saved=localStorage.getItem("qwenviz-theme");}catch(e){}
+  if(saved){applyTheme(saved);}else if(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches){applyTheme("dark");}
+  btn.addEventListener("click",function(){var cur=root.getAttribute("data-theme")||(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");applyTheme(cur==="dark"?"light":"dark");});
+
+  // ---- layer taxonomy, 0..39, derived verbatim from config.json arrays ----
+  var kvSources=[2,8,14,20];
+  var indexSources=[2,8,14,20,24,28,32,36];
+  function kind(i){
+    if(i<=1) return "swa";
+    if(kvSources.indexOf(i)>=0) return "full";
+    if(indexSources.indexOf(i)>=0) return "reindex";
+    return "reuse";
+  }
+  function kvSrc(i){ if(i<2)return null; if(i<8)return 2; if(i<14)return 8; if(i<20)return 14; return 20; }
+  function idxSrc(i){ var s=null; indexSources.forEach(function(x){if(x<=i)s=x;}); return s; }
+  var engramSet={1:true,14:true};
+  var ratio=function(i){ return i<=1?0:(i<20?2:1); };
+
+  function band(containerId,start,n){
+    var el=document.getElementById(containerId),h="";
+    for(var j=0;j<n;j++){var i=start+j,k=kind(i);
+      h+='<div class="cell '+k+(engramSet[i]?' engram':'')+'" tabindex="0" role="button" data-idx="'+i+'" aria-label="层 '+i+'"></div>';}
+    el.innerHTML=h;
+  }
+  band("stripEnc",0,20);
+  band("stripDec",20,20);
+
+  var ldTitle=document.getElementById("ldTitle"),ldType=document.getElementById("ldType"),ldSrc=document.getElementById("ldSrc"),ldCalc=document.getElementById("ldCalc"),active=null;
+  function pill(k,txt){return '<span class="pill '+k+'">'+txt+'</span>';}
+  function showLayer(i){
+    document.querySelectorAll('.cell[data-idx="'+i+'"]').forEach(function(c){
+      if(active&&active!==c)active.classList.remove("active");
+      c.classList.add("active");active=c;
+    });
+    var k=kind(i),seg=i<20?"编码器":"解码器",r=ratio(i);
+    ldTitle.textContent="第 "+i+" 层（"+seg+"，压缩率 m="+(r===0?"0（纯 SWA）":r)+"）"+(engramSet[i]?"　● Engram 记忆模块":"");
+    if(k==="swa"){
+      ldType.innerHTML=pill("swa","纯 SWA")+" 无压缩主 KV、无 indexer";
+      ldSrc.innerHTML="不参与 CSA2 跨层复用；SWA KV 逐层自留（窗口 128，<code>FP8</code>）"+(i===1?"；本层含 Engram 模块":"");
+      ldCalc.innerHTML="完整跑本层：SWA 注意力 + MoE（384 专家 top-6 + 1 共享）";
+    } else if(k==="full" && i<20){
+      ldType.innerHTML=pill("full","Full Mode")+" 编码器压缩 KV 源层（供第 "+(i+1)+"–"+(i===2?7:i===8?13:19)+" 层复用）";
+      ldSrc.innerHTML="自建压缩主 KV（每 2 token 池化为 1 条 512 维潜伏）+ 自建 indexer（32 头×128，<code>Top-512</code>）";
+      ldCalc.innerHTML="完整 CSA2 路径 + MoE；本层 Q 与 SWA KV 照常计算"+(i===14?"；<strong>本层含 Engram 模块</strong>":"");
+    } else if(k==="full"){
+      ldType.innerHTML=pill("full","Full Mode")+" 解码器首层 · 层级稀疏索引器候选源";
+      ldSrc.innerHTML="全局 KV 从编码器末层 <code>H₂₀</code> 用本层投影矩阵生成（m=1 不压缩）；不依赖其他层";
+      ldCalc.innerHTML="唯一扫描全部因果可见位置的解码器 indexer：选 Top-512，并按块打分保留 <code>2048 块×8 = 16,384</code> 候选位置供层 24/28/32/36 使用";
+    } else if(k==="reindex"){
+      ldType.innerHTML=pill("reindex","Reindex Mode")+" 复用 KV、重选索引";
+      ldSrc.innerHTML="主 KV 与 indexer K 复用第 <code>20</code> 层；Top-512 索引本层重算";
+      ldCalc.innerHTML="自带 indexer Q，仅在 16,384 候选池内重打分（与上下文长度无关）+ 本层 Q/SWA + MoE";
+    } else {
+      var ks=kvSrc(i),is=idxSrc(i);
+      ldType.innerHTML=pill("reuse","Reuse Mode")+" KV 与索引全复用";
+      ldSrc.innerHTML="主 KV 复用第 <code>"+ks+"</code> 层，Top-512 索引复用第 <code>"+is+"</code> 层";
+      ldCalc.innerHTML="不跑 indexer；只算本层主 Q、SWA KV（窗口 128）与 MoE"+(engramSet[i]?"；本层含 Engram":"");
+    }
+  }
+  document.getElementById("stripEnc").addEventListener("mouseover",onCell);
+  document.getElementById("stripDec").addEventListener("mouseover",onCell);
+  document.getElementById("stripEnc").addEventListener("focusin",onCell);
+  document.getElementById("stripDec").addEventListener("focusin",onCell);
+  document.getElementById("stripEnc").addEventListener("click",onCell);
+  document.getElementById("stripDec").addEventListener("click",onCell);
+  function onCell(e){var c=e.target.closest(".cell");if(c)showLayer(+c.dataset.idx);}
+  showLayer(0);
+
+  var expEl=document.getElementById("expChips"),ch="";
+  for(var e=0;e<384;e++){ch+='<div class="exp-chip'+(e<6?' on':'')+'">'+e+'</div>';}
+  expEl.innerHTML=ch;
+
+  var rows=[
+    ["架构","architectures","DeepseekV41ForCausalLM","vis"],
+    ["CED","num_hidden_layers","40 = 20 encoder + 20 decoder","full"],
+    ["编码器","层 0–1","纯 SWA（sliding_window=128）","swa"],
+    ["编码器","层 2–19","CSA2 m=2 · 3 组×(1 Full + 5 Reuse)","full"],
+    ["解码器","层 20–39","CSA2 m=1 · 5 组×(Full/Reindex + 3 Reuse)","reindex"],
+    ["CSA2","kv_source_layer_ids","[2, 8, 14, 20]（仅 4 份压缩主 KV）","full"],
+    ["CSA2","index_source_layer_ids","[2,8,14,20,24,28,32,36]（8 个 indexer）","reindex"],
+    ["CSA2","index_n_heads / head_dim","32 / 128","reindex"],
+    ["CSA2","index_topk","512","reindex"],
+    ["CSA2","candidate pool（层 20）","2048 块 × 8 = 16,384 位置","reindex"],
+    ["注意力","num_attention_heads / head_dim","64 / 512","neu"],
+    ["注意力","num_key_value_heads","1（MLA 式潜伏）","neu"],
+    ["注意力","q_lora_rank / o_lora_rank","1280 / 1024（o_groups=8）","neu"],
+    ["注意力","qk_rope_head_dim","64（RoPE θ=10000 + YaRN ×16，64K→1M）","neu"],
+    ["注意力","全局 KV 占用","890 B/token（FP4，约 V4 的 1/4）","full"],
+    ["残差","mHC","hc_mult=4 · 20 Sinkhorn · Single-Pass","neu"],
+    ["MoE","n_routed_experts / per_tok","384 / 6（层 layer 都是 MoE）","moe"],
+    ["MoE","n_shared_experts","1","moe"],
+    ["MoE","moe_intermediate_size","2304","moe"],
+    ["MoE","scoring_func / topk_method","sqrtsoftplus / noaux_tc（scale 1.5）","moe"],
+    ["MoE","hidden_act","silu + SwiGLU clamp 10","neu"],
+    ["Engram","engram_layer_ids","[1, 14] · 合计 196B","engram"],
+    ["Engram","n-gram / heads / head_dim","{2,3,4} / 8 / 256（每阶 2048 维）","engram"],
+    ["Engram","压缩词表","129,280 → 99,092（FP8 表项）","engram"],
+    ["DSpark","草稿块 / 草稿位","3 块（SWA 128）/ 5 位","moe"],
+    ["DSpark","draft experts","128 专家 top-3 · Markov rank 256","moe"],
+    ["主干","hidden_size","5120","neu"],
+    ["长度/词表","max_position_embeddings","1,048,576 (1M)","neu"],
+    ["长度/词表","vocab_size","129,280","neu"],
+    ["参数","骨干 / Engram","552B / 196B（激活 8B prefill · 16B decode）","neu"],
+    ["精度","trunk / experts / main KV","FP8 e4m3 / MXFP4 E2M1 / FP4（SWA KV 仍 FP8）","neu"],
+    ["训练","预训练语料","45T 多模态 token（文:多模态 = 7:1）","neu"],
+    ["视觉","DeepSeek-ViT","32 层 · 1024 · 16 头 · patch 14 · 2D-RoPE","vis"],
+    ["视觉","对齐 / 投影","3×3 pixel-unshuffle（token 数 ÷9）· 2 层 MLP→5120","vis"],
+  ];
+  var dc={full:"var(--full)",reindex:"var(--reindex)",reuse:"var(--reuse)",swa:"var(--swa)",moe:"var(--moe)",vis:"var(--vis)",engram:"var(--engram)",neu:"var(--neutral)"};
+  var tb=document.getElementById("cfgBody"),t="";
+  rows.forEach(function(r){
+    t+='<tr><td><span class="cat-dot" style="background:'+dc[r[3]]+'"></span>'+r[0]+'</td><td class="code">'+r[1]+'</td><td class="val">'+r[2]+'</td></tr>';
+  });
+  tb.innerHTML=t;
+})();
+</script>
+</body>
+</html>
