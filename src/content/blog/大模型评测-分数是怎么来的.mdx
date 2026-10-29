@@ -1,0 +1,306 @@
+---
+title: "大模型评测：分数是怎么来的，又为什么不能直接比"
+subtitle: "从 MMLU 到 SWE-bench：判分方式、统计显著、模型裁判与榜单可信度"
+date: 2026-10-27
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "大模型"
+  - "评测"
+  - "MMLU"
+  - "SWE-bench"
+  - "LLM-as-judge"
+---
+
+import Expand from "../../components/Expand.astro";
+import EvHookFigure from "../../components/EvHookFigure.astro";
+import EvSignalFigure from "../../components/EvSignalFigure.astro";
+import EvJudgeFigure from "../../components/EvJudgeFigure.astro";
+import EvBenchmarkMap from "../../components/EvBenchmarkMap.astro";
+import EvLadderFigure from "../../components/EvLadderFigure.astro";
+
+每次有新模型发布，新闻标题都是「某某超越 GPT」「拿下 SWE-bench 第一」。但如果你翻开各家的评测表，会发现同一个模型在不同地方分数差出一截，甚至同一道题换一种问法分数就变了。模型评测不像高考——题是公开的、答案会被背下来、阅卷老师本身也是一个有偏见的模型。这篇文章讲清楚四件事：分数是怎么产生的、差几分才算真的强、模型当裁判公不公平、以及面对一张评测表应该怎么读。
+
+先做三个可以自己验算的思想实验，它们也是全文的入口。
+
+**实验一：pass@10 和 pass^4 是反义词。** 假设一个代码模型单次完成任务的成功率是 50%。如果允许试 10 次、成 1 次就算过，通过率是 $1-0.5^{10}\approx99.9\%$；反过来，如果要求连续 4 次全部成功（衡量可靠性），概率是 $0.5^4=6.25\%$。同一个 50% 的模型，换个口径一个接近满分、一个不及格。代码榜写 pass@k、Agent 榜写 pass^k，差一个符号方向相反。
+
+**实验二：51 比 49 不是胜利。** 100 道题考出 51% 对 49%，直觉上「险胜」。但 100 道题的民调式误差大约是 $1/\sqrt{n}$，即 ±10 个百分点——这个差距完全在噪声里。更要紧的是：如果两个模型考的是**不同的题集**，分差的噪声还要再乘 $\sqrt{2}$（约 ±14 个百分点）；只有让它们考**同一套卷**、只比较「你对我错」的题目，才用得上统计配对检验。
+
+**实验三：同一个模型能拿三个分。** 同一套 MMLU 题，比较选项 token 对数概率（likelihood）、让模型生成字母再匹配、让模型先写推理链再回答，是三种不同的判分协议，结果系统性不同；0-shot 和 5-shot 也不同。CoT 还不一定更高——在选择题上，自由生成可能因为解析失败反而输给直接比概率。
+
+<EvHookFigure />
+
+*图 1：分数不是模型的单一属性。数值为示意，重点是三个出口是三套判分协议。*
+
+把这三件事严格地说出来：**评测分数，是在指定基准的题目集上，按规定的推理配置（few-shot 数量、是否 CoT、温度、是否允许调用工具等脚手架）运行模型，再由规定的判分程序对输出评分所得的统计量。** 它同时由模型能力、判分协议、题目集版本、推理配置四者决定；只有后三项对齐时，两个模型的分数才可比。如果需要一个生活化比喻：它更像「某次考试的成绩单」——考纲、评分标准、能不能查书都不同的两场考试，分数不能直接比；而不是身高那种可以脱离测量条件谈论的数值。
+
+评测难做的根源有四个，后文逐一展开：开放生成没有唯一答案；分数对 prompt 和采样敏感；公开题集会被训练数据污染、旧榜会饱和；以及选择题高分不等于能完成真实任务。
+
+<Expand title="术语速查（先扫一眼，读完再回看）">
+
+- **benchmark（基准）**：一套固定题集 + 判分规则，如 MMLU、SWE-bench。
+- **likelihood 判分**：不让模型生成，比较各选项第一个 token 的对数概率。
+- **pass@k / pass^k**：试 k 次成一次算过 / 要求 k 次全成；一个衡量能力上限，一个衡量可靠性。
+- **scaffold（脚手架）**：模型之外的工具与流程，如终端、浏览器、补丁工具、重试策略；Agent 分数总是「模型+脚手架」的系统分。
+- **LLM-as-judge（模型裁判）**：用另一个大模型给答案打分或做两两比较。
+- **held-out / de-identified**：未公开 / 经改写去标识的私有题集。
+- **Elo / Bradley-Terry**：由对战投票反推实力分的统计模型。
+
+</Expand>
+
+## 1. 分数的四种产生方式
+
+判分程序吃进去的东西不同，决定了分数的性质。一共有四类。
+
+**第一类：likelihood 多选题。** 题目给出 A/B/C/D，程序让模型对每个选项算条件对数概率，取概率最高的（有时按答案长度做归一化，记为 acc_norm）。MMLU 的原始口径就是这种。它完全确定性、不涉及采样，便宜到可以跑几万道题；但测的是「模型觉得哪个选项像答案」，不是自由作答能力。
+
+**第二类：生成后精确匹配。** 让模型真正生成文本，再用正则提取答案：GSM8K 取最后的数字、MATH 取 `\boxed{}` 里的表达式、选择题取生成的字母。MMLU-Pro 这类新基准则要求先做 CoT 再精确匹配。规则解析本身是一个误差源——模型答对了但没按格式写，照样算错。
+
+**第三类：执行判分。** 代码题不靠文本相似度，而是真的跑单元测试：HumanEval/MBPP 看生成函数能否通过测试，SWE-bench 在真实仓库里跑「修复前失败、修复后通过」的测试（fail-to-pass）。Agent 基准更进一步，检查环境的**最终状态**：τ-bench 模拟客服对话，判分依据是交易后数据库是否正确；WebArena 看网页任务有没有完成。这类判分最接近真实价值，但脚手架影响极大。
+
+pass@k 在这里需要正式定义。HumanEval 论文（[arXiv:2107.03374](https://arxiv.org/abs/2107.03374)）给的无偏估计是：每题采样 $n$ 次、其中 $c$ 次通过，则 $\text{pass@k}=1-\binom{n-c}{k}/\binom{n}{k}$（$k\le n$，$n$ 越大方差越小）。注意它不是「真的重试 10 次」，而是用采样分布做估计，实验一的 $1-0.5^{10}$ 只是直觉版。与它对照，τ-bench 提出 **pass^k**：同一任务连做 k 次全部成功才算过，衡量多步 Agent 的可靠性——τ-bench 论文里很多模型 pass^1 还行、pass^4 大幅下滑，说明「碰巧做对」和「稳定做对」是两回事。
+
+**第四类：模型裁判与人类偏好。** 开放问答没有标准答案，就请裁判：单点评分（MT-Bench 让 GPT-4 对多轮答案打 1–10 分）或成对比较（两个答案选优，允许平局）。人类成对偏好是金标准但太贵，工业界主流是匿名的人类投票（Chatbot Arena）加模型裁判（Arena-Hard、MT-Bench）。
+
+成对偏好怎么变成分数？标准模型是 **Bradley-Terry**：$P(A\succ B)=1/(1+10^{(R_B-R_A)/400})$，由全部对战做最大似然拟合得到每个模型的评分 $R$。差 100 分对应约 64% 胜率——这就是大家熟悉的 Elo 直觉。必须澄清一个高频误解：**Chatbot Arena 用的是全量投票的 Bradley-Terry 全局拟合加 bootstrap 置信区间，不是下棋软件那种增量 Elo**；新模型头几天票数不足时置信区间很宽，所以分数后面都挂着 ±7、±9 这样的误差棒，分数在置信区间内的排名变化没有意义。
+
+| 判分方式 | 吃什么 | 成本 | 可复现性 | 典型基准 | 主要坑 |
+| --- | --- | --- | --- | --- | --- |
+| likelihood | 选项 logprob | 极低 | 完全确定 | MMLU、HellaSwag | 不测自由生成 |
+| 精确匹配 | 生成文本 | 低 | 受采样影响 | GSM8K、MATH、MMLU-Pro | 解析失败、采样敏感 |
+| 执行 | 代码/环境终态 | 中高 | 受脚手架影响 | HumanEval、SWE-bench、τ-bench | 系统分≠模型分、pass@k 口径 |
+| 模型裁判/人类 | 偏好 | 高 | 裁判有偏差 | Arena、MT-Bench、Arena-Hard | 位置/冗长/自我偏好（见第 3 节） |
+
+传统 NLP 的 BLEU/ROUGE（n-gram 重叠）在开放生成时代基本退场：同义改写会被重罚，与人类判断相关性差；今天只在 LongBench 等部分任务里作辅助指标。
+
+## 2. 差几分才算赢：评测里的统计学
+
+这一节是全文最「数学」的部分，但只需要一个民调直觉。
+
+**先记 $1/\sqrt{n}$。** 正确率可以看成抛硬币：$n$ 道题、正确比例 $p$，朴素正态近似的误差是 $1.96\sqrt{p(1-p)/n}$。$n=100$、$p\approx0.5$ 时约为 ±9.8 个百分点；更精确的 Wilson 区间是 40.4%–59.6%（半宽 9.6 个百分点）——两种口径都约等于 ±10，本文不区分。民调 1000 人误差约 ±3 个百分点，是同一个公式。所以 100 题考出 51:49，统计上就是平局。$p=0.8$ 时 Wilson 区间是不对称的 71.1%–86.7%（区间中心会偏离 0.8），高分段也别想当然地写对称误差。
+
+**关键是区分三种误差。** ① 判断单个模型分数的不确定性，用它自己的置信区间（100 题约 ±10pp）。② 比较两个模型，如果它们各考各的题集，分差方差相加，标准差是单模型的 $\sqrt2$ 倍——约 ±14pp，这种比法要稳定检出 2 个百分点的差距（80% 检验功效、$p\approx0.5$），每组需要约 9800 题（量级一万）。③ 如果两个模型考**同一批题**，只有「A 对 B 错」和「B 对 A 错」的不一致对提供信息，两人都对或都错的题全部抵消，这就是配对检验（McNemar），需要的题量远小于一万。
+
+配对面试可以心算：200 道题里 180 道两人对错相同，A 对 B 错 15 道、B 对 A 错 5 道，不一致对共 $m=20$。经验判据是差值超过 $2\sqrt m$（这里约 9）才算信号，$|15-5|=10$ 勉强过线；精确的 McNemar 检验给出双侧 $p\approx0.041$。实际操作就是对分差做配对 bootstrap：把这 200 题有放回重抽一千次，看分差分布是否整体偏离零。
+
+**采样口径也要锁死。** 报告客观题先固定贪心解码（temperature=0）作为基线；注意 API 服务的 t=0 也不保证跨时间严格可复现（后端内核、batching 会变），本地实验固定随机种子。pass@k 必须真的采 $n\ge k$ 次（HumanEval 原论文温度 0.2），贪心只能报点估计。公开复现评测时至少同时给出：模型版本、对话模板、few-shot 数、采样参数、框架版本、裁判模型版本——同一模型在不同评测框架下差几个点是常态（EleutherAI 的 lm-evaluation-harness 在 v0.4 系列里多次修复 few-shot 拼接与答案泄漏类问题，历史分数因此不能跨版本直接比）。
+
+<EvSignalFigure />
+
+*图 2：左，误差棒按 $1/\sqrt{n}$ 缩短；右，独立两组与同卷配对检出同一分差所需的题量差两个数量级。示意，非精确曲线。*
+
+## 3. LLM-as-judge：让模型当裁判
+
+规则判分到开放问答就失效了。Zheng 等人 2023 年的 MT-Bench/Chatbot Arena 论文（[arXiv:2306.05685](https://arxiv.org/abs/2306.05685)）发现，GPT-4 做成对裁判与人类偏好的一致率约 80%，已接近人类标注员之间的一致水平，成本却低几个数量级。模型裁判由此成为标配，但它有五类被反复验证的偏差。
+
+- **位置偏差**：答案放在前面还是后面会改变选择。生活类比是辩论赛最后发言的人占便宜、或面试官对最后一个候选人印象最深。
+- **冗长偏差**：偏好更长、格式更华丽的答案，哪怕结论错了也给「态度分」。
+- **自我偏好**：裁判能认出并偏袒自家模型的输出，相当于运动员兼裁判（Shi Feng 等，[arXiv:2404.13076](https://arxiv.org/abs/2404.13076)，NeurIPS 2024）。
+- **同源偏好**：生成答案的模型和裁判同源（比如用同一基座合成数据又用它打分）时系统性放水，类似师兄给师弟阅卷（[arXiv:2502.01534](https://arxiv.org/abs/2502.01534)）。
+- **拒答偏差**：在安全相关问题上偏好「我无法回答」，永远道歉的考生显得最稳。
+
+位置偏差有多严重？社区实测（Panickssery 的 pairwise LLM jury 博文，**博客口径非论文**）换位后翻票的比例：GPT-4 约 25%、GPT-3.5 约 58%、Llama-2-70B-chat 高达 89%——也就是说弱模型当裁判时，换个座位结果就接近掷硬币。学术上 FairEval（[arXiv:2305.17926](https://arxiv.org/abs/2305.17926)）系统记录了该现象并提出换位校准方法（如换位后 Vicuna 在 80 题中 66 题胜过 ChatGPT）。
+
+<EvJudgeFigure />
+
+*图 3：换位投票（position swap）是最便宜的偏差体检。翻票率数字为博客实测口径，方法学见 FairEval。*
+
+**你可以零代码做这个实验**：找一道有明确对错的题，准备两个答案——A 短而结论正确，B 很长、排版工整但结论错误。把两个答案连同「请选择更好的答案」的提示词分别按 A-B 和 B-A 顺序贴进任意聊天产品，各跑 5 对，记录翻票次数；有 API 条件时把这个过程脚本化、每对双向各问一次。如果翻票明显，说明这个裁判在这组题上不可信。
+
+工程上的缓解措施收敛为三条主菜：① **随机换位、双向聚合**（两个顺序各判一次，不一致时平局或取对数概率平均）；② **匿名模型名 + rubric 分维度打分 + 结构化输出**，必要时多裁判 ensemble；③ **钉死裁判版本**，用 200–500 条人工标注做上线校准（一致率或 Kendall τ）、之后定期抽检，裁判一升级就把历史基线重跑一遍。
+
+## 4. 基准地图：主流基准在测什么
+
+下面六组只讲「测什么能力、怎么判、现在还能不能信」，题量与历史分数放在折叠总表里。
+
+**知识综合。** MMLU（[arXiv:2009.03300](https://arxiv.org/abs/2009.03300)，57 学科 15908 道选择题，5-shot likelihood）是这一代模型的「高考」：GPT-3 只有 43.9%，GPT-4 到 86.4%，2026 年头部模型普遍 90+，已经饱和。MMLU-Pro（[arXiv:2406.01574](https://arxiv.org/abs/2406.01574)）把题扩成 10 选 1、要求 CoT 精确匹配，显著抬高了猜测成本；ARC、HellaSwag 同样饱和（95%+）；TruthfulQA 测「会不会一本正经胡说」，但容易被针对性微调刷高，只作参考。
+
+**中文知识。** C-Eval（[arXiv:2305.08322](https://arxiv.org/abs/2305.08322)，52 学科 13942 题，test 答案不公开）与 CMMLU（[arXiv:2306.09212](https://arxiv.org/abs/2306.09212)，67 学科 11528 题）是两个主流中文综合选择基准；AGIEval（[arXiv:2304.06364](https://arxiv.org/abs/2304.06364)）取高考/SAT/GRE 等人类考试。共同局限：以选择题为主、历年真题在互联网上泛滥（污染风险反而高于翻译题库）、中文模型裁判不成熟。
+
+**数学推理。** GSM8K（小学数学）和 MATH（竞赛题）都经历了从难到饱和：MMLU 式的高分在这两个基准上重演了一遍。抗污染的办法是「每年出新卷」——美国数学竞赛 AIME 每年 30 道新题构成天然刻度（AIME 2024/2025 也逐渐被刷满，2026 卷接棒）。**BeyondAIME** 是字节 Seed 团队 2025 年随 Seed-Thinking-v1.5（[arXiv:2504.13914](https://arxiv.org/abs/2504.13914)）发布的超难基准：100 道原创、未公开题面的竞赛题，AIME 风格但推理链更长，专门为前沿模型在 AIME 上饱和后保留区分度；判分是数值答案的多样本平均准确率，公开榜单多为厂商自测，引用时要标注。更上游还有 GPQA Diamond（[arXiv:2311.12022](https://arxiv.org/abs/2311.12022)，198 道博士级理科题，领域专家正确率也只有约 63–65%）和 HLE。
+
+**HLE（Humanity's Last Exam，[arXiv:2501.14249](https://arxiv.org/abs/2501.14249)）**：Scale AI 与 CAIS 2025 年 1 月发布，2500 道题横跨 100 多个学科、由 300 多位专家命题，人类专家约 91%，发布时 GPT-4o 只有个位数（约 3.3%）。它有两个读法注意：一是分数随「带不带工具/检索」差异极大，必须连同 harness 一起看；二是题也会老化——2026 年 9 月官方又推出冻结题号、gated 只公布聚合分的 **HLE-Diamond**（1000 题，判分用了 o3-mini 这类模型裁判，恰是「新榜也躲不开 LLM judge」的例子），出处是官方博客而非 HLE 论文。
+
+**代码。** HumanEval（164 题）和 MBPP 已饱和；接棒的是 **LiveCodeBench**（[arXiv:2403.07904](https://arxiv.org/abs/2403.07904)，按时间窗持续收录评测日之后的新竞赛题）和 **SWE-bench**（[arXiv:2310.06770](https://arxiv.org/abs/2310.06770)，真实 GitHub issue 到 PR）。工业界最常引用的是人工复核的 **SWE-bench Verified**（500 题子集）：读这个分数有三条纪律——① 它是「模型 + agent 框架（SWE-agent/OpenHands/官方 scaffold）」的系统分，同一模型随框架版本漂十几分是常态，报分必须连 scaffold 名与提交日期；② 500 题、$p\approx0.5$ 时二项误差约 ±4.4 个百分点；③ 厂商自报与第三方独立复测（如 Vals.ai）常有出入。
+
+**长上下文与 Agent。** 长文本有 RULER（[arXiv:2404.06654](https://arxiv.org/abs/2404.06654)，4k–1M token、13 类合成任务）与 LongBench（[arXiv:2308.14508](https://arxiv.org/abs/2308.14508)，中英双语）；非正式的「大海捞针」压力测试只能做冒烟检查。Agent 侧：WebArena（[arXiv:2307.13854](https://arxiv.org/abs/2307.13854)）在自托管真实网站里做端到端任务（初代 GPT-4 agent 只有 14.41%，人类 78.24%）；τ-bench（正确编号 [arXiv:2406.12045](https://arxiv.org/abs/2406.12045)，注意不是 2404.04636）按数据库终态判分并首创 pass^k，已演进到 τ²/τ³（新增 telecom/banking 等域）；GAIA（[arXiv:2311.12983](https://arxiv.org/abs/2311.12983)）是多步工具使用的真实问题，人类 92%。安全对齐（ToxiGen、HarmBench 等）属于独立的评测维度，本文不展开。
+
+<EvBenchmarkMap />
+
+*图 4：左，基准按判分主客观与任务层级的示意分区；右，数学/代码难度接棒——旧榜刷满就出新题、私有题或年度新考。*
+
+**题为什么会过期：污染与饱和。** 训练语料混入测试题（n-gram 重叠研究早自 GPT-3 报告就有，系统检测可看 Data Contamination Quiz，[arXiv:2311.06233](https://arxiv.org/abs/2311.06233)），但「语料里有相似题」不等于作弊——互联网本来就有教材习题，要区分题面泄漏、答案泄漏、仅题型相似。抗污染设计因此分成四派，和上面的基准一一对应：**时间窗**（LiveCodeBench/LiveBench 只收评测日后的新内容）、**时效题**（FreshQA）、**私有复核**（SWE-bench Verified、厂商 de-identified held-out 题集）、**年度新考**（AIME、HLE-Diamond）。基准评测因此是一场接力赛，而不是一张终身成绩单。
+
+## 5. 榜单与技术报告怎么读
+
+基准是考试题，榜单是排名。同样叫「排行榜」，可信度分四层。
+
+<EvLadderFigure />
+
+*图 5：可信度阶梯。越往上越难应试，但偏好投票测的是「人喜不喜欢」，不是事实正确率。*
+
+1. **匿名偏好对战**：Chatbot Arena（现简称 Arena）用人类对两个匿名回答盲投，全局 Bradley-Terry 拟合 + bootstrap 置信区间，抗「应试」能力最强；它有风格控制分区（用快速模型把双方答案改写成统一样式后在子样本重赛，校正冗长/排版偏好）、有 preliminary 标记（模型公开发布前的投票暂挂，可能被替换）。弱点：人类偏好不等于事实正确，且会被表达风格影响。
+2. **独立机构标准化复测**：Artificial Analysis 这类第三方按统一配置重跑，并把质量分与 $/百万 token、输出速度、TTFT、上下文价格并列——它的 Intelligence Index 是多个基准的加权复合分，部分模型标 estimated，好处是独立，代价是复合口径不透明。
+3. **平台提交跑分**：OpenCompass（官方闭源集与公开学术集分榜）、SuperCLUE（中文原生题）等，题目全、更新快，但成绩多由厂商按当时 API 提交，配置随模型版本漂移。
+4. **厂商技术报告自测**：信息最丰富，但无人外部监考。
+
+连榜单本身也会被质疑。The Leaderboard Illusion（[arXiv:2504.20879](https://arxiv.org/abs/2504.20879)，NeurIPS 2025 Datasets & Benchmarks）指出：有厂商在 Llama-4 发布前私测 27 个未公开变体、择优披露，闭源厂商还拿到不成比例的对战票数。统计学上「私测多变体取最高分」本身就是**多重比较取最大值**——即使全是噪声，期望最大值也天然偏高。Arena 官方则回应称开放权重模型实际占比约四成、实测私测偏差仅十余 Elo 量级且会随新票收敛，并推出了多变体 provisional 标签与透明退役流程。两边观点并列，结论是：**任何单榜都不足为据，至少用三个不同范式的来源交叉**。
+
+**读厂商技术报告，按脚注逐项过：**
+
+- 谁施测、内部还是第三方；用的什么 **scaffold**（SWE-bench 分差异最大：OpenAI 用内部迭代调试工具，Anthropic 长期坚持 bash+文件替换两个工具的极简 scaffold）；
+- 采样口径：pass@1 是单次还是「每题 n 次取平均」、是否开扩展思考（reasoning effort/verbosity：GPT-5 的发布博客分与系统卡分就因这个出现两套数）；
+- 题集：公开基准、de-identified held-out（防污染但无外部监考）还是 preliminary（可能修订）；
+- base 还是 chat、每个基准标了几 shot（DeepSeek-V3 报告逐基准标注 shot 数、base/chat 分表，是可读性的正例）；
+- 看到 GAIA、SWE-bench 上 90%+ 的天文数字先问是不是**多模型 ensemble 的系统分**——那是「Agent 产品」的成绩，不是基座模型的。
+
+<Expand title="表：GPT 与 Claude 官方分数示例（教读法，不是排行榜）">
+
+以下全部取自厂商官方发布页/系统卡，**只选能说明口径差异的格子，空缺表示官方未公布，不用第三方分数补**。日期为模型发布期。
+
+| 模型 | MMLU | GPQA Diamond | 数学锚点 | SWE-bench Verified | τ²（retail/airline） |
+| --- | --- | --- | --- | --- | --- |
+| GPT-4（2023-03） | 86.4（5-shot） | — | GSM8K 92.0（5-shot CoT） | — | — |
+| GPT-4o（2024-05） | 88.7（0-shot CoT） | 53.6 | MATH 76.6 | 19.0（477 题、早期 scaffold） | — |
+| Claude 3 Opus（2024-03） | 86.8（5-shot） | 50.4 | MATH 60.1 | 22.2 | 45.1 / 34.5 |
+| o1（2024-09） | 90.8（p1） | 77.3 p1 / 78.0 c64 | MATH 94.8；AIME24 74.4 | 41.0 | 70.8 / 50.0 |
+| GPT-4.1（2025-04） | 90.2 | 66.3 | AIME24 48.1 | 54.6 | 68.0 / 49.4 |
+| Claude 3.7 Sonnet（2025-02） | MMMLU 85.9 | 68.0 / 84.8（hc） | MATH-500 96.2 | 62.3 / 70.3（hc） | 81.2 / 58.4 |
+| o3（2025-04） | — | 83.3（high，无工具） | AIME25 88.9 / 98.4（带 Python） | 69.1 | 80.2 / 64.8 |
+| GPT-5（2025-08） | — | 85.7（无工具） | AIME25 94.6 / 99.6（带 Python） | 74.9 | 81.1 / 62.6 |
+| Claude Opus 4.1（2025-08） | MMMLU 89.5 | 81.0 | AIME25 78.0 | 74.5 / 79.4（hc） | 86.8 / 63.0 |
+| Claude Sonnet 4.5（2025-09） | 89.1 | 83.4 | AIME25 87.0 | 77.2 / 82.0（hc） | 86.2 / 70.0 |
+
+读法三条：① **GPQA 列里 p1=pass@1、c64/hc=consensus@64（64 次采样取多数一致）/parallel test-time compute**，同一模型两档能差 7–8 分，跨厂商横比必须先对齐档位；② **SWE-bench 与 τ² 的差异主要来自 scaffold 与重试策略**，harness 差异常常大于模型代差；③ 2026 年的新旗舰（GPT-6 系、Claude Opus 5/Fable 5 等）官方已大面积停报 MMLU/AIME/GPQA（公开宣布基准饱和），改用 HLE、Terminal-Bench、SWE-bench Pro、FrontierCode 等新标尺——2025 年中之后比模型，先确认比的是不是同一代基准。两家均未官方发布过 LiveCodeBench 分数；官方工具基准是 τ²-bench，聚合站上的「τ³」数字不是官方口径。
+
+</Expand>
+
+## 6. 自己动手：评测金字塔、自建题集与工具
+
+**评测金字塔**（越往下越便宜、跑得越频繁；越往上越贵、越接近真实决策）：
+
+- **L1 单元能力客观题**（MMLU/GSM8K 式）：每次改动都跑，做回归守门；
+- **L2 端到端任务**（代码单测、RAG 忠实度、Agent 工具调用轨迹）；
+- **L3 人类偏好 / 模型裁判**（成对比较、Elo）；
+- **L4 线上 A/B**（留存、转化、人工接管率）：最终的金标准。
+
+只看任何一层都会被博弈：只刷 L1 会得到「考场冠军、落地翻车」的模型；只看 L4 则迭代太慢。CI 里设守门阈值时要注意：阈值应是「配对置信区间超出 + 最小有意义差（如 2 个百分点）」，同时测很多项时做 Holm/Bonferroni 校正，否则会天天误报。
+
+**自建题集三套**：黄金集（每个能力维度 200–500 题，双人盲标、第三人仲裁，标注一致性目标 Cohen's κ≥0.7，锁版本）、回归集（线上每个 badcase 修复后只增不改）、按月轮换的新鲜留出集（抗污染）。黄金集权限最小化、严禁进入训练/SFT/蒸馏，可埋 canary 字符串做泄漏巡检。RAG 系统用 RAGAS 一类指标看忠实度（faithfulness）、上下文精确率/召回率，但要记得这些分本身就是 LLM 裁判分，跨版本不可比；Agent 评测看工具调用成功率和多步轨迹，不能只看终局对错。
+
+**开源工具**（版本为 2026-10 前后核实，以官方文档为准）：
+
+**演示：在笔记本上跑一次标准评测（研究复现）**
+
+- 依赖：`pip install "lm_eval[hf]"`（EleutherAI lm-evaluation-harness，2026-10 约 0.4.13；0.4.10 起改为 `run/ls/validate` 子命令、torch 改为 extras 安装）
+- 硬件：任意 CPU，装好后推理约 2 分钟（首次安装会下载 torch，数百 MB，不计入耗时）
+- 预期输出：终端打印每个任务的 acc / acc_norm / stderr 三列（具体数值随版本浮动）
+
+```bash
+lm_eval run --model hf \
+  --model_args pretrained=EleutherAI/pythia-160m \
+  --tasks arc_easy --num_fewshot 0 --limit 100
+```
+
+这条命令能让你亲眼看到第 1、2 节的概念落地：同一输出同时报 acc 与 acc_norm，每个分后面挂着 stderr。全量 MMLU 在 7B 上需要 GPU 与小时级时间，只作导览：`--tasks mmlu --num_fewshot 5`；跨版本比较历史分数前先看该版本 changelog（v0.4 系列多次改动 few-shot 格式化，会改分）。
+
+其他工具按用途选：**OpenCompass**（上海 AI Lab 司南，配置驱动、题库最全，`python run.py configs/eval_demo.py`，中文生态首选）；**Inspect AI**（UK AISI，Agent/多轮评测，`inspect eval myeval.py --model openai/gpt-4o`，2026 年最活跃）；**promptfoo**（YAML 声明式多模型/prompt 对比与红队，`npx promptfoo@latest eval`，注意要求 Node ≥22.22，旧环境先用 nvm 升级）；RAG 指标用 RAGAS（0.4.x：Faithfulness、Response Relevancy、Context Precision/Recall、FactualCorrectness），业务回归测试可用 DeepEval。HuggingFace 的 LightEval 已支持以 inspect-ai 为后端，轻量场景可选。
+
+**成本**要分两档算：短答案判分一轮每千题通常几到几十美元（输入为主，prompt cache 还能再省）；Agent 轨迹单条 2–10 万 token，千题可能到数百至数千美元，实践中用「小裁判初筛 + 大裁判复核」分层。裁判模型一升级就会基线漂移，判分结果要落库、分歧样本每周抽检。最后，选型永远回到三角：质量分之外必须算每百万 token 价格、TTFT 与输出速度（推理模型还要算隐藏思考 token）、P50/P95 延迟——这部分和[《算力是什么》](/blog/算力是什么-从一张h100到万卡集群/)、[《PD 分离》](/blog/pd分离-把prefill和decode拆开部署/)讲的成本结构直接相关。
+
+## 7. 收束：看到一个新分数，按什么顺序问
+
+1. 这是什么**基准、哪一版题集**？（公开/私有、是否已饱和）
+2. **怎么判分**？likelihood、精确匹配、执行还是模型裁判？裁判是哪家、哪个版本？
+3. **什么脚手架与采样**？几 shot、有没有 CoT、开没开工具、pass@k 还是 pass^k、什么推理档位？
+4. **题量多少**？置信区间/对战票数够不够，差距是几个误差棒？
+5. **谁测的**？有没有污染声明和第三方复测，是模型分还是系统分？
+6. 同档模型的**价格与延迟**是多少？
+
+三句话收尾：**分数是测量协议的产物，不是模型的身高；没有银弹基准，只有多范式交叉验证；评测集会被博弈，所以评测本身必须持续换题。**
+
+## 8. 自测（答案点击展开）
+
+<Expand title="Q1：100 道题考成 51 比 49，能宣布更强吗？两个模型分差的容差为什么不是 ±10pp？">
+
+不能。单模型 95% 置信区间就约 ±10pp（Wilson 半宽 9.6）；若两模型考不同题集，分差标准差是 √2 倍约 ±14pp。只有同一套卷配对比较、看不一致对，才可能用几百题分辨小差距。
+
+</Expand>
+
+<Expand title="Q2：MMLU 的 likelihood 判分和「生成字母再判对错」为什么不能直接比？">
+
+前者只比较选项 token 的对数概率，确定性、无采样；后者要先生成文本再正则匹配，受采样与解析影响。两者测的能力不同、系统误差方向也不同（CoT 解析失败时生成式甚至可能更低）。
+
+</Expand>
+
+<Expand title="Q3：pass@10 和 pass^4 各在鼓励什么？">
+
+pass@10 衡量能力上限（十次内成一次即可，$1-0.5^{10}\approx99.9\%$），论文用无偏估计 $1-\binom{n-c}{k}/\binom{n}{k}$；pass^4 衡量可靠性（四次全对，$0.5^4\approx6.25\%$）。Agent 采购关心后者。
+
+</Expand>
+
+<Expand title="Q4：200 题里两模型不一致对是 15:5，谁更强、可信吗？">
+
+不一致对 $m=20$，经验判据 $|15-5|=10>2\sqrt{20}\approx9$，刚好算信号；精确 McNemar 双侧约 p=0.041。结论：勉强显著，建议加题复测。
+
+</Expand>
+
+<Expand title="Q5：裁判一换位置就翻票是什么偏差？它偏袒自家模型呢？各给一条缓解措施。">
+
+前者是位置偏差（缓解：随机换位、双向聚合）；后者是自我偏好（缓解：匿名化 + 非同源裁判，并以人工标注校准一致率）。
+
+</Expand>
+
+<Expand title="Q6：某模型 SWE-bench Verified 70%，读这个分必须连同什么信息？">
+
+是否 Verified 500 题子集、agent scaffold 与版本（SWE-agent/OpenHands/官方工具）、重试次数与 pass 口径、提交日期与置信区间（±约 4.4pp）；它是「模型+脚手架」的系统分，且与第三方复测可能有出入。
+
+</Expand>
+
+<Expand title="Q7：一个模型 MMLU 95 但 HLE 只有个位数，给出至少三种解释。">
+
+① MMLU 已饱和、95 分拉不开差距；② MMLU 题或近似题进过训练语料（污染/应试）；③ HLE 考的是博士级真实推理与多步研究能力，选择题高分不外推。结论：分数不能跨基准外推。
+
+</Expand>
+
+<Expand title="Q8（加分）：de-identified held-out 和公开基准哪个更可信？Arena 差 100 分意味着多少胜率，新模型头几天的分为什么不能信？">
+
+held-out 题防污染但由厂商内部施测、无外部监考；公开基准可独立复核但易被污染——两者各有盲区，需要独立复测互补。Arena 差 100 分≈64% 胜率（Bradley-Terry）；新模型票数不足时 bootstrap 置信区间很宽，±9 内的名次变化都是噪声。
+
+</Expand>
+
+## 参考
+
+**基准论文**
+
+1. MMLU：[arXiv:2009.03300](https://arxiv.org/abs/2009.03300)｜MMLU-Pro：[arXiv:2406.01574](https://arxiv.org/abs/2406.01574)
+2. C-Eval：[arXiv:2305.08322](https://arxiv.org/abs/2305.08322)｜CMMLU：[arXiv:2306.09212](https://arxiv.org/abs/2306.09212)｜AGIEval：[arXiv:2304.06364](https://arxiv.org/abs/2304.06364)｜TruthfulQA：[arXiv:2109.07958](https://arxiv.org/abs/2109.07958)
+3. GSM8K：[arXiv:2110.14168](https://arxiv.org/abs/2110.14168)｜MATH：[arXiv:2103.03874](https://arxiv.org/abs/2103.03874)｜GPQA：[arXiv:2311.12022](https://arxiv.org/abs/2311.12022)
+4. HLE：[arXiv:2501.14249](https://arxiv.org/abs/2501.14249)｜BeyondAIME/Seed-Thinking：[arXiv:2504.13914](https://arxiv.org/abs/2504.13914)
+5. HumanEval（pass@k）：[arXiv:2107.03374](https://arxiv.org/abs/2107.03374)｜LiveCodeBench：[arXiv:2403.07904](https://arxiv.org/abs/2403.07904)｜SWE-bench：[arXiv:2310.06770](https://arxiv.org/abs/2310.06770)
+6. RULER：[arXiv:2404.06654](https://arxiv.org/abs/2404.06654)｜LongBench：[arXiv:2308.14508](https://arxiv.org/abs/2308.14508)
+7. WebArena：[arXiv:2307.13854](https://arxiv.org/abs/2307.13854)｜τ-bench：[arXiv:2406.12045](https://arxiv.org/abs/2406.12045)｜GAIA：[arXiv:2311.12983](https://arxiv.org/abs/2311.12983)｜LiveBench：[arXiv:2406.19314](https://arxiv.org/abs/2406.19314)
+8. 污染检测 Data Contamination Quiz：[arXiv:2311.06233](https://arxiv.org/abs/2311.06233)
+
+**裁判与榜单研究**
+
+9. MT-Bench / Chatbot Arena：[arXiv:2306.05685](https://arxiv.org/abs/2306.05685)｜FairEval（位置偏差与换位）：[arXiv:2305.17926](https://arxiv.org/abs/2305.17926)
+10. 自我偏好：[arXiv:2404.13076](https://arxiv.org/abs/2404.13076)｜同源偏好：[arXiv:2502.01534](https://arxiv.org/abs/2502.01534)
+11. The Leaderboard Illusion：[arXiv:2504.20879](https://arxiv.org/abs/2504.20879)；Arena 官方回应与 changelog：arena.ai
+
+**官方分数来源（表 1 原始链接）**
+
+12. [GPT-4 Technical Report（arXiv:2303.08774）](https://arxiv.org/abs/2303.08774)、[GPT-4o](https://openai.com/index/hello-gpt-4o/)、[o1](https://openai.com/index/learning-to-reason-with-llms/)、[GPT-4.1](https://openai.com/index/gpt-4-1/)、[o3](https://openai.com/index/introducing-o3-and-o4-mini/)、[GPT-5](https://openai.com/index/introducing-gpt-5/)
+13. [Claude 3 家族](https://www.anthropic.com/news/claude-3-family)、[Claude 3.5 Sonnet](https://www.anthropic.com/news/claude-3-5-sonnet)、[Claude 3.7](https://www.anthropic.com/news/claude-3-7-sonnet)、[Claude 4](https://www.anthropic.com/news/claude-4)、[Opus 4.1](https://www.anthropic.com/news/claude-opus-4-1)、[Sonnet 4.5](https://www.anthropic.com/news/claude-sonnet-4-5)
+14. HLE-Diamond 官方博客：lastexam.ai；榜单：arena.ai、artificialanalysis.ai、rank.opencompass.org.cn
+
+**工具**
+
+15. [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness)｜[OpenCompass](https://github.com/open-compass/opencompass)｜[Inspect AI](https://github.com/UKGovernmentBEIS/inspect_ai)｜[promptfoo](https://github.com/promptfoo/promptfoo)｜[RAGAS](https://github.com/explodinggradients/ragas)｜[DeepEval](https://github.com/confident-ai/deepeval)｜[LightEval](https://github.com/huggingface/lighteval)
+
+**站内延伸**
+
+16. [《算力是什么：从一张 H100 到万卡集群》](/blog/算力是什么-从一张h100到万卡集群/)——速度、利用率与成本三角
+17. [《PD 分离：把 Prefill 和 Decode 拆到不同的卡上跑》](/blog/pd分离-把prefill和decode拆开部署/)——TTFT 与生成延迟的部署来源
+18. [《模型剪枝：从「权重置零」到「真的变快」》](/blog/模型剪枝-从权重置零到真的变快/)——pass@k/pass^k 之外，可靠性与压缩的姊妹篇

@@ -1,0 +1,24 @@
+---
+// 榜单可信度阶梯
+---
+
+<figure>
+  <svg viewBox="0 0 640 256" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">四类榜单的可信度阶梯</text>
+
+      {[
+        {y:44,  c:"#0f9d68", fill:"#e4f5ec", t:"匿名偏好对战（Chatbot Arena）", d:"人类匿名投票 · 全局 BT+置信区间 · 抗应试；偏好≠事实正确"},
+        {y:94,  c:"#0085a1", fill:"#d9eef3", t:"独立机构标准化复测（Artificial Analysis 等）", d:"第三方同配置重跑 · 并列价格/速度；复合分含估算项"},
+        {y:144, c:"#b07a1f", fill:"#fdf0e0", t:"平台提交跑分（OpenCompass / SuperCLUE）", d:"官方闭源集与公开学术集分榜 · 配置随 API 漂移"},
+        {y:194, c:"#b14a4a", fill:"#fbe3e3", t:"厂商技术报告自测", d:"内部 scaffold/私有题集 · 信息多但无外部监考"},
+      ].map((r,i)=>(
+        <g>
+          <rect x={40+i*22} y={r.y} width={520-i*44} height="42" rx="8" fill={r.fill} stroke={r.c} stroke-width="1.4"/>
+          <text x={56+i*22} y={r.y+17} font-size="10.5" font-weight="bold" fill={r.c}>{r.t}</text>
+          <text x={56+i*22} y={r.y+33} font-size="8.3" fill="#475569">{r.d}</text>
+        </g>
+      ))}
+    </g>
+  </svg>
+</figure>
