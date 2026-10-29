@@ -1,0 +1,128 @@
+---
+title: "vLLM 调度 1：启动时，KV Cache 的块从哪来"
+date: 2026-09-23
+author: DoraAiDreamer
+category: 大模型
+tags: ["vLLM","KV Cache","调度"]
+---
+
+import Expand from "../../components/Expand.astro";
+import Vllm1RecFig1 from "../../components/Vllm1RecFig1.astro";
+import Vllm1RecFig2 from "../../components/Vllm1RecFig2.astro";
+
+显存探测、profile run 与 num_gpu_blocks——引擎怎么在发车前知道自己有多少块
+
+源码版本：**vLLM 0.21.0**（2026-05）。本系列锁定该版本，源码链接指向 v0.21.0 tag。
+
+启动一个 vLLM 服务时，日志里总会打出这样一行：
+
+```
+# GPU blocks: 3275, # CPU blocks: 0
+Maximum concurrency for 8,192 tokens per request: 6.40x
+```
+
+这行数字回答了一个关键问题：**这张卡一共能拿出多少个块给 KV Cache？** 块的数量直接决定引擎能同时服务几个请求、每个请求能有多长。本篇就讲这个数是怎么算出来的。
+
+先给一个 30 秒的全局预告，整个引擎每一步都在重复三件事：**schedule（点名这一步算谁）→ execute（跑一次前向）→ update（记账）**；而在第一次循环开始之前，引擎必须先完成本篇讲的准备工作——量显存、分块。
+
+## 1. 80GB 显存先被切成几块
+
+vLLM 启动时不会独占整张卡，它先回答一个问题：**在我申请的显存额度里，扣掉「非 KV」的开销后，还剩多少字节能给 KV？**
+
+申请额度由参数 `gpu_memory_utilization` 决定，v0.21 默认 **0.92**（早期版本曾为 0.9）：引擎申请的字节 = 显存总量 × 0.92。剩下的 8% 留给同卡其他进程和框架开销。
+
+<Vllm1RecFig1 />
+
+*图 1：申请额度先扣权重、峰值激活、CUDA graph，余数才是 KV 区。分区比例为示意。*
+
+注意图 1 的顺序：**权重在启动时就已加载完毕**（不随请求变化），而激活开销必须靠下面讲的 profile run 实测。
+
+## 2. profile run：用一次假前向量峰值
+
+激活显存怎么知道要用多少？vLLM 的做法是跑一次**试探性前向**（gpu_worker.py `determine_available_memory`，机制详解见 [Worker 注解 §1.3](/inference/view/?src=core/04_worker_model_runner.md)）：构造一个”最差情况”的假输入——长度等于 `max_num_batched_tokens`（单次允许的最大 token 数），把模型完整跑一遍，记录这期间 PyTorch 向显存申请字节的**峰值**：
+
+```
+# vllm/v1/worker/gpu_worker.py（节选，0.21.0）
+with memory_profiling(self.init_snapshot,
+                      weights_memory=int(self.model_runner.model_memory_usage)):
+    self.model_runner.profile_run()            # 假前向，跑到最大 token 数
+    profile_torch_peak = torch.accelerator.memory_stats(
+        self.device).get("allocated_bytes.all.peak", 0)
+```
+
+为什么按最大 token 数测？因为 KV 要保证**任何合法批次都不撑爆显存**——按峰值预留，真实请求只会更省。
+
+如果启用了 CUDA graph（v0.21 默认的加速机制，见第 6 篇），还要再估一块 graph 专用内存：
+
+```
+cudagraph_memory_estimate = 0
+if current_platform.is_cuda() and cudagraph_mode != CUDAGraphMode.NONE:
+    cudagraph_memory_estimate = self.model_runner.profile_cudagraph_memory()
+```
+
+**一个重要的版本变化**：CUDA graph 内存估算自 **v0.21 起默认计入** profile（`envs.py:266` `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS = True`）。这意味着从 v0.20 升级到 v0.21、配置一字不改，`num_gpu_blocks` 会变少——这部分显存被提前划给了 graph。升级后若发现并发容量下降，原因就在这里。
+
+## 3. 算出 KV 字节，再换算成块
+
+三段开销量完，KV 能用的字节就是一次减法（gpu_worker.py:444）：
+
+```
+self.available_kv_cache_memory_bytes = (
+    self.requested_memory                 # 0.92 × 显存总量
+    - profile_result.non_kv_cache_memory  # 权重 + 峰值激活
+    - cudagraph_memory_estimate_applied   # CUDA graph 估算
+)
+```
+
+得到字节数后，还要回答”一个块占多少字节”，才能换算成块数。vLLM 把这块计算放在 kv_cache_utils.py 的 `get_num_blocks`（更细的源码注解见 [调度与 KV 注解](/inference/view/?src=core/02_scheduler_kv_cache.md)）：
+
+```
+# available_memory = KV 可用字节；page_size = 一块（跨层）字节
+num_blocks = int(available_memory // page_size // num_layers)
+```
+
+即：
+
+为什么要除以层数？因为一个逻辑块要在**每一层**都存 K/V——块号 $b$ 在第 1 层、第 2 层、……都占一个同位置的切片。物理块张量在 `initialize_from_config` 时一次性分配，此后所有请求共用。
+
+<Vllm1RecFig2 />
+
+*图 2：每层持有 K、V 两块连续区域，一个块是其中位置对齐的定长切片；形状由 KVCacheSpec 决定（篇 3、篇 7 展开）。*
+
+## 4. 两个容易忽略的细节
+
+- **块 0 被永久征用**。BlockPool 初始化时，物理块 0 被留作 `null_block`（block_pool.py:173-177），充当占位符、不参与引用计数。所以日志里打印 3275 块，真正能分给请求的是 3274 块。
+- **多卡时块数跨 worker 取最小**。张量并行下每张卡单独探测，各卡算出的块数可能不同；vLLM 统一取最小值，并把各卡块张量同比缩小（kv_cache_utils.py:2038-2048），保证同一个块号在每张卡上都有效。
+
+## 5. 小结
+
+引擎在接收第一个请求之前，就用”**申请额度 → profile 量峰值 → 减法得 KV 字节 → 除以每块字节和层数**”确定了块总数。这也回答了一个常见疑问：**为什么 vLLM 不会”跑到一半显存才撑爆”——块池大小在启动时已经按最差情况算死，调度器之后严格按块数工作。**
+
+如果探测后发现 KV 可用字节连一个块都放不下，引擎会在**启动阶段直接报错**（“no memory for KV cache”），不会带病启动。
+
+下一篇：**[vLLM 调度 2：一个 step 里，调度器按什么顺序、让谁推进](/blog/vllm-调度2-一个step里让谁推进)**——有了块之后，每一步怎么点名。
+
+## 自测（答案点击展开）
+
+**1.** 启动日志里 `# GPU blocks` 这个数，按什么步骤算出来？为什么要先跑 profile run？
+
+**2.（数字题）** 已知某卡申请额度、权重、峰值激活、CUDA graph 估算四个数，KV 可用字节怎么算？为什么 num_blocks 还要再除以层数？
+
+**3.** 从 v0.20 升级到 v0.21、配置不改，并发容量为什么可能下降？
+
+**4.** 日志打印 3275 个块，为什么实际能分给请求的少一个？多卡时这个数按什么规则统一？
+
+<Expand title="▸参考答案">
+
+1. 步骤：显存总量 × gpu_memory_utilization（0.92）得申请额度 → 跑 profile run（最大 token 数的假前向）实测峰值激活、并估 CUDA graph → 申请额度减去权重、峰值激活、graph 得 KV 可用字节 → 除以每块字节与层数得块数。先跑 profile 是因为激活显存必须按”最差批次”实测，才能保证任何合法请求都不 OOM。
+2. KV 可用字节 = 申请额度 − 权重 − 峰值激活 − CUDA graph 估算。除以层数是因为每个逻辑块要在每一层都存一份 K/V 切片，一块（跨层）字节 = 单层块字节 × 层数。
+3. v0.21 起 CUDA graph 内存估算默认计入 profile（envs.py:266），这部分显存被提前划走，KV 余数变少，所以 num_blocks 下降。
+4. 块 0 被永久征用为 null_block（占位、不计引用），故可用 3274；多卡时各 worker 块数取最小值、张量同比缩小，保证块号跨卡一致。
+
+</Expand>
+
+## 参考资料
+
+- vLLM 0.21.0 源码：`vllm/v1/worker/gpu_worker.py`（`determine_available_memory`）、`vllm/v1/worker/gpu_model_runner.py`（`profile_run`）、`vllm/v1/core/kv_cache_utils.py`（`get_num_blocks`、跨 rank 取最小）、`vllm/v1/core/block_pool.py`（`null_block`）——[GitHub v0.21.0 tag](https://github.com/vllm-project/vllm/tree/v0.21.0)
+- vLLM 0.21.0 配置：`vllm/config/cache.py:66`（gpu_memory_utilization=0.92）、`vllm/envs.py:266`
+- 前置科普：[一次推理的旅程：Prefill 与 Decode](/blog/一次推理的旅程-Prefill与Decode)
