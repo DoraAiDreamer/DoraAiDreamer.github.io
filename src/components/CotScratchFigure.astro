@@ -1,13 +1,13 @@
 ---
-// 图2：自回归草稿纸——每个思维 token 都是一次完整解码步：
-// 模型生成 → 写入上下文（KV）→ 下一步能读到自己刚写的内容
+// 图2：思维 token 的机制——每个 token 都是一次完整前向：
+// 模型生成 → 写入 KV Cache → 下一步被注意力读取
 ---
 
 <figure>
   <svg viewBox="0 0 640 262" width="100%" xmlns="http://www.w3.org/2000/svg">
     <defs><marker id="cot2-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
     <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
-      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">思维链 = 自言自语，而且下一步能听到自己刚说的话</text>
+      <text x="320" y="24" font-size="13.5" font-weight="bold" fill="#0c5f74" text-anchor="middle">思维 token 由一次完整前向生成，写入 KV Cache 后在下一步被读取</text>
 
       {/* 上下文纸条（逐行增长） */}
       <text x="20" y="62" font-size="11.5" fill="#64748b">上下文（KV Cache）：</text>

@@ -1,0 +1,117 @@
+---
+// 图2（全文锚点图）：五层能力栈 + 两条纵贯线
+// L0 地基；请求真实穿过 L1–L3；L4 是决策产出层（绿色，不被穿过）
+---
+
+<figure>
+  <svg viewBox="0 0 640 396" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="cmap-arrow" markerWidth="8" markerHeight="8" refX="5" refY="4" orient="auto">
+        <path d="M0,0 L8,4 L0,8 Z" fill="#64748b"/>
+      </marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">AI Ops 五层能力图谱：地 · 卡 · 引擎 · 平台 · 账</text>
+
+      {/* 两条纵贯线（扶手） */}
+      <rect x="20" y="56" width="34" height="262" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="37" y="187" font-size="11.5" font-weight="bold" fill="#b97a1f" text-anchor="middle"
+            transform="rotate(-90 37 187)">编码与自动化</text>
+      <rect x="586" y="56" width="34" height="262" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="603" y="187" font-size="11.5" font-weight="bold" fill="#b97a1f" text-anchor="middle"
+            transform="rotate(90 603 187)">可靠与安全</text>
+
+      {/* 请求穿过箭头 L1–L3（左缘） */}
+      <line x1="70" y1="312" x2="70" y2="128" stroke="#64748b" stroke-width="1.6" marker-end="url(#cmap-arrow)"/>
+      <text x="64" y="226" font-size="9" fill="#64748b" text-anchor="middle"
+            transform="rotate(-90 64 226)">请求真实穿过 L1–L3</text>
+
+      {/* 五层：x=84..570（宽 486），五层高 52，y=64..324 */}
+      {/* L4 账（决策产出层，绿） */}
+      <rect x="84" y="64" width="486" height="52" rx="8" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="102" y="88" font-size="13" font-weight="bold" fill="#0a7a50">L4 · 账</text>
+      <text x="102" y="106" font-size="10" fill="#0a7a50">性能与成本（决策产出层）</text>
+      {[
+        { x: 232, y: 74, t: "延迟/吞吐分位口径" },
+        { x: 386, y: 74, t: "压测找拐点" },
+        { x: 232, y: 96, t: "容量规划" },
+        { x: 386, y: 96, t: "每百万 token 成本" },
+      ].map((c) => (
+        <g>
+          <rect x={c.x} y={c.y} width="142" height="18" rx="4" fill="#f4fbF7" stroke="#7fc9a8"/>
+          <text x={c.x + 71} y={c.y + 13} font-size="9.5" fill="#0a7a50" text-anchor="middle">{c.t}</text>
+        </g>
+      ))}
+
+      {/* L3 平台 */}
+      <rect x="84" y="116" width="486" height="52" rx="8" fill="#e8f4f7" stroke="#0085a1"/>
+      <text x="102" y="140" font-size="13" font-weight="bold" fill="#0c5f74">L3 · 平台</text>
+      <text x="102" y="158" font-size="10" fill="#0c5f74">平台工程（引擎之外）</text>
+      {[
+        { x: 232, y: 126, t: "权重分发与冷启动" },
+        { x: 386, y: 126, t: "模型网关与多租户" },
+        { x: 232, y: 148, t: "弹性伸缩与发布" },
+        { x: 386, y: 148, t: "高可用与混部" },
+      ].map((c) => (
+        <g>
+          <rect x={c.x} y={c.y} width="142" height="18" rx="4" fill="#f7fbfd" stroke="#8fc4d3"/>
+          <text x={c.x + 71} y={c.y + 13} font-size="9.5" fill="#0c5f74" text-anchor="middle">{c.t}</text>
+        </g>
+      ))}
+
+      {/* L2 引擎（核心层，主蓝最重） */}
+      <rect x="84" y="168" width="486" height="52" rx="8" fill="#d9eef3" stroke="#0085a1" stroke-width="1.6"/>
+      <text x="102" y="192" font-size="13" font-weight="bold" fill="#0c5f74">L2 · 引擎</text>
+      <text x="102" y="210" font-size="10" fill="#0c5f74">推理引擎（一个实例内部）</text>
+      {[
+        { x: 232, y: 178, t: "显存三笔账 · 两阶段" },
+        { x: 386, y: 178, t: "调度 · KV 缓存" },
+        { x: 232, y: 200, t: "并行 · 量化" },
+        { x: 386, y: 200, t: "投机解码 · PD 分离" },
+      ].map((c) => (
+        <g>
+          <rect x={c.x} y={c.y} width="142" height="18" rx="4" fill="#f2f8fa" stroke="#7fb8c6"/>
+          <text x={c.x + 71} y={c.y + 13} font-size="9.5" fill="#0c5f74" text-anchor="middle">{c.t}</text>
+        </g>
+      ))}
+
+      {/* L1 卡 */}
+      <rect x="84" y="220" width="486" height="52" rx="8" fill="#e8f4f7" stroke="#0085a1"/>
+      <text x="102" y="244" font-size="13" font-weight="bold" fill="#0c5f74">L1 · 卡</text>
+      <text x="102" y="262" font-size="10" fill="#0c5f74">硬件与资源</text>
+      {[
+        { x: 232, y: 230, t: "SM · HBM · 显存带宽" },
+        { x: 386, y: 230, t: "NVLink · PCIe · RDMA" },
+        { x: 232, y: 252, t: "DCGM 指标读法" },
+        { x: 386, y: 252, t: "MIG · MPS · GPU 调度" },
+      ].map((c) => (
+        <g>
+          <rect x={c.x} y={c.y} width="142" height="18" rx="4" fill="#f7fbfd" stroke="#8fc4d3"/>
+          <text x={c.x + 71} y={c.y + 13} font-size="9.5" fill="#0c5f74" text-anchor="middle">{c.t}</text>
+        </g>
+      ))}
+
+      {/* L0 地（地基，中性灰） */}
+      <rect x="84" y="272" width="486" height="52" rx="8" fill="#eef2f5" stroke="#94a3b8"/>
+      <text x="102" y="296" font-size="13" font-weight="bold" fill="#475569">L0 · 地</text>
+      <text x="102" y="314" font-size="10" fill="#475569">运维底座（地基，不是一楼）</text>
+      {[
+        { x: 232, y: 282, t: "Linux · 网络" },
+        { x: 386, y: 282, t: "容器 · Kubernetes" },
+        { x: 232, y: 304, t: "CI/CD · 可观测三件套" },
+        { x: 386, y: 304, t: "SLO · 变更 · 复盘" },
+      ].map((c) => (
+        <g>
+          <rect x={c.x} y={c.y} width="142" height="18" rx="4" fill="#f9fafb" stroke="#cbd5e1"/>
+          <text x={c.x + 71} y={c.y + 13} font-size="9.5" fill="#475569" text-anchor="middle">{c.t}</text>
+        </g>
+      ))}
+
+      {/* 三对层间边界判定问句 */}
+      <line x1="84" y1="338" x2="570" y2="338" stroke="#e2e8f0"/>
+      <text x="320" y="356" font-size="9.5" fill="#64748b" text-anchor="middle">归档新现象的三个判定问句：</text>
+      <text x="320" y="371" font-size="9.5" fill="#64748b" text-anchor="middle">L1/L2：这是硬件给的物理约束，还是软件对约束的利用？</text>
+      <text x="320" y="385" font-size="9.5" fill="#64748b" text-anchor="middle">L2/L3：机制在引擎进程里还是进程之外？　L3/L4：是在修系统，还是读系统做决策？</text>
+    </g>
+  </svg>
+</figure>

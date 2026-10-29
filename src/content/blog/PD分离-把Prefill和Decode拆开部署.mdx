@@ -1,25 +1,29 @@
 ---
 title: "PD 分离：把 Prefill 和 Decode 拆到不同的卡上跑"
+subtitle: "为什么高 QPS 集群要把两阶段物理分家，以及部署时多卡通信的那些坑"
 date: 2026-09-16
-author: DoraAiDreamer
-category: 大模型
-tags: ["推理加速","PD分离","vLLM"]
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "vLLM"
+  - "PD分离"
+  - "KV Cache"
+  - "RDMA"
+  - "推理部署"
 ---
 
 import Expand from "../../components/Expand.astro";
-import PdWaitFigure from "../../components/PdWaitFigure.astro";
-import PdHandoverFigure from "../../components/PdHandoverFigure.astro";
-import PdTriangleFigure from "../../components/PdTriangleFigure.astro";
-import PdRooflineFigure from "../../components/PdRooflineFigure.astro";
-import PdDeployFigure from "../../components/PdDeployFigure.astro";
-
-为什么高 QPS 集群要把两阶段物理分家，以及部署时多卡通信的那些坑
+import Pd2InterfereFigure from "../../components/Pd2InterfereFigure.astro";
+import Pd2ArchitectureFigure from "../../components/Pd2ArchitectureFigure.astro";
+import Pd2HandoverFigure from "../../components/Pd2HandoverFigure.astro";
+import Pd2PipelineFigure from "../../components/Pd2PipelineFigure.astro";
+import Pd2TopologyFigure from "../../components/Pd2TopologyFigure.astro";
 
 流式输出时有两个细节，不知道你有没有注意过。
 
 一是高峰期的「哆嗦」：明明自己只问了一句话，生成速度却忽快忽慢——同机房某个用户刚甩进来一份两万字的长文档，接下来半秒里，所有人的蹦字都跟着顿了一下。二是某些大规模集群里，首字出来的时机和单卡时不太一样：停顿有时发生在第二个字附近，而不是开头转圈时。
 
-这两个现象都指向同一项部署架构：**PD 分离**——把 Prefill（读 prompt）和 Decode（逐词生成）从「同一张卡混着跑」改成「两个专用卡池分开跑」。上一篇[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)讲清了两阶段是两种完全不同的计算；这篇回答紧接着的两个问题：**为什么要分家，以及分家时 GB 级的状态搬家，怎么才能不被用户察觉。**
+这两个现象都指向同一项部署架构：**PD 分离**——把 Prefill（读 prompt）和 Decode（逐词生成）从「同一张卡混着跑」改成「两个专用卡池分开跑」。上一篇[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode/)讲清了两阶段是两种完全不同的计算；这篇回答紧接着的两个问题：**为什么要分家，以及分家时 GB 级的状态搬家，怎么才能不被用户察觉。**
 
 先用两笔可以自己算的账，把问题摆上桌。
 
@@ -31,25 +35,25 @@ import PdDeployFigure from "../../components/PdDeployFigure.astro";
 
 ## 1. 先复习：混跑时为什么必然互相打架
 
-[《旅程》第 7 节](/blog/一次推理的旅程-prefill与decode)给过 PD 分家的四步因果：干扰、配置耦合、SLO 独立配给、硬件分化。这里不重复推导，只回答一个更尖锐的问题：**vLLM 已经默认开启 chunked prefill，长 prompt 会被切碎再插进 Decode 流，为什么还不够？**
+[《旅程》第 7 节](/blog/一次推理的旅程-prefill与decode/)给过 PD 分家的四步因果：干扰、配置耦合、SLO 独立配给、硬件分化。这里不重复推导，只回答一个更尖锐的问题：**vLLM 已经默认开启 chunked prefill，长 prompt 会被切碎再插进 Decode 流，为什么还不够？**
 
 先给一个直觉。Decode 像每 20ms 要一次的稳定心跳，长 Prefill 是一次几百毫秒的深呼吸——它和你的心跳**共用同一个节拍器**（同卡混批的 iteration 时钟）。chunked prefill 能做的，只是让这次深呼吸浅一点、分几口气喘：它把大块 Prefill 切成固定预算的小块，逐拍插入。但两件事改变不了：
 
-- **切块切不到零**。账 1 算过，即使切到 2048，这一拍的计算量仍比纯 Decode 拍重一个数量级，被插队那拍所有人的 ITL 照样鼓包；
-- **旋钮有两头**。块预算调小，Decode 节拍平稳了，但长 prompt 要被切更多次、首字延迟（TTFT）线性变差。它是一个 TTFT↔ITL 的折中旋钮，不是解法。
+1. **切块切不到零**。账 1 算过，即使切到 2048，这一拍的计算量仍比纯 Decode 拍重一个数量级，被插队那拍所有人的 ITL 照样鼓包；
+2. **旋钮有两头**。块预算调小，Decode 节拍平稳了，但长 prompt 要被切更多次、首字延迟（TTFT）线性变差。它是一个 TTFT↔ITL 的折中旋钮，不是解法。
 
 vLLM 官方文档讲得很直白：chunked prefill 也能压住尾延迟，「但实践中很难选对正确的 chunk 大小，PD 分离是控制 tail ITL 可靠得多的方式」。要让深呼吸和心跳彻底互不干扰，只剩一个办法：**不在同一个节拍器上——两阶段物理拆开。**
 
-<PdWaitFigure />
+<Pd2InterfereFigure />
 
 *图 1：上——一个 Prefill 切块插进混批，同一拍所有请求的词间延迟一起鼓包；下——PD 分离后 P 池干重活、D 池保持均匀心跳。*
 
-<Expand title="分家能治四个病的论文证据（数字均带实验条件）">
+<Expand title="折叠：分家能治四个病的论文证据（数字均带实验条件）">
 
 四步因果的量化证据来自两篇 2024 年的系统论文：
 
-1. **干扰**：[SplitWise](https://arxiv.org/abs/2311.18677)（ISCA’24，Azure，BLOOM-176B/Llama-70B 画像）发现，对话负载 60–70% 的时间里，批中只有不超过 20 个 active token——Decode 凑批本来就薄，一个重 Prefill 插进来雪上加霜；
-2. **配置耦合**：[DistServe](https://arxiv.org/abs/2401.09670)（OSDI’24）指出，Prefill 算力受限，低到达率下用张量并行（intra-op）缩短执行时间更优，高到达率反而多副本（inter-op）更优；Decode 要大 batch 加多副本（该文图 5：大 batch 下张量并行边际递减、多副本近乎线性扩展）。混跑时只能折中，折中等于过度供给；
+1. **干扰**：[SplitWise](https://arxiv.org/abs/2311.18677)（ISCA'24，Azure，BLOOM-176B/Llama-70B 画像）发现，对话负载 60–70% 的时间里，批中只有不超过 20 个 active token——Decode 凑批本来就薄，一个重 Prefill 插进来雪上加霜；
+2. **配置耦合**：[DistServe](https://arxiv.org/abs/2401.09670)（OSDI'24）指出，Prefill 算力受限，低到达率下用张量并行（intra-op）缩短执行时间更优，高到达率反而多副本（inter-op）更优；Decode 要大 batch 加多副本（该文图 5：大 batch 下张量并行边际递减、多副本近乎线性扩展）。混跑时只能折中，折中等于过度供给；
 3. **SLO 独立配给**：分家后优化的是 goodput——同时满足 TTFT 与 TPOT 两个延迟 SLO 的请求速率。DistServe 在 OPT-13B/ShareGPT（TTFT SLO 0.25s、TPOT SLO 0.1s、90% 达标）等设置下，最高可服务 7.4 倍请求速率，或支撑 12.6 倍更紧的 SLO（对 DeepSpeed-MII 为 1.6–7.4 倍）；
 4. **硬件分化**：SplitWise 用 H100 跑 Prefill、A100 跑 Decode。论文 Table I 的列示值：实测 BF16 算力 66.9 vs 19.5 TFLOPs（3.43 倍）、HBM 带宽 3352 vs 2039GB/s（1.64 倍）、Azure 机时价 38 vs 17.6 美元（2.16 倍）。Decode 对算力不敏感、对带宽敏感，用旧卡更划算——注意这些是特定云 SKU 的数字，不能外推到任意卡型。
 
@@ -69,7 +73,7 @@ vLLM 官方文档讲得很直白：chunked prefill 也能压住尾延迟，「�
 
 请求路径上有个关键细节必须讲准：**vLLM 0.21 里存在两种接法，「用户看到的第一个字从哪个实例流出」的答案不一样。** 这也是阅读各种 PD 资料时最容易被绕晕的地方。
 
-|  | 接法 A：OpenAI 兼容代理（demo 形态） | 接法 B：原生 Tokens-IN/OUT |
+| | 接法 A：OpenAI 兼容代理（demo 形态） | 接法 B：原生 Tokens-IN/OUT |
 | --- | --- | --- |
 | 接口 | 标准 /v1/chat/completions 经代理转发 | 内置数据面 API /inference/v1/generate，供外部 router 编排 |
 | P 收到什么 | 原请求的副本，max_tokens 改成 1、非流式 | 输入 token ids，算出 KV 与首 token id |
@@ -79,13 +83,13 @@ vLLM 官方文档讲得很直白：chunked prefill 也能压住尾延迟，「�
 
 表后两句白话收口：第一，demo 借 P 的响应只为拿 KV 地址，P 顺手采出的那个字是被扔掉的副产品；第二，接法 A 下 D 是**重新采样**，温度大于 0 时它采出的首字可能与 P 本会采出的不同（temperature=0 才严格一致）——不要把「重采」理解成「同一个字」。SplitWise 论文里「唯一用户可见的是第二个 token、延迟增加 16.5%」的结论，描述的是接法 B 式设计。
 
-<PdHandoverFigure />
+<Pd2ArchitectureFigure />
 
 *图 2：请求文本与握手参数走前台（黑虚线），KV 状态走后厨 RDMA 专线（橙），逐词输出走 SSE（绿）——控制面和数据面是两条路。*
 
 另外记住两点版本事实：vLLM 0.21 的 disaggregated prefilling 文档页仍标注 **experimental**；且该页有一句容易被营销文省略的原话——**PD 分离不提升裸吞吐**，它提升的是延迟 SLO 内的有效吞吐（goodput）。
 
-<Expand title="demo 代理的成熟度，以及连接器的三个软件抽象">
+<Expand title="折叠：demo 代理的成熟度，以及连接器的三个软件抽象">
 
 OpenAI 兼容代理的参考实现位于 tests/ 与 examples/disaggregated_serving（后者头部注释自述，待内置 PDController 支持 XpYd 后会移除）：P、D 各自独立轮询（round-robin），没有负载感知、没有 P-D 亲和配对，只是测试夹具。生产环境要自研 router，或使用 NVIDIA Dynamo 这类编排框架。
 
@@ -99,19 +103,19 @@ OpenAI 兼容代理的参考实现位于 tests/ 与 examples/disaggregated_servi
 
 那么切配间递给灶台间的，到底是哪几样东西？
 
-- **n 行 KV 状态**：prompt 全部位置的 Key/Value，这是主货；
-- **第 1 个输出 token**：仅接法 B 显式回传；接法 A 由 D 重采；
-- **握手参数**：这些 KV 块在哪台机的哪些地址、用什么端口连上。
+1. **n 行 KV 状态**：prompt 全部位置的 Key/Value，这是主货；
+2. **第 1 个输出 token**：仅接法 B 显式回传；接法 A 由 D 重采；
+3. **握手参数**：这些 KV 块在哪台机的哪些地址、用什么端口连上。
 
 明确两样**不**搬的东西。一是 prompt 文本本身不算「搬运对象」：接法 A 虽然把原始请求又发了一次给 D，但那只是为了让 D 对齐位置和采样参数，prompt 的计算已被远程 KV 跳过。二是**模型权重绝对不传**——两个池在开机时就各自把权重完整常驻一份。DistServe 给过一个直观算例：175B 模型 FP16 权重 350GB，一台 8×80GB 节点总共 640GB，光 P+D 两份权重就放不下，这直接决定了大模型的 P、D 经常必须分属不同节点。
 
 非 MLA 模型里，KV 是按 KV 头切分到各 rank 的，所以传输严格成对：**P 的 rank i 只发给 D 的 rank i**，8 对管理员各寄各的卷。而 **MLA**（DeepSeek-V2/V3 类）正相反：KV 在各 rank 间是完整复制的，于是只发一份、冗余 rank 跳过（vLLM 0.21 兼容矩阵原文，且 D 端 TP 比 P 端大也行）。
 
-<PdTriangleFigure />
+<Pd2HandoverFigure />
 
 *图 3：橙色细线是 rank i → rank i 的 KV 通道；权重在两池各常驻一份，永不上路。*
 
-<Expand title="接头暗号与异构搭配（部署决策只需记住三条）">
+<Expand title="折叠：接头暗号与异构搭配（部署决策只需记住三条）">
 
 P、D 实例握手时要过兼容性 hash——像接头暗号：vLLM 与连接器版本、模型（结构、dtype、KV 头数、head_dim、层数）、attention backend、KV cache dtype 必须全对上，否则握手失败（可强制关闭检查，但自担风险）。部署决策只需记住：
 
@@ -129,15 +133,15 @@ P、D 实例握手时要过兼容性 hash——像接头暗号：vLLM 与连接�
 
 厨房不会这么干活。**厨师每炒好一道菜，传菜员立刻端走，端这盘的同时，厨师已经在炒下一盘。** PD 的逐层异步传输（layer-wise pipelining）是同一个机制：
 
-- Prefill 第 $l$ 层一算完，这一层的 KV 立刻异步发出，不等后面的层；
-- 传输在后台进行，GPU 不停，接着算第 $l+1$ 层；
-- D 侧逐层收货，不必等 80 层全到，货到齐到可以开工的程度就能动。
+1. Prefill 第 $l$ 层一算完，这一层的 KV 立刻异步发出，不等后面的层；
+2. 传输在后台进行，GPU 不停，接着算第 $l+1$ 层；
+3. D 侧逐层收货，不必等 80 层全到，货到齐到可以开工的程度就能动。
 
 SplitWise 的实现用了 MSCCL++ 的 zero-copy **one-sided put**：P 端直接把数据写进 D 端显存，D 端连「收货」指令都不用发。类比是**快递员有你家门禁，直接把货塞进冰箱，不用你开门签收**；围栏是这套机制要先注册内存、交换地址，配置不成立时会退化成普通中转。
 
 这个类比为什么成立？手算验证「藏得住」的条件（TP=8）：每个 rank 搬 $2.6/8=320$MB ≈ 6.4ms；摊到约 80 层，每层每 rank 只有 4MB，按 50GB/s 算传输仅 $4/50000\approx 0.08$ms——而 70B 模型一层处理 8K token 的 Prefill 计算是毫秒级。**传输薄片比计算薄片短一两个数量级，整段路被计算完全盖住。** 不是网络变快了，是传输被切成薄片塞进了计算的缝隙。
 
-<PdRooflineFigure />
+<Pd2PipelineFigure />
 
 *图 4：①整发：51ms 全裸奔；②切片：每层一片、算完即发；③重叠：网卡传第 i 层时 GPU 已在算第 i+1 层。藏得住的条件写在图底。*
 
@@ -160,9 +164,9 @@ SplitWise 的实现用了 MSCCL++ 的 zero-copy **one-sided put**：P 端直接�
 
 **③ 异构硬件（治成本）。** SplitWise 的 H100(P)/A100(D) 搭配：论文口径最高 1.4 倍吞吐且成本下降约 20%；另一组等功耗等成本预算实验里是 2.35 倍——这是两个不同实验，不要混读。论文还发现 Decode 机可以限功率运行（整机限到额定 70%、且每 GPU 封顶 50%）而性能几乎不掉。以上全部限定 Azure 特定 SKU 搭配。
 
-**④ 前缀感知的全局调度（治 TTFT 与命中率）。** [Mooncake](https://arxiv.org/abs/2407.00079)（2024 预印本，FAST’25；月之暗面 Kimi 的服务平台）提出 KVCache-centric 架构：除了 P/D 集群分离，还把集群里闲置的 CPU 内存、DRAM、SSD 组成解耦的全局 KV 池，用 GPUDirect RDMA 零拷贝、打满多网卡，并按前缀命中率决定请求调度到哪个 P。数字限定条件写全：在模拟长上下文场景最高提升 525%（对 vLLM 的区间为 50%–525%），真实生产 trace 重放下 Kimi 多承载 75% 请求；实验用的是与 LLaMA2-70B 同构的 dummy 模型加真实 trace 重放（不含用户内容）。
+**④ 前缀感知的全局调度（治 TTFT 与命中率）。** [Mooncake](https://arxiv.org/abs/2407.00079)（2024 预印本，FAST'25；月之暗面 Kimi 的服务平台）提出 KVCache-centric 架构：除了 P/D 集群分离，还把集群里闲置的 CPU 内存、DRAM、SSD 组成解耦的全局 KV 池，用 GPUDirect RDMA 零拷贝、打满多网卡，并按前缀命中率决定请求调度到哪个 P。数字限定条件写全：在模拟长上下文场景最高提升 525%（对 vLLM 的区间为 50%–525%），真实生产 trace 重放下 Kimi 多承载 75% 请求；实验用的是与 LLaMA2-70B 同构的 dummy 模型加真实 trace 重放（不含用户内容）。
 
-<Expand title="论文形态 ≠ 你装上的那个连接器">
+<Expand title="折叠：论文形态 ≠ 你装上的那个连接器">
 
 vLLM 内置的 MooncakeConnector 只是 Mooncake transfer engine 的 KV 传输封装（可调参数仅 num_workers 默认 10、mooncake_protocol 默认 rdma、bootstrap 端口 8998 且仅 P 端需要）。论文里的全局 CPU/SSD KV 池、跨请求全局前缀调度并不在这个连接器的能力范围内——525% 与 75% 只能记在论文全形态头上，不能写成「装了 vLLM MooncakeConnector 就有」。缓存池这一层目前主要由 LMCache 等独立项目补齐。
 
@@ -190,19 +194,10 @@ vLLM 内置的 MooncakeConnector 只是 Mooncake transfer engine 的 KV 传输�
 
 - **TP 集合通信**：张量并行每层有两次 all-reduce（[Megatron-LM](https://arxiv.org/abs/1909.08053) 切法），像 8 个人各写一段、互相传阅拼成完整稿，每层来一轮。传的是高频小纸条，**怕延迟不怕带宽**，走 NCCL，尽量关在节点内；
 - **PD 的 KV 传输**：每请求一次的大件，rank i 到 rank i 的点对点搬运，走 UCX/RDMA 栈（NIXL、Mooncake 底层都是这类），one-sided put，**怕带宽不怕频次**。
+
 - **症状**：NCCL 配置照抄了一遍，KV 传输却慢得像没装 RDMA。
 - **原因**：两套栈互不认识。NIXL 文档明确：`NCCL_IB_HCA`、`NCCL_SOCKET_IFNAME` 这类环境变量对 NixlConnector **完全无效**，UCX 要配自己的 `UCX_NET_DEVICES`（如 mlx5_0:1）和 `UCX_TLS`。
 - **动作**：NCCL 与 UCX 的配置分开放、分别验证。
-
-**TP 集合通信**：张量并行每层有两次 all-reduce（[Megatron-LM](https://arxiv.org/abs/1909.08053) 切法），像 8 个人各写一段、互相传阅拼成完整稿，每层来一轮。传的是高频小纸条，**怕延迟不怕带宽**，走 NCCL，尽量关在节点内；
-
-**PD 的 KV 传输**：每请求一次的大件，rank i 到 rank i 的点对点搬运，走 UCX/RDMA 栈（NIXL、Mooncake 底层都是这类），one-sided put，**怕带宽不怕频次**。
-
-**症状**：NCCL 配置照抄了一遍，KV 传输却慢得像没装 RDMA。
-
-**原因**：两套栈互不认识。NIXL 文档明确：`NCCL_IB_HCA`、`NCCL_SOCKET_IFNAME` 这类环境变量对 NixlConnector **完全无效**，UCX 要配自己的 `UCX_NET_DEVICES`（如 mlx5_0:1）和 `UCX_TLS`。
-
-**动作**：NCCL 与 UCX 的配置分开放、分别验证。
 
 ### B 组·确认高速真的通车：地图上的高速别在村口变土路
 
@@ -223,7 +218,7 @@ vLLM 内置的 MooncakeConnector 只是 Mooncake transfer engine 的 KV 传输�
 - **症状 B**：同机放置后 ITL 反而变差。**原因**：KV 传输与 TP 的 all-reduce **共享 NVLink**，互有争用；且大模型可能放不下两份权重（175B：700GB > 640GB）。**动作**：放置算法按模型尺寸和带宽重排，不能硬塞。
 - **症状 C**：跨机开张量并行后，ITL 抖动与 KV 传输变慢同时出现。**原因**：all-reduce 一旦上 IB 就与 KV 传输抢同一层网络。**动作**：vLLM 官方建议 **TP 留在节点内、跨节点用流水线并行（PP）**（没有 NVLink 的机型如 L40S，文档直接建议用 PP 替代 TP）；两类流量不得不同网时做 rail 隔离或 QoS。
 
-<PdDeployFigure />
+<Pd2TopologyFigure />
 
 *图 5：紫色 all-reduce 弧全部关在节点内；橙色 KV 从每张 GPU 经各自最近的网卡、沿同色 rail 出机过 IB 交换机。实机 8 卡 8 网卡，图中示意 4 对。*
 
@@ -251,7 +246,7 @@ vLLM 0.21 快照（2026-09，以官方文档为准）：disaggregated prefilling
 
 另有教学用 ExampleConnector、把 KV 卸到 CPU 内存的 OffloadingConnector、对接分布式 KV store 的 FlexKVConnectorV1。
 
-<Expand title="其他引擎一句话快照（2026-09，以官方文档为准）">
+<Expand title="折叠：其他引擎一句话快照（2026-09，以官方文档为准）">
 
 SGLang 提供同构的 PD 分离（RadixAttention 管前缀复用，传输后端可选 NIXL/Mooncake，由 router 分流）；TensorRT-LLM 有 disaggregated serving；NVIDIA Dynamo 在引擎之上提供 router 编排与 KV 路由。产品形态演进很快，落地前请核对当前版本文档。
 
@@ -281,70 +276,56 @@ SGLang 提供同构的 PD 分离（RadixAttention 管前缀复用，传输后端
 
 ## 10. 自测（答案点击展开）
 
-<Expand title="▸Q1：chunk=1024、批里 32 个 Decode 请求时，这一拍的计算量是纯 Decode 拍的多少倍？墙钟为什么不是这个倍数？那为什么它仍然是事故？">
-
+<Expand title="Q1：chunk=1024、批里 32 个 Decode 请求时，这一拍的计算量是纯 Decode 拍的多少倍？墙钟为什么不是这个倍数？那为什么它仍然是事故？">
 计算量之比为 $1024/32=32$ 倍（FLOPs 比，系数 $2\Phi$ 约掉）。墙钟只有约一个数量级，因为 Prefill 大矩阵的 MFU 远高于被显存带宽卡住的 Decode，重活干得更有效率。它仍是事故，是因为蹦字节拍只有十几二十毫秒，被顶到上百毫秒后节拍不均匀——用户感知的是哆嗦，不是等比变慢。
-
 </Expand>
 
-<Expand title="▸Q2：两种接法下，用户看到的首字分别从 P 还是 D 流出？D 分别要收到什么才能继续？">
-
+<Expand title="Q2：两种接法下，用户看到的首字分别从 P 还是 D 流出？D 分别要收到什么才能继续？">
 接法 A（OpenAI 兼容代理）：P 的首字被丢弃，D 收到原始请求加握手参数，远程加载 KV 后重新采样，全部 token（含首字）从 D 流出。接法 B（Tokens-IN/OUT）：P 算出的首 token id 回传并可直送客户端，D 收到前序 token ids 加握手参数，从第 2 个 token 续算。两种情况下 D 都必须拿到 KV 块的位置与连接信息。
-
 </Expand>
 
-<Expand title="▸Q3：TP=4 时每个 rank 串行搬 8K prompt 的 KV 要多久？为什么不能让四个 rank 挤一张网卡？">
-
+<Expand title="Q3：TP=4 时每个 rank 串行搬 8K prompt 的 KV 要多久？为什么不能让四个 rank 挤一张网卡？">
 $2.6\text{GB}/4/50\text{GB/s}\approx 13$ms（线速理论值）。挤一张网卡则四个 rank 共享 50GB/s、退回约 51ms，且跨 NUMA/PCIe switch 还要打折；rank 数与 rail 数一一对齐、多 NIC 并发才能拿到聚合带宽，这也是逐层传输能被计算盖住的前提。
-
 </Expand>
 
-<Expand title="▸Q4：MLA 模型 TP=8 时，为什么 KV 只发一份？">
-
+<Expand title="Q4：MLA 模型 TP=8 时，为什么 KV 只发一份？">
 MLA 的 KV 在各 TP rank 间是完整复制的（兼容矩阵脚注：没有 head splitting），8 个 rank 内容相同，P 端只发一次、冗余 rank 跳过即可；非 MLA 的 MHA/GQA 才按 KV 头分片、必须 rank i 对 rank i。
-
 </Expand>
 
-<Expand title="▸Q5：NCCL 日志显示 NET/IB/GDRDMA，能证明 KV 通道没退化吗？该再查什么？">
-
+<Expand title="Q5：NCCL 日志显示 NET/IB/GDRDMA，能证明 KV 通道没退化吗？该再查什么？">
 不能。那只证明 NCCL 栈（TP 的 all-reduce）走了 RDMA。KV 通道走 UCX，要另查 UCX 日志的 transport 是否为 rc_mlx5/IB（而非 tcp），并确认 UCX_NET_DEVICES/UCX_TLS 生效——NCCL_IB_HCA 等变量对 NixlConnector 是无效的。
-
 </Expand>
 
-<Expand title="▸加分题 1：同机 NVLink 放置与跨机 IB 放置各自的前提是什么？175B 模型为什么可能被迫跨机？">
-
+<Expand title="加分题 1：同机 NVLink 放置与跨机 IB 放置各自的前提是什么？175B 模型为什么可能被迫跨机？">
 同机放置的前提是节点内放得下两份权重且 KV 与 all-reduce 争用 NVLink 仍可接受；跨机放置的前提是 IB 带宽足以把传输藏进计算（DistServe：25Gbps 藏不住，约 90Gbps@10rps 量级才「不可见」）。175B FP16 单份 350GB，两份 700GB 超过一台 8×80GB 节点的 640GB，物理上无法同机，只能跨机并依赖放置算法与高速互联。
-
 </Expand>
 
-<Expand title="▸加分题 2：kv_load_failure_policy=recompute 为什么是生产环境的尾延迟杀手？">
-
+<Expand title="加分题 2：kv_load_failure_policy=recompute 为什么是生产环境的尾延迟杀手？">
 KV 加载失败后让 D 重跑 Prefill：D 池是按 decode 优化配置的（较低 TP、大批在跑的 decode 请求），一次重 Prefill 正好就是第 1 节里插进心跳节拍的深呼吸，拖慢同池所有人的当步 ITL，且失败往往与网络拥塞相关、容易连锁发生。生产应显式使用 fail，把问题暴露给上层重试而不是在 D 池内部引爆。
-
 </Expand>
 
 ## 11. 参考资料
 
 **论文**
 
-- Zhong et al., [DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving](https://arxiv.org/abs/2401.09670)（OSDI 2024）
-- Patel et al., [SplitWise: Efficient Generative LLM Inference Using Phase Splitting](https://arxiv.org/abs/2311.18677)（ISCA 2024）
-- Qin et al., [Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving](https://arxiv.org/abs/2407.00079)（FAST 2025）
-- Shoeybi et al., [Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism](https://arxiv.org/abs/1909.08053)（2019，张量并行每层 all-reduce 的出处）
+1. Zhong et al., [DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving](https://arxiv.org/abs/2401.09670)（OSDI 2024）
+2. Patel et al., [SplitWise: Efficient Generative LLM Inference Using Phase Splitting](https://arxiv.org/abs/2311.18677)（ISCA 2024）
+3. Qin et al., [Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving](https://arxiv.org/abs/2407.00079)（FAST 2025）
+4. Shoeybi et al., [Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism](https://arxiv.org/abs/1909.08053)（2019，张量并行每层 all-reduce 的出处）
 
 **官方文档与源码（vLLM 0.21，本地中文教程仓库一手核对）**
 
-- Disaggregated Prefilling（experimental）：docs/features/disagg_prefill.md
-- NixlConnector Usage Guide / Compatibility Matrix：docs/features/nixl_connector_usage.md、nixl_connector_compatibility.md
-- MooncakeConnector Usage Guide：docs/features/mooncake_connector_usage.md
-- Parallelism and Scaling（TP 不出节点、GPUDirect 判据、L40S 用 PP）：docs/serving/parallelism_scaling.md
-- 请求路径出处：tests/v1/kv_connector/nixl_integration/toy_proxy_server.py；原生数据面 API：vllm/entrypoints/serve/disagg/（/inference/v1/generate）；NIXL 上游：[ai-dynamo/nixl](https://github.com/ai-dynamo/nixl)
+5. Disaggregated Prefilling（experimental）：docs/features/disagg_prefill.md
+6. NixlConnector Usage Guide / Compatibility Matrix：docs/features/nixl_connector_usage.md、nixl_connector_compatibility.md
+7. MooncakeConnector Usage Guide：docs/features/mooncake_connector_usage.md
+8. Parallelism and Scaling（TP 不出节点、GPUDirect 判据、L40S 用 PP）：docs/serving/parallelism_scaling.md
+9. 请求路径出处：tests/v1/kv_connector/nixl_integration/toy_proxy_server.py；原生数据面 API：vllm/entrypoints/serve/disagg/（/inference/v1/generate）；NIXL 上游：[ai-dynamo/nixl](https://github.com/ai-dynamo/nixl)
 
 **站内延伸**
 
-前置必读[《一次推理的旅程：Prefill 与 Decode》](/blog/一次推理的旅程-prefill与decode)；scale-up/scale-out 网络与机柜硬件基础见[《算力是什么：从一张 H100 到万卡集群》](/blog/算力是什么-从一张h100到万卡集群)；KV 分页与共享见[《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存)；Decode 闲置算力的另一种用法见[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改)；长 Decode 的成本见[《思维链》](/blog/思维链-大模型为什么要先想再答)；KV 头数如何决定传输量见[《注意力机制演进》](/blog/注意力机制演进-从mha到gqa与mla)；TP/PP/DP/EP/CP 五种并行机制怎么选、怎么组合，见[《并行部署：一张模型怎么拆到多张 GPU 上》](/blog/并行部署-一张模型怎么拆到多张gpu上)；动手实践见[推理加速专栏](/inference/)。
+前置必读[《一次推理的旅程：Prefill 与 Decode》](/blog/一次推理的旅程-prefill与decode/)；scale-up/scale-out 网络与机柜硬件基础见[《算力是什么：从一张 H100 到万卡集群》](/blog/算力是什么-从一张h100到万卡集群/)；KV 分页与共享见[《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存/)；Decode 闲置算力的另一种用法见[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改/)；长 Decode 的成本见[《思维链》](/blog/思维链-大模型为什么要先想再答/)；KV 头数如何决定传输量见[《注意力机制演进》](/blog/注意力机制演进-从mha到gqa与mla/)；TP/PP/DP/EP/CP 五种并行机制怎么选、怎么组合，见[《并行部署：一张模型怎么拆到多张 GPU 上》](/blog/并行部署-一张模型怎么拆到多张gpu上/)；动手实践见[推理加速专栏](/inference/)。
 
-<Expand title="▸附：术语对照表（读完回看）">
+<Expand title="附：术语对照表（读完回看）">
 
 - **PD 分离**：Prefill 池与 Decode 池物理分家的部署架构；**P/D 实例**：两个专用 vLLM 池。
 - **goodput**：同时满足 TTFT、ITL 两个 SLO 的请求速率（不是裸 token/s）。

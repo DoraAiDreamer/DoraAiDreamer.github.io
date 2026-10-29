@@ -1,0 +1,57 @@
+---
+// 篇1 图1：启动显存分层——80GB 怎么被切分，KV 余数怎么来
+// 公式：requested(0.92×80) − 权重 − 峰值激活 − cudagraph = KV 可用
+---
+
+<figure>
+  <svg viewBox="0 0 640 296" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="13.5" font-weight="bold" fill="#0c5f74" text-anchor="middle">一张卡的 80GB：vLLM 启动时先切给「非 KV」，剩下的才是 KV 区</text>
+      <text x="320" y="44" font-size="9.5" fill="#94a3b8" text-anchor="middle">以 H100 80GB、70B 权重为例；分区比例为示意，真实数字随启动日志打印</text>
+
+      {/* 整条显存：x=70，宽 500 */}
+      <text x="60" y="86" font-size="10.5" fill="#475569" text-anchor="end">80GB</text>
+      <rect x="70" y="64" width="500" height="44" rx="6" fill="#f4f6f8" stroke="#cbd5e1"/>
+
+      {/* 模型权重：140GB 实际跨 TP，这里按"占用大头"画示意 280px */}
+      <rect x="70" y="64" width="280" height="44" fill="#7ec3d8"/>
+      <text x="210" y="82" font-size="11" font-weight="bold" fill="#006377" text-anchor="middle">模型权重</text>
+      <text x="210" y="98" font-size="9.5" fill="#006377" text-anchor="middle">启动时已加载</text>
+
+      {/* 峰值激活：profile run 测得 120px */}
+      <rect x="350" y="64" width="120" height="44" fill="#fdf0e0"/>
+      <line x1="350" y1="64" x2="470" y2="64" stroke="#e6a23c"/>
+      <text x="410" y="82" font-size="10" font-weight="bold" fill="#b97a1f" text-anchor="middle">峰值激活</text>
+      <text x="410" y="98" font-size="9" fill="#b97a1f" text-anchor="middle">profile 实测</text>
+
+      {/* cudagraph 估算：40px */}
+      <rect x="470" y="64" width="52" height="44" fill="#e7ddf2"/>
+      <text x="496" y="82" font-size="8.5" font-weight="bold" fill="#6b4f8f" text-anchor="middle">CUDA</text>
+      <text x="496" y="98" font-size="8.5" fill="#6b4f8f" text-anchor="middle">graph</text>
+
+      {/* KV 区：58px，绿色高亮 */}
+      <rect x="522" y="64" width="48" height="44" fill="#d4f0e0"/>
+      <line x1="522" y1="64" x2="570" y2="64" stroke="#0f9d68" stroke-width="2"/>
+      <text x="546" y="90" font-size="9" font-weight="bold" fill="#0a7a50" text-anchor="middle">KV</text>
+
+      {/* requested 分界线：0.92 → 73.6GB ≈ 460px */}
+      <line x1="530" y1="56" x2="530" y2="122" stroke="#0f9d68" stroke-dasharray="4,3"/>
+      <text x="530" y="136" font-size="9.5" font-weight="bold" fill="#0a7a50" text-anchor="middle">0.92 × 80</text>
+      <text x="530" y="150" font-size="8.5" fill="#94a3b8" text-anchor="middle">请求额度</text>
+
+      {/* 减法公式区 */}
+      <rect x="70" y="172" width="500" height="74" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+      <text x="90" y="198" font-size="10.5" fill="#334155">KV 可用字节（gpu_worker.determine_available_memory）：</text>
+      <text x="320" y="226" font-size="13" font-weight="bold" fill="#0c5f74" text-anchor="middle">
+        请求额度（0.92×显存） − 权重 − 峰值激活（profile） − CUDA graph 估算
+      </text>
+
+      <text x="320" y="266" font-size="10.5" fill="#334155" text-anchor="middle">
+        再除以「每个块的 KV 字节」→ 得到 num_gpu_blocks；块 0 留作 null，多卡取最小
+      </text>
+      <text x="320" y="286" font-size="9.5" fill="#94a3b8" text-anchor="middle">
+        CUDA graph 估算自 v0.21 起默认计入——从 v0.20 升级、不改配置，块数会变少
+      </text>
+    </g>
+  </svg>
+</figure>

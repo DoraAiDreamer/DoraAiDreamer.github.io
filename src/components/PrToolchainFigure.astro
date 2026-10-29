@@ -1,38 +1,49 @@
 ---
-// 双泳道：剪→调→导→验（NVIDIA）与昇腾 AMCT/ATC（国产）共享"剪→调→导→验"骨架
+// 图：NVIDIA / 昇腾双泳道的剪枝生产链路：剪 → 调 → 导出 → 逐层验证
 ---
 
 <figure>
   <svg viewBox="0 0 640 252" width="100%" xmlns="http://www.w3.org/2000/svg">
     <defs>
-      <marker id="prt2-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>
+      <marker id="prt-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>
     </defs>
     <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
-      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">生产链路：剪 → 调 → 导 → 验</text>
+      <text x="320" y="22" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">2:4 稀疏的生产链路：剪出来不算数，逐层验证过才加速</text>
 
-      {[
-        {y:44, fill:"#d9eef3", sc:"#0085a1", name:"NVIDIA 链路", tools:["ASP / ModelOpt\n2:4 掩码","短微调\n恢复精度","TRT-LLM / vLLM\nSparse-Marlin","逐层 profile\n静默回退 dense"]},
-        {y:146, fill:"#e4f5ec", sc:"#0f9d68", name:"昇腾链路", tools:["AMCT\n4选2校准","短微调\n（CANN 版本文档）","ATC\n--sparsity=1\n（4选2开关）","MindIE\nW8A8SC 仅 300I Duo"]},
-      ].map((lane)=> (
+      {/* 顶部四阶段 */}
+      {["① 剪：生成 2:4 掩码","② 调：微调恢复精度","③ 导：编译进引擎","④ 验：逐层核对 tactic"].map((t,i)=>(
         <g>
-          <rect x="30" y={lane.y} width="580" height="92" rx="10" fill="#fff" stroke={lane.sc} stroke-width="1.2"/>
-          <text x="46" y={lane.y+20} font-size="10" font-weight="bold" fill={lane.sc}>{lane.name}</text>
-          {lane.tools.map((t,i)=>{
-            const x=60+i*140;
-            return (
-              <g>
-                <rect x={x} y={lane.y+30} width="124" height="50" rx="7" fill={lane.fill} stroke={lane.sc}/>
-                {t.split("\n").map((line,j)=>(
-                  <text key={j} x={x+62} y={lane.y+50+j*13} font-size="8.6" fill="#334155" text-anchor="middle">{line}</text>
-                ))}
-                {i<3 && <line x1={x+124} y1={lane.y+55} x2={x+136} y2={lane.y+55} stroke="#94a3b8" marker-end="url(#prt2-arw)"/>}
-              </g>
-            );
-          })}
+          <rect x={30+i*150} y="42" width="136" height="30" rx="7" fill="#f4f6f8" stroke="#cbd5e1"/>
+          <text x={98+i*150} y="61" font-size="9" fill="#334155" text-anchor="middle">{t}</text>
+          {i<3 && <line x1={166+i*150} y1="57" x2={176+i*150} y2="57" stroke="#94a3b8" marker-end="url(#prt-arw)"/>}
         </g>
       ))}
 
-      <text x="320" y="246" font-size="9" fill="#64748b" text-anchor="middle">版本/开关随 CANN、TRT 版本变化，落地前查官方文档并逐层验证；国产昇腾 AMCT 4选2 与 W8A8SC 为不同特性，别混</text>
+      {/* NVIDIA 泳道 */}
+      <rect x="20" y="92" width="600" height="64" rx="10" fill="#f2fafd" stroke="#7fc3d8"/>
+      <text x="34" y="114" font-size="10.5" font-weight="bold" fill="#006377">NVIDIA</text>
+      <text x="120" y="114" font-size="9" fill="#006377">ASP / ModelOpt（sparse24）</text>
+      <text x="120" y="138" font-size="9" fill="#475569">原超参微调，或 SparseGPT/Wanda 式 one-shot</text>
+      <line x1="268" y1="124" x2="292" y2="124" stroke="#94a3b8" marker-end="url(#prt-arw)"/>
+      <text x="360" y="114" font-size="9" fill="#006377" text-anchor="middle">短微调（ASP）</text>
+      <text x="360" y="138" font-size="9" fill="#475569" text-anchor="middle">—</text>
+      <line x1="418" y1="124" x2="442" y2="124" stroke="#94a3b8" marker-end="url(#prt-arw)"/>
+      <text x="500" y="114" font-size="9" fill="#006377" text-anchor="middle">TensorRT kSPARSE_WEIGHTS</text>
+      <text x="500" y="138" font-size="9" fill="#475569" text-anchor="middle">TRT-LLM / vLLM（Sparse-Marlin）</text>
+
+      {/* 昇腾泳道 */}
+      <rect x="20" y="168" width="600" height="64" rx="10" fill="#f2fbf7" stroke="#7fd4ae"/>
+      <text x="34" y="190" font-size="10.5" font-weight="bold" fill="#0a7a50">昇腾</text>
+      <text x="120" y="190" font-size="9" fill="#0a7a50">AMCT「4 选 2」结构化稀疏</text>
+      <text x="120" y="214" font-size="9" fill="#475569">每 4 个权重保 2 个最大幅值</text>
+      <line x1="268" y1="200" x2="292" y2="200" stroke="#94a3b8" marker-end="url(#prt-arw)"/>
+      <text x="360" y="190" font-size="9" fill="#0a7a50" text-anchor="middle">微调恢复</text>
+      <text x="360" y="214" font-size="9" fill="#475569" text-anchor="middle">Atlas A2 训练系列</text>
+      <line x1="418" y1="200" x2="442" y2="200" stroke="#94a3b8" marker-end="url(#prt-arw)"/>
+      <text x="500" y="190" font-size="9" fill="#0a7a50" text-anchor="middle">ATC 转换（--sparsity 开关）</text>
+      <text x="500" y="214" font-size="9" fill="#475569" text-anchor="middle">具体开关以 CANN 版本文档为准</text>
+
+      <text x="320" y="246" font-size="9" fill="#b14a4a" text-anchor="middle">注意：不满足 K/N 对齐倍数的层会静默回退 dense——必须用 detailed profiling 逐层确认</text>
     </g>
   </svg>
 </figure>

@@ -1,0 +1,50 @@
+---
+// 图6：卡年成本公式 + 利用率构成条
+// 三段：有效利用 / 可回收缺口（到目标利用率为止）/ 必需冗余
+---
+
+<figure>
+  <svg viewBox="0 0 640 310" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">先算白养多少卡年，再折算成钱</text>
+
+      {/* 公式条 */}
+      <rect x="40" y="44" width="560" height="36" rx="8" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="320" y="67" font-size="12.5" font-weight="bold" fill="#0c5f74" text-anchor="middle">浪费（卡年）≈ GPU 卡数 × 相对目标利用率的可回收缺口</text>
+
+      {/* 演算条 */}
+      <rect x="40" y="92" width="560" height="36" rx="8" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="320" y="115" font-size="12" fill="#b97a1f" text-anchor="middle">示例（示意）：64 卡 × 30% ＝ 19.2 卡年——相当于白养 19.2 张卡一整年</text>
+
+      {/* 两条构成条：x=150..590（440px = 100%） */}
+      {[
+        { y: 158, label: "服务甲", used: 45, gap: 25, spare: 30 },
+        { y: 218, label: "服务乙", used: 60, gap: 10, spare: 30 },
+      ].map((b) => (
+        <g>
+          <text x="140" y={b.y + 22} font-size="10.5" fill="#475569" text-anchor="end">{b.label}</text>
+          <rect x="150" y={b.y} width={4.4 * b.used} height="32" fill="#7ec3d8"/>
+          <rect x={150 + 4.4 * b.used} y={b.y} width={4.4 * b.gap} height="32" fill="#e67e7e"/>
+          <rect x={150 + 4.4 * (b.used + b.gap)} y={b.y} width={4.4 * b.spare} height="32" fill="#cbd5e1"/>
+          <text x={150 + 2.2 * b.used} y={b.y + 20} font-size="10" font-weight="bold" fill="#0c5f74" text-anchor="middle">有效 {b.used}%</text>
+          {b.gap >= 10 && <text x={150 + 4.4 * b.used + 2.2 * b.gap} y={b.y + 20} font-size="9.5" font-weight="bold" fill="#ffffff" text-anchor="middle">缺口 {b.gap}%</text>}
+          <text x={150 + 4.4 * (b.used + b.gap) + 2.2 * b.spare} y={b.y + 20} font-size="9.5" fill="#475569" text-anchor="middle">冗余 {b.spare}%</text>
+        </g>
+      ))}
+
+      {/* 图例 */}
+      {[
+        { x: 150, t: "有效利用", c: "#7ec3d8" },
+        { x: 258, t: "可回收缺口", c: "#e67e7e" },
+        { x: 386, t: "必需冗余", c: "#cbd5e1" },
+      ].map((l) => (
+        <g>
+          <rect x={l.x} y="268" width="14" height="12" rx="2" fill={l.c}/>
+          <text x={l.x + 20} y="278" font-size="10" fill="#475569">{l.t}</text>
+        </g>
+      ))}
+
+      <text x="320" y="298" font-size="9.5" fill="#94a3b8" text-anchor="middle">示意，非实测；冗余（N+1 / 双 AZ / 金丝雀容量）是必需品，缺口只算到目标利用率为止</text>
+    </g>
+  </svg>
+</figure>

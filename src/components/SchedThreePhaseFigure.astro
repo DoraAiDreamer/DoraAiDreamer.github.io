@@ -1,0 +1,52 @@
+---
+// 篇2 图：一个 step 里 schedule() 的三阶段
+// 阶段1 running 先调度（追赶公式 + allocate 失败则抢占）
+// 阶段2 无抢占才接纳 waiting（失败 break = 队头阻塞）
+// 阶段3 构造输出
+---
+
+<figure>
+  <svg viewBox="0 0 640 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="s3-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">一个 step：先喂在车上的，再开门接新客</text>
+
+      {/* 阶段 1：running */}
+      <rect x="30" y="56" width="180" height="120" rx="10" fill="#f2f8fa" stroke="#0085a1" stroke-width="1.4"/>
+      <text x="120" y="80" font-size="12.5" font-weight="bold" fill="#006377" text-anchor="middle">① running 请求</text>
+      <text x="120" y="102" font-size="10" fill="#334155" text-anchor="middle">按队列顺序，每个</text>
+      <text x="120" y="118" font-size="10" fill="#334155" text-anchor="middle">Decode 推进 1 token</text>
+      <text x="120" y="140" font-size="9.5" fill="#006377" text-anchor="middle">追赶：with_spec − computed</text>
+      <text x="120" y="160" font-size="9" fill="#b97a1f" text-anchor="middle">块不够 → 抢占（篇4）</text>
+
+      {/* 箭头 */}
+      <line x1="212" y1="116" x2="238" y2="116" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#s3-arw)"/>
+
+      {/* 阶段 2：waiting，条件门 */}
+      <rect x="240" y="56" width="180" height="120" rx="10" fill="#fdf7ef" stroke="#e6a23c" stroke-width="1.4"/>
+      <text x="330" y="80" font-size="12.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">② waiting 请求</text>
+      <text x="330" y="104" font-size="9.5" fill="#b91c1c" text-anchor="middle">前置：本步无抢占</text>
+      <text x="330" y="120" font-size="9.5" fill="#334155" text-anchor="middle">且预算 &gt; 0、未到座位上限</text>
+      <text x="330" y="142" font-size="9.5" fill="#334155" text-anchor="middle">装不下就 break</text>
+      <text x="330" y="160" font-size="9" fill="#b91c1c" text-anchor="middle">队头长 prompt 挡住后面所有人</text>
+
+      <line x1="422" y1="116" x2="448" y2="116" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#s3-arw)"/>
+
+      {/* 阶段 3：输出 */}
+      <rect x="450" y="56" width="160" height="120" rx="10" fill="#eef7f0" stroke="#0f9d68" stroke-width="1.4"/>
+      <text x="530" y="86" font-size="12.5" font-weight="bold" fill="#0a7a50" text-anchor="middle">③ 构造输出</text>
+      <text x="530" y="110" font-size="10" fill="#334155" text-anchor="middle">SchedulerOutput：</text>
+      <text x="530" y="128" font-size="9.5" fill="#334155" text-anchor="middle">谁、推进几个 token、</text>
+      <text x="530" y="144" font-size="9.5" fill="#334155" text-anchor="middle">分到哪些块</text>
+      <text x="530" y="164" font-size="9" fill="#64748b" text-anchor="middle">交给 worker 执行</text>
+
+      {/* 底部循环箭头回执行 */}
+      <path d="M320,178 L320,212 L120,212 L120,178" fill="none" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#s3-arw)"/>
+      <text x="320" y="234" font-size="10.5" fill="#64748b" text-anchor="middle">execute（一次前向）→ update_from_output 记账，进入下一个 step</text>
+
+      <text x="320" y="270" font-size="10" fill="#94a3b8" text-anchor="middle">Decode 不被饿死靠的是结构顺序——running 先、每请求每步必得 1 token，不是按比例分配预算</text>
+    </g>
+  </svg>
+</figure>

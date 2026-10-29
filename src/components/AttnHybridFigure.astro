@@ -1,5 +1,5 @@
 ---
-// 2026 混合注意力栈：线性状态层 / 稀疏检索层 / 精确层 按层交错（示意）
+// 2026 混合注意力栈：线性状态层 / 稀疏检索层 / 精确层 按比例交错
 ---
 
 <figure>
@@ -7,6 +7,7 @@
     <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
       <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">2026 年前沿模型：三种注意力按层混合</text>
 
+      {/* 三个列标题 */}
       <rect x="40" y="42" width="170" height="30" rx="7" fill="#e4f5ec" stroke="#0f9d68"/>
       <text x="125" y="62" font-size="10.5" font-weight="bold" fill="#0a7a50" text-anchor="middle">线性状态层（GDN/KDA）</text>
       <rect x="235" y="42" width="170" height="30" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
@@ -14,9 +15,12 @@
       <rect x="430" y="42" width="170" height="30" rx="7" fill="#d9eef3" stroke="#0085a1"/>
       <text x="515" y="62" font-size="10.5" font-weight="bold" fill="#006377" text-anchor="middle">精确层（GQA/MLA/全注意力）</text>
 
+      {/* 层条：以 GLM-5.3-Flash 34 KDA + 11 DSA 示意，Qwen3.5 45+15 全注意力 */}
       {Array.from({length: 24}).map((_,i)=>{
         const y=86+i*8;
-        let fill="#e4f5ec", stroke="#0f9d68", label="";
+        // 24 行示意：前 18 行 KDA（线性），间隔标稀疏，其余精确（仅示意密度）
+        let fill="#e4f5ec", stroke="#0f9d68";
+        let label="";
         if(i%4===1){ fill="#fdf0e0"; stroke="#e6a23c"; label="稀疏 top-k"; }
         if(i===23){ fill="#d9eef3"; stroke="#0085a1"; label="精确兜底"; }
         return (
@@ -27,6 +31,7 @@
         );
       })}
 
+      {/* 底部三个 KV 形态 */}
       <line x1="40" y1="282" x2="600" y2="282" stroke="#e2e8f0"/>
       <text x="125" y="296" font-size="8.5" fill="#0a7a50" text-anchor="middle">固定大小状态，不随上下文增长</text>
       <text x="320" y="296" font-size="8.5" fill="#b97a1f" text-anchor="middle">KV 仍逐 token 存，只取 top-k</text>

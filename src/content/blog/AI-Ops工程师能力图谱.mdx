@@ -1,27 +1,28 @@
 ---
-title: "AI-Ops 工程师能力图谱：一张可以自评的五层地图"
-date: 2026-10-02
-author: DoraAiDreamer
-category: 大模型
-tags: ["AI","运维","能力图谱"]
+title: "AI Ops 工程师能力图谱：一张可以自评的五层地图"
+subtitle: "从「服务能跑」到「每块钱都算数」——地 · 卡 · 引擎 · 平台 · 账"
+date: 2026-09-26
+author: "DoraAiDreamer"
+category: "工具与其他"
+tags:
+  - "AI Ops"
+  - "GPU 运维"
+  - "推理部署"
+  - "SRE"
+  - "职业成长"
 ---
 
 import Expand from "../../components/Expand.astro";
-import AIOpsRecFig1 from "../../components/AIOpsRecFig1.astro";
-import AIOpsRecFig2 from "../../components/AIOpsRecFig2.astro";
-import AIOpsRecFig3 from "../../components/AIOpsRecFig3.astro";
-import AIOpsRecFig4 from "../../components/AIOpsRecFig4.astro";
-import AIOpsRecFig5 from "../../components/AIOpsRecFig5.astro";
-import AIOpsRecFig6 from "../../components/AIOpsRecFig6.astro";
+import OpsPainFigure from "../../components/OpsPainFigure.astro";
+import CompetencyMapFigure from "../../components/CompetencyMapFigure.astro";
+import TransferFigure from "../../components/TransferFigure.astro";
+import RequestLayersFigure from "../../components/RequestLayersFigure.astro";
+import GrowthLevelFigure from "../../components/GrowthLevelFigure.astro";
+import GpuCostFigure from "../../components/GpuCostFigure.astro";
 
-从「服务能跑」到「每块钱都算数」——地 · 卡 · 引擎 · 平台 · 账
+> **30 秒用法**：先花 10 分钟读完全文，知道 AI Ops 的五层地图；然后用第 10 节的 0–4 证据量表给自己打分；最后按「断层格」查第 10 节课程表开药方。这不是一篇背完就过的科普，是一套可以反复用的工具。
 
-> 30 秒用法
-> ：先花 10 分钟读完全文，知道 AI Ops 的五层地图；然后用第 10 节的 0–4 证据量表给自己打分；最后按「断层格」查第 10 节课程表开药方。这不是一篇背完就过的科普，是一套可以反复用的工具。
-
-**30 秒用法**：先花 10 分钟读完全文，知道 AI Ops 的五层地图；然后用第 10 节的 0–4 证据量表给自己打分；最后按「断层格」查第 10 节课程表开药方。这不是一篇背完就过的科普，是一套可以反复用的工具。
-
-<Expand title="▸术语速查（可先跳过，遇到再回来查）">
+<Expand title="术语速查（可先跳过，遇到再回来查）">
 
 | 术语 | 一句话解释 |
 | --- | --- |
@@ -36,7 +37,7 @@ import AIOpsRecFig6 from "../../components/AIOpsRecFig6.astro";
 | DCGM | NVIDIA 官方的 GPU 监控指标体系 |
 | MIG / MPS | 两种把一张卡分给多个服务的方式（硬件硬隔离 / 软件共享） |
 | NCCL | NVIDIA 的多卡通信库，多卡任务的「关节」 |
-| Little’s Law | 在途请求数 ≈ 到达率 × 停留时间 |
+| Little's Law | 在途请求数 ≈ 到达率 × 停留时间 |
 | SLO | 对用户承诺的服务目标（如 P99 首字延迟 < 2 秒） |
 
 </Expand>
@@ -45,7 +46,7 @@ import AIOpsRecFig6 from "../../components/AIOpsRecFig6.astro";
 
 周一早九点，公司的 AI 客服告警群安静得反常。值班同学打开监控：CPU 40%、内存富裕、网卡没满、Pod 全是 Running——**大盘全绿**。但客服群里用户已经炸了：回复开始卡，有人等了 8 秒还看不到第一个字（故事数字，仅为示意）。
 
-<AIOpsRecFig1 />
+<OpsPainFigure />
 
 *图 1：大盘全绿不可信——它压根没量该量的东西。*
 
@@ -57,7 +58,7 @@ import AIOpsRecFig6 from "../../components/AIOpsRecFig6.astro";
 
 有经验的值班同学不会看到 TTFT 涨就断言「是 prefill 被挤占」。同一个信号至少有四种原因，他会按顺序拆：**排队时间分位 → prompt 长度分布 → APC 块命中率 → prefill 计算时间**，一步步排除。这篇文章的核心主张就藏在这里：**这个故障能不能查，不取决于命令熟不熟，取决于你能在这条链上走通几层。**
 
-<Expand title="▸一个精确化：为什么不能简单说「命中率下降导致 KV 需求上涨」">
+<Expand title="一个精确化：为什么不能简单说「命中率下降导致 KV 需求上涨」">
 
 单个请求的 KV 大小只由它自己的会话长度决定，命中率下降不会让它变大。真正发生的是：共享前缀块减少 → **全集群占用的总块数上升、重复 prefill 的算力需求上升**。差一个字，排障方向就不同——该看的是聚合块数和 prefill 算力，而不是给某个会话量 KV。
 
@@ -66,6 +67,10 @@ import AIOpsRecFig6 from "../../components/AIOpsRecFig6.astro";
 ### 第二钩：一笔你现在就能算的账
 
 钱的事先不看单价，先算一个跟价格无关的单位——**卡年**（一张卡跑一整年的量）：
+
+$$
+\text{浪费（卡年）} \approx \text{GPU 卡数} \times \text{相对目标利用率的可回收缺口}
+$$
 
 比如 64 张卡，有效利用率比目标低 30%，那就是 $64 \times 30\% = 19.2$ 卡年——**相当于白养了 19.2 张卡一整年**。第二阶段再乘你公司的单卡年成本（采购折旧或云租约，含机柜电），数字自己会说话。
 
@@ -88,13 +93,13 @@ import AIOpsRecFig6 from "../../components/AIOpsRecFig6.astro";
 
 在亮出完整地图前，先跟一个具体指标走 90 秒。假设 P99 TTFT 涨了：
 
-- 先翻**网关访问日志**，看请求是不是在入口就排起了队；
-- 再看**引擎自己的指标**：抢占次数、APC 命中率、在跑/等待请求数；
-- 然后看 **DCGM**，卡上的计算管道和显存处于什么状态；
-- 这一路脚下踩的都是 **Kubernetes 和 Linux**：Pod 调度、内核日志、网络；
-- 最后把发现折成两样东西：**需要多少卡（容量）、花多少钱（成本）**。
+1. 先翻**网关访问日志**，看请求是不是在入口就排起了队；
+2. 再看**引擎自己的指标**：抢占次数、APC 命中率、在跑/等待请求数；
+3. 然后看 **DCGM**，卡上的计算管道和显存处于什么状态；
+4. 这一路脚下踩的都是 **Kubernetes 和 Linux**：Pod 调度、内核日志、网络；
+5. 最后把发现折成两样东西：**需要多少卡（容量）、花多少钱（成本）**。
 
-<AIOpsRecFig2 />
+<CompetencyMapFigure />
 
 *图 2：你的身价由两件事决定——能下探几层、权衡半径多大。*
 
@@ -110,15 +115,15 @@ import AIOpsRecFig6 from "../../components/AIOpsRecFig6.astro";
 
 **三条被改写的假设**，每条都是真实事故的来源：
 
-- **「实例是无状态的」**：KV Cache 在显存里，实例带着正在解码的会话。缩容、漂移、重启都有真实代价——被扔掉的会话要 recompute，用户感到卡顿（L3 弹性节展开）。
-- **「资源利用率看 CPU/内存就够」**：GPU 的「利用率」有好几种口径，SM Active 高不等于算力用满；显存占用高也不等于显存被有效使用（L1 展开）。
-- **「请求是短时完成的 RPC」**：一个推理请求是 TTFT 之后持续数秒的**流式生命**，长连接、逐 token 返回、中途取消都是常态。HPA、滚动升级、超时、重试的语义都要重新想。
+1. **「实例是无状态的」**：KV Cache 在显存里，实例带着正在解码的会话。缩容、漂移、重启都有真实代价——被扔掉的会话要 recompute，用户感到卡顿（L3 弹性节展开）。
+2. **「资源利用率看 CPU/内存就够」**：GPU 的「利用率」有好几种口径，SM Active 高不等于算力用满；显存占用高也不等于显存被有效使用（L1 展开）。
+3. **「请求是短时完成的 RPC」**：一个推理请求是 TTFT 之后持续数秒的**流式生命**，长连接、逐 token 返回、中途取消都是常态。HPA、滚动升级、超时、重试的语义都要重新想。
 
-<AIOpsRecFig3 />
+<TransferFigure />
 
 *图 3：旧本事七成还在；被改写的是三条假设；真正要新学的是引擎层和 GPU 读法。*
 
-<Expand title="▸L0 自查条（阅读中 yes/no 快检）">
+<Expand title="L0 自查条（阅读中 yes/no 快检）">
 
 - 能不能不看笔记，独立用 `kubectl describe` + events + 内核日志还原一次 Pod 漂移的完整时序？
 - 一个 Service 后端 Pod 全部 Ready，但用户 intermittent 超时，你手上有没有一套固定排查顺序（DNS→kube-proxy/iptables→端点→网络策略）？
@@ -138,7 +143,7 @@ import AIOpsRecFig6 from "../../components/AIOpsRecFig6.astro";
 
 不深挖芯片架构，给到运维决策所需的粒度就够：
 
-- **卡内**：GPU 里有成千上万个计算单元（SM）和一块高带宽显存（HBM）。Decode 阶段速度由显存带宽决定——[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)算过，70B 模型在 H100 上纯权重搬运的下限约 42ms，这里不重推。
+- **卡内**：GPU 里有成千上万个计算单元（SM）和一块高带宽显存（HBM）。Decode 阶段速度由显存带宽决定——[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode/)算过，70B 模型在 H100 上纯权重搬运的下限约 42ms，这里不重推。
 - **卡间**：同一台机器里，卡与卡之间走 NVLink/NVSwitch（高速）还是 PCIe（慢一截）；张量并行最怕卡跨 NUMA、跨 PCIe 交换机。
 - **机间**：多机任务靠 RDMA（InfiniBand 或 RoCE）通信，它是多机任务的命门；NCCL 超时、某张慢卡拖垮整批，是这一层最常见的大案。
 
@@ -146,14 +151,14 @@ import AIOpsRecFig6 from "../../components/AIOpsRecFig6.astro";
 
 这是本节最容易写错的地方，分四层口径看：
 
-- **时间占空比**：nvidia-smi 的 GPU-Util 和 DCGM 的 203 号指标，口径是「采样期内至少有一个 kernel 在执行的时间占比」。有 kernel 在跑就算忙，不代表计算单元被填满。
-- **SM 层**：`SM_ACTIVE`（1002）看有没有 warp 驻留，`SM_OCCUPANCY`（1003）看驻留了多少。NVIDIA 官方明确：**等待内存的 warp 也算 active**——所以 SM Active 0.8 只是「necessary but not sufficient」，不等于 80% 算力。
-- **功能管线**：`TENSOR_ACTIVE`（1004）看活有没有落在 Tensor Core 上，另有 FP16/FP32 管线指标。
-- **数据搬运**：`DRAM_ACTIVE`（1005）和 PCIe/NVLink 字节数，看活有多重、瓶颈在不在搬运。
+1. **时间占空比**：nvidia-smi 的 GPU-Util 和 DCGM 的 203 号指标，口径是「采样期内至少有一个 kernel 在执行的时间占比」。有 kernel 在跑就算忙，不代表计算单元被填满。
+2. **SM 层**：`SM_ACTIVE`（1002）看有没有 warp 驻留，`SM_OCCUPANCY`（1003）看驻留了多少。NVIDIA 官方明确：**等待内存的 warp 也算 active**——所以 SM Active 0.8 只是「necessary but not sufficient」，不等于 80% 算力。
+3. **功能管线**：`TENSOR_ACTIVE`（1004）看活有没有落在 Tensor Core 上，另有 FP16/FP32 管线指标。
+4. **数据搬运**：`DRAM_ACTIVE`（1005）和 PCIe/NVLink 字节数，看活有多重、瓶颈在不在搬运。
 
 一条常用排查路径：**SM Active 高 + Tensor Active 低** → 没走 Tensor Core 或算子太小；**SM Active 高 + DRAM Active 高** → 显存带宽 bound；再查时钟/功耗限频原因；这些都解释不通，最后才上 Nsight。
 
-<Expand title="▸DCGM 的三个工程坑">
+<Expand title="DCGM 的三个工程坑">
 
 - profiling 计数器需要管理员权限（驱动 418.43 起）；
 - 硬件计数器靠多路复用轮询，采样频率过高会出现 zeroes；
@@ -169,7 +174,7 @@ import AIOpsRecFig6 from "../../components/AIOpsRecFig6.astro";
 | **MPS** | 软件方式让多个进程共享 SM | Volta 起可设每客户显存上限和 active thread%，但那是**上限不是预留**，kernel 仍可能落在同一批 SM 上；客户未同步就异常退出，可能株连整个 MPS server 和所有客户；用量在 nvidia-smi 里记到 server 进程，无法直接按租户读数。MPS 可以叠加在 MIG 之上 |
 | **时间分片** | 多服务轮换上卡 | 没有任何隔离，只有上下文切换；互扰全看运气 |
 
-<Expand title="▸L1 自查条">
+<Expand title="L1 自查条">
 
 - 给你一台不认识的 GPU 机器，能不能用一两条命令说出卡型、卡间互联拓扑、NCCL 会走哪条路？
 - 「SM Active 90% 但用户说慢」你能列出哪几个下一步、每个下一步预期看到什么？
@@ -193,26 +198,30 @@ import AIOpsRecFig6 from "../../components/AIOpsRecFig6.astro";
 
 GPU 显存被三样东西吃掉：
 
-- **权重**：70B 模型 FP16 权重约 140GB；
-- **KV Cache**：每个 token 的 KV ＝ $2 \times \text{层数} \times \text{KV头数} \times \text{head\_dim} \times \text{精度字节}$；
-- **运行时开销**：激活值、显存碎片、算子工作区。
+1. **权重**：70B 模型 FP16 权重约 140GB；
+2. **KV Cache**：每个 token 的 KV ＝ $2 \times \text{层数} \times \text{KV头数} \times \text{head\_dim} \times \text{精度字节}$；
+3. **运行时开销**：激活值、显存碎片、算子工作区。
 
 由此得到一条最重要的运维推论：**能装下权重不等于能服务。** 权重是进门门票，真正决定并发上限的，是权重之外还剩多少显存给 KV。
 
 光看公式没感觉，给一个可以模仿的手算例子。LLaMA-2 70B 的形状是 80 层、8 个 KV 头、head_dim 128、FP16（每数 2 字节）：
 
+$$
+2 \times 80 \times 8 \times 128 \times 2 = 327{,}680 \text{ 字节} \approx 320 \text{ KiB / token}
+$$
+
 一个 8K（8192 token）prompt 的 KV 大约是 $320 \text{ KiB} \times 8192 \approx 2.5 \text{ GiB}$。这就是为什么「70B 装进 8 卡机」和「70B 能服务几十个并发」之间还隔着一整层功课——每个在场会话都在持续吃这笔 KV。数字的形状假设写在这里，换模型要重算。
 
 ### 5.2 一次推理的两阶段
 
-Prefill 典型是算力 bound，Decode 典型是显存带宽 bound。两阶段的指标、痛点、扩容逻辑完全不同，机制细节见[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)。记住这个区分，后面每个机制都要问一句「它治的是哪一阶段」。
+Prefill 典型是算力 bound，Decode 典型是显存带宽 bound。两阶段的指标、痛点、扩容逻辑完全不同，机制细节见[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode/)。记住这个区分，后面每个机制都要问一句「它治的是哪一阶段」。
 
 ### 5.3 引擎在调度什么
 
 以下机制均按 **vLLM V1（0.21，当前默认）** 的口径描述；V0 在 0.21 已完全移除，只作历史。
 
-- **连续批处理 → 治吞吐**：Decode 步之间插空，请求随到随上、随完随下，不必等一批全部跑完。机制细节见[《连续批处理》](/blog/连续批处理-每个迭代步重新组批)。**指标信号**：在跑请求数与有效 token 产出的比值；持续低位说明批没凑起来。
-- **PagedAttention → 治有效显存**：KV 按 16 token 一块分页管理，消灭显存碎片。机制细节见[《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存)（那篇里 2–4× 的数字挂着 2023 年、A100、OPT 模型的条件，本文不重复）。**指标信号**：`vllm:kv_cache_usage_perc`——注意这是 V1 的名字，V0 旧名 `gpu_cache_usage_perc` 已移除，但不少第三方文档至今还在写旧名，配监控时别照抄。
+- **连续批处理 → 治吞吐**：Decode 步之间插空，请求随到随上、随完随下，不必等一批全部跑完。机制细节见[《连续批处理》](/blog/连续批处理-每个迭代步重新组批/)。**指标信号**：在跑请求数与有效 token 产出的比值；持续低位说明批没凑起来。
+- **PagedAttention → 治有效显存**：KV 按 16 token 一块分页管理，消灭显存碎片。机制细节见[《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存/)（那篇里 2–4× 的数字挂着 2023 年、A100、OPT 模型的条件，本文不重复）。**指标信号**：`vllm:kv_cache_usage_perc`——注意这是 V1 的名字，V0 旧名 `gpu_cache_usage_perc` 已移除，但不少第三方文档至今还在写旧名，配监控时别照抄。
 - **APC 前缀复用 → 治 TTFT**：以满块（block size 16）为单位复用 KV，尾部未满块不缓存；能复用的长度最多到 `num_tokens − 1`，最后一个 token 必须重算以取 logits（最坏情况整个末块重算）。官方 Limits 的原话是：APC 只减少 prefill 阶段的时间、不减少 decode 阶段的时间，且「in general does not reduce performance」。翻译成口径：**对单个请求，它只改善 TTFT、不改善 ITL；对前缀复用型负载，它同时提高吞吐与 goodput，并降低被抢占后 recompute 的代价。** V1 默认开启，哈希默认用 sha256，多租户有 cache_salt 做隔离。**指标信号**：`vllm:prefix_cache_hits` / `vllm:prefix_cache_queries` 是**块级** counter（不是请求命中率，算命中率用二者相除）；另有 `vllm:prompt_tokens_cached`。命中率是热点迁移的体温计——掉点往往先于 KV 上涨和抢占，是故障链上最早的可观测信号。
 - **Chunked Prefill → 治 Decode 卡顿**：长 prompt 切片后插入迭代，避免一次占住引擎让在场会话全卡住。默认开启，**默认预算按硬件和使用场景分档**：API 服务场景，H100/H200/MI300x 级（显存 ≥70GiB 且设备名不含 A100）每步 8192 token / 最多 1024 条序列；A100 及更小卡为 2048 / 256；离线批处理场景的档位更大（16384 / 8192）。源码里那个 2048 常量只是测试兜底，不是线上默认值；A100 被特意排除在大预算外，因为大预算在 A100 上反而降吞吐（PR #17885）。
 - **抢占 → 故障信号，不是优化项**：显存不够时 V1 只有 recompute 一条路（无 swap、无 COW）；被抢占的请求 KV 全部释放、计算进度归零，回到等待队列最前面，且发生抢占的那一步不接纳新请求。**指标信号**：`vllm:num_preemptions` 是累计 counter，要用 `rate()` 看增量；它的任何持续毛刺都意味着容量或流量出了问题，需要和排队毛刺配对看。
@@ -222,11 +231,11 @@ Prefill 典型是算力 bound，Decode 典型是显存带宽 bound。两阶段�
 每个杠杆都是能力图谱上的一格，机制各有专文：
 
 - **并行**：张量并行要求卡间高速互联（NVLink），流水线并行可以跨机；怎么拆先看硬件拓扑，不是参数越大越好。
-- **量化**：FP8 需要 Hopper/Ada/Blackwell 代际，**A100 不支持 FP8**；AWQ、GPTQ 适用面更广。省显存的代价是校准和精度验证，见[《大模型量化》](/blog/大模型量化-用更少的显存跑更大的模型)。
-- **投机解码**：小模型打草稿、大模型一次批改，1.5–3× 是有条件的区间、收益非单调，见[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改)。
-- **PD 分离**：把 Prefill 和 Decode 拆到两个专用卡池。当前仍是 experimental，官方文档有一句加粗原话：**「DOES NOT improve throughput」**——它改善的是 SLO 内的 goodput、压制尾部 ITL，代价是多一整套 KV 迁移和双池运维，见[《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署)。
+- **量化**：FP8 需要 Hopper/Ada/Blackwell 代际，**A100 不支持 FP8**；AWQ、GPTQ 适用面更广。省显存的代价是校准和精度验证，见[《大模型量化》](/blog/大模型量化-用更少的显存跑更大的模型/)。
+- **投机解码**：小模型打草稿、大模型一次批改，1.5–3× 是有条件的区间、收益非单调，见[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改/)。
+- **PD 分离**：把 Prefill 和 Decode 拆到两个专用卡池。当前仍是 experimental，官方文档有一句加粗原话：**「DOES NOT improve throughput」**——它改善的是 SLO 内的 goodput、压制尾部 ITL，代价是多一整套 KV 迁移和双池运维，见[《PD 分离》](/blog/pd分离-把prefill和decode拆开部署/)。
 
-<AIOpsRecFig4 />
+<RequestLayersFigure />
 
 *图 4：排障深度＝下探层数，每个卡点都有自己的指标。*
 
@@ -240,7 +249,7 @@ Prefill 典型是算力 bound，Decode 典型是显存带宽 bound。两阶段�
 - **Gateway API Inference Extension（GWIE）**：用 InferencePool + 外部调度策略（EPP）做请求级路由，带 Critical/Standard/Sheddable 三级优先级，过载时先 shed 低优请求。
 - **vLLM Production Stack**：vLLM 官方的生产级前置组件集，补引擎本身不做的网关、多实例调度那一层。
 
-<Expand title="▸L2 自查条">
+<Expand title="L2 自查条">
 
 - 给你模型配置和卡型，能不能手算 KV 并发上限的量级，并说出余量主要被谁吃掉？
 - 不看文档，能不能说出从请求进来到字吐完，引擎每一步在调度什么、各自对应哪个指标？
@@ -284,10 +293,10 @@ AWS EKS 指南给出的一组**起始**阈值（来自其 8B 模型实测，不�
 
 「drain 式缩容」一句话带过会埋雷。流式会话的寿命由 `max_tokens` 决定，单请求可能数分钟到数十分钟，「等所有在途请求自然结束」常常等不起。正确顺序：
 
-- preStop 先从网关**摘流**，并等网关端点收敛（否则新请求还在进来）；
-- **有界 drain**：设时间上限，让在途请求尽量走完；
-- 超时则显式 abort，让客户端按幂等键重试，并配合退避防止重试风暴；
-- PD 场景下先停止向该 Decode 实例做新的 handover，再评估在场会话能否迁移。
+1. preStop 先从网关**摘流**，并等网关端点收敛（否则新请求还在进来）；
+2. **有界 drain**：设时间上限，让在途请求尽量走完；
+3. 超时则显式 abort，让客户端按幂等键重试，并配合退避防止重试风暴；
+4. PD 场景下先停止向该 Decode 实例做新的 handover，再评估在场会话能否迁移。
 
 ### 发布、高可用与混部
 
@@ -295,7 +304,7 @@ AWS EKS 指南给出的一组**起始**阈值（来自其 8B 模型实测，不�
 - **高可用**：掉卡（Xid/ECC 错误）靠识别 + 节点 drain，NCCL hang 需要看门狗强制打断；推理引擎没有「主从」概念，高可用在流量层和数据层做；跨 AZ 部署要算清额外成本。
 - **训练推理混部**：互扰不只在 SM——训练会吃满 HBM 带宽、NVLink、PCIe、RDMA 乃至电源和时钟。生产可行形态是**物理分池 + Kueue/KAI 类配额与优先级回收**；而优先级回收的延迟是分钟级（取决于检查点），这本身就是 SLO 风险，不能乐观地当成无缝分时复用。
 
-<Expand title="▸L3 自查条">
+<Expand title="L3 自查条">
 
 - 你能不能说出某个模型从拉权重到真正就绪的完整时间构成，哪段最长？
 - 当前伸缩策略里，扩容信号、缩容保护、预热要求分别是什么？有没有单信号盲区？
@@ -331,7 +340,7 @@ AWS EKS 指南给出的一组**起始**阈值（来自其 8B 模型实测，不�
 
 ### 7.3 容量规划：两个一阶工具，和它们的边界
 
-- **Little’s Law**：$L \approx \lambda W$，在途请求数 ≈ 到达率 × 单请求生命周期。它是稳态守恒等式，**不要求泊松到达**；Decode 生命周期长，所以推理服务在很低到达率下也有大量请求在场——这解释直觉完全正确。但它**不是容量预测模型**：停留时间 W 本身随负载变化，不能拿低负载时测的 W 外推高负载；均值只给平均在途数，槽位规划必须用长度分布和到达尖峰，SLO 拐点仍由压测确定。它的正确定位是**车队级的量级 sanity check**。
+- **Little's Law**：$L \approx \lambda W$，在途请求数 ≈ 到达率 × 单请求生命周期。它是稳态守恒等式，**不要求泊松到达**；Decode 生命周期长，所以推理服务在很低到达率下也有大量请求在场——这解释直觉完全正确。但它**不是容量预测模型**：停留时间 W 本身随负载变化，不能拿低负载时测的 W 外推高负载；均值只给平均在途数，槽位规划必须用长度分布和到达尖峰，SLO 拐点仍由压测确定。它的正确定位是**车队级的量级 sanity check**。
 - **42ms 带宽下限**：这是 H100 SXM（3.35TB/s）、dense 70B、BF16、batch=1、只算权重且假设带宽跑满这一组条件下的 Decode 单步下限。**同口径**（同硬件、同 dtype、batch=1、稠密模型、按 step）实测低于它，说明测量口径对不上（常见：把多 token 一步当单 token、客户端采样、dtype/并行口径不一致）。换 H200（4.8TB/s，约 29ms）、B200（约 8TB/s）、FP8 权重减半、MoE 每 token 不读全量权重，锚点都要重算，不能外推；H100 PCIe 带宽只有 2.0TB/s，对应下限约 70ms。还有一个例外：**投机解码一个 step 可以发出多个被接受的 token，按 token 计的 TPOT 可以低于这个下限**——下限管的是单步，不是单 token。
 
 容量规划的产出链条是：**给定流量与 SLO → 需要的 KV 槽位 → 卡数**，而不是「看着利用率加卡」。
@@ -340,15 +349,19 @@ AWS EKS 指南给出的一组**起始**阈值（来自其 8B 模型实测，不�
 
 核心是一个让所有方案可比的单位：**每百万 token 成本**，输入和输出分开（输出占 Decode 卡时，单价通常显著更高）：
 
+$$
+\text{每百万 output token 成本} = \frac{\text{期间全资源成本}}{\text{output goodput（百万 token）}}
+$$
+
 「全资源成本」至少包含：卡折旧/租金 + 主机 CPU/内存/NVMe + IB 网卡和交换机分摊 + **电力 × PUE + 机房** + 商业软件许可与支持 + 运维人力摊销 + 权重存储和跨 AZ 流量。PD 分离还要计入两个池各自的碎片与空载（池越多空载越大）、连接器占用的 CPU/内存/网卡、双 AZ 成本。
 
 成本杠杆每个都要标明它动的是哪笔账：量化、批处理密度、APC 命中、PD 配比、混部、竞价/包月组合——分别动 TTFT 还是 ITL、吞吐还是 SLO，代价条件是什么，不标清楚就只是「降本大法」的名词橱窗。
 
-<AIOpsRecFig5 />
+<GpuCostFigure />
 
 *图 6：先算白养多少卡年，再折算钱；可收回缺口被目标利用率封顶。*
 
-<Expand title="▸L4 自查条">
+<Expand title="L4 自查条">
 
 - 你能不能说出本团队每百万 output token 的成本量级？数据从哪几个系统取？
 - 当前 SLO 看板的 P99 是怎么聚合的、服务端还是客户端口径？
@@ -395,15 +408,15 @@ AWS EKS 指南给出的一组**起始**阈值（来自其 8B 模型实测，不�
 
 其余格子沿着这个模板对号入座。大公司和小公司的同级别日常不同——大厂资深可能只在两层极深，小厂高级可能五层全包——所以每级都允许两种行为变体，**看行为不看 title**。
 
-<AIOpsRecFig6 />
+<GrowthLevelFigure />
 
 *图 5：三道分水岭各有一个可证伪的动作；级别是合取轮廓，不是平均分。*
 
 三道分水岭，每道都有可证伪的验收点：
 
-- **会装 → 会算**：动手前把 KV、容量、成本算到**量级**，事后被实测验证。算不是考场推导，是让自己的预估和实际数字同量级。
-- **会调 → 会权衡**：真正的权衡有三问——哪两个可量化目标在交换？拐点在哪里？**反悔条件**是什么（出现什么信号就推翻决策）？三问答不全，就是自信地拧旋钮。
-- **会守 → 会建**：「建」的验收是——机制被 ≥2 个人或场景复用、替换掉一个人肉动作或一次复盘结论、并且写明这个机制自身的失败模式。
+1. **会装 → 会算**：动手前把 KV、容量、成本算到**量级**，事后被实测验证。算不是考场推导，是让自己的预估和实际数字同量级。
+2. **会调 → 会权衡**：真正的权衡有三问——哪两个可量化目标在交换？拐点在哪里？**反悔条件**是什么（出现什么信号就推翻决策）？三问答不全，就是自信地拧旋钮。
+3. **会守 → 会建**：「建」的验收是——机制被 ≥2 个人或场景复用、替换掉一个人肉动作或一次复盘结论、并且写明这个机制自身的失败模式。
 
 两句反鸡汤围栏也放这里：分水岭是**累积**的，不是一次跃迁，多数人长期停在「算」与「权衡」之间是正常形状；它不是工龄钟，也不是晋升承诺。
 
@@ -439,11 +452,11 @@ AWS EKS 指南给出的一组**起始**阈值（来自其 8B 模型实测，不�
 
 L2 机制按顺序读，每篇配一个「达 3 分」的动作标准：
 
-- [《图解大模型》](/blog/图解大模型-一口气搞懂大模型的骨架)——能默画出 Transformer 主干和数据形状；
-- [《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)——能对别人讲清两阶段和 42ms 的条件；
-- [《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存)——能说清块管理解决什么、2–4× 的时代条件；
-- [《连续批处理》](/blog/连续批处理-每个迭代步重新组批)——能对照指标说明批是怎么动态组成的；
-- [《大模型量化》](/blog/大模型量化-用更少的显存跑更大的模型)、[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改)、[《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署)——能分别说出它们动哪笔账、代价条件。
+1. [《图解大模型》](/blog/图解大模型-一口气搞懂大模型的骨架/)——能默画出 Transformer 主干和数据形状；
+2. [《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode/)——能对别人讲清两阶段和 42ms 的条件；
+3. [《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存/)——能说清块管理解决什么、2–4× 的时代条件；
+4. [《连续批处理》](/blog/连续批处理-每个迭代步重新组批/)——能对照指标说明批是怎么动态组成的；
+5. [《大模型量化》](/blog/大模型量化-用更少的显存跑更大的模型/)、[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改/)、[《PD 分离》](/blog/pd分离-把prefill和decode拆开部署/)——能分别说出它们动哪笔账、代价条件。
 
 L1/L3/L4 以官方文档为主：DCGM 字段手册、Kubernetes（含 DRA）、vLLM 官方文档、Google SRE 书，并在实验环境把钩子故事亲手复现一遍。想动手看实战，去[推理加速专栏](/inference/)。
 
@@ -458,37 +471,37 @@ L1/L3/L4 以官方文档为主：DCGM 字段手册、Kubernetes（含 DRA）、v
 
 ## 12. 自测（答案折叠）
 
-<Expand title="▸自测 1：nvidia-smi 利用率高，为什么不代表服务跑得好？">
+<Expand title="自测 1：nvidia-smi 利用率高，为什么不代表服务跑得好？">
 
 至少两种情况：① 利用率是「有 kernel 在跑」的时间占空比，小算子没把 SM 填满也算忙；② warp 在等显存数据时也算 active，带宽 bound 的算子 SM Active 可以很高但吞吐低。此外还要排除时钟/功耗限频。要判断真实情况得看 SM Active、Tensor Active、DRAM Active 这一组指标。
 
 </Expand>
 
-<Expand title="▸自测 2：70B 权重能装进 8 卡机，为什么仍可能服务不了几个并发？">
+<Expand title="自测 2：70B 权重能装进 8 卡机，为什么仍可能服务不了几个并发？">
 
 显存三笔账：权重只是门票（约 140GB），每个在场会话还要持续吃 KV（70B 形状约 320 KiB/token），另有运行时开销。能服务的并发数取决于「权重之外剩下多少显存给 KV」，而不是取决于权重装不装得下。
 
 </Expand>
 
-<Expand title="▸自测 3：缩容在 LLM 服务上比普通 Web 服务多什么代价？">
+<Expand title="自测 3：缩容在 LLM 服务上比普通 Web 服务多什么代价？">
 
 实例显存里带着正在 Decode 的会话 KV，直接杀掉会让这些会话 recompute、用户卡顿。所以要摘流 → 等端点收敛 → 有界 drain → 超时 abort 加幂等重试，整个过程只能慢不能快。
 
 </Expand>
 
-<Expand title="▸自测 4（加分）：P99 TTFT 涨了但 ITL 没涨，怎么排查？">
+<Expand title="自测 4（加分）：P99 TTFT 涨了但 ITL 没涨，怎么排查？">
 
 问题不在 Decode 层，但不能单因反射。按鉴别链顺序：先看 `request_queue_time_seconds` 分位（排队）→ 再看 prompt token 长度分布（输入变长）→ 再看块级 APC 命中率（复用下降）→ 最后看 `request_prefill_time_seconds`（纯 prefill 计算）。前三个都排除，才归因 prefill 算力。
 
 </Expand>
 
-<Expand title="▸自测 5（加分）：「上 PD 分离提升吞吐」错在哪？">
+<Expand title="自测 5（加分）：「上 PD 分离提升吞吐」错在哪？">
 
 PD 分离当前仍是 experimental，官方文档原话是「DOES NOT improve throughput」——它不提升裸吞吐，改善的是 SLO 内 goodput 和尾部 ITL；同时新增 KV 迁移、双池碎片与空载等运维成本，小规模通常不划算。
 
 </Expand>
 
-<Expand title="▸自测 6：算每百万 output token 成本，需要哪几个数？">
+<Expand title="自测 6：算每百万 output token 成本，需要哪几个数？">
 
 分子：期间全资源成本——卡折旧/租金、主机资源、网络分摊、电力 × PUE 与机房、软件许可、人力、存储与跨 AZ 流量。分母：同期的 output goodput token 数（按满足 SLO 口径，不用裸 SM 占空比）。输入和输出 token 分开算，输出单价通常更高。
 
@@ -498,28 +511,28 @@ PD 分离当前仍是 experimental，官方文档原话是「DOES NOT improve th
 
 **官方文档与标准资料**
 
-- [Google SRE Book（SLO、容量规划、事故响应章节）](https://sre.google/sre-book/table-of-contents/)
-- [NVIDIA DCGM 官方文档（字段定义）](https://docs.nvidia.com/datacenter/dcgm/latest/reference/field-identifiers.html)
-- [NVIDIA MIG 用户手册](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/)
-- [NVIDIA CUDA MPS 文档](https://docs.nvidia.com/deploy/mps/when-to-use-mps.html)
-- [NVIDIA NVML API Reference（GPU 利用率口径）](https://docs.nvidia.com/deploy/nvml-api/)
-- [Kubernetes：Device Plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/)
-- [Kubernetes：Topology Manager](https://kubernetes.io/docs/tasks/administer-cluster/topology-manager/)
-- [Kubernetes：Dynamic Resource Allocation（v1.35 Stable）](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/)
-- [NVIDIA NCCL 文档](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/)
-- [vLLM 官方文档](https://docs.vllm.ai/)
-- [AWS EKS：AI 推理伸缩阈值](https://docs.aws.amazon.com/eks/latest/userguide/ml-inference-autoscaling-thresholds.html)
-- [NVIDIA Dynamo 文档](https://docs.nvidia.com/dynamo/)
-- [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/)
-- [vLLM Production Stack](https://github.com/vllm-project/production-stack)
+1. [Google SRE Book（SLO、容量规划、事故响应章节）](https://sre.google/sre-book/table-of-contents/)
+2. [NVIDIA DCGM 官方文档（字段定义）](https://docs.nvidia.com/datacenter/dcgm/latest/reference/field-identifiers.html)
+3. [NVIDIA MIG 用户手册](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/)
+4. [NVIDIA CUDA MPS 文档](https://docs.nvidia.com/deploy/mps/when-to-use-mps.html)
+5. [NVIDIA NVML API Reference（GPU 利用率口径）](https://docs.nvidia.com/deploy/nvml-api/)
+6. [Kubernetes：Device Plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/)
+7. [Kubernetes：Topology Manager](https://kubernetes.io/docs/tasks/administer-cluster/topology-manager/)
+8. [Kubernetes：Dynamic Resource Allocation（v1.35 Stable）](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/)
+9. [NVIDIA NCCL 文档](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/)
+10. [vLLM 官方文档](https://docs.vllm.ai/)
+11. [AWS EKS：AI 推理伸缩阈值](https://docs.aws.amazon.com/eks/latest/userguide/ml-inference-autoscaling-thresholds.html)
+12. [NVIDIA Dynamo 文档](https://docs.nvidia.com/dynamo/)
+13. [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/)
+14. [vLLM Production Stack](https://github.com/vllm-project/production-stack)
 
 **站内延伸阅读**
 
-- [《图解大模型：一口气搞懂大模型的骨架》](/blog/图解大模型-一口气搞懂大模型的骨架)
-- [《一次推理的旅程：Prefill 与 Decode》](/blog/一次推理的旅程-prefill与decode)
-- [《PagedAttention：给 KV Cache 装上虚拟内存》](/blog/pagedattention-给kv-cache装上虚拟内存)
-- [《连续批处理：每个迭代步重新组批》](/blog/连续批处理-每个迭代步重新组批)
-- [《大模型量化：用更少的显存跑更大的模型》](/blog/大模型量化-用更少的显存跑更大的模型)
-- [《投机解码：小模型打草稿大模型一次批改》](/blog/投机解码-小模型打草稿大模型一次批改)
-- [《PD 分离：把 Prefill 和 Decode 拆开部署》](/blog/PD分离-把Prefill和Decode拆开部署)
-- [推理加速专栏](/inference/)
+15. [《图解大模型：一口气搞懂大模型的骨架》](/blog/图解大模型-一口气搞懂大模型的骨架/)
+16. [《一次推理的旅程：Prefill 与 Decode》](/blog/一次推理的旅程-prefill与decode/)
+17. [《PagedAttention：给 KV Cache 装上虚拟内存》](/blog/pagedattention-给kv-cache装上虚拟内存/)
+18. [《连续批处理：每个迭代步重新组批》](/blog/连续批处理-每个迭代步重新组批/)
+19. [《大模型量化：用更少的显存跑更大的模型》](/blog/大模型量化-用更少的显存跑更大的模型/)
+20. [《投机解码：小模型打草稿大模型一次批改》](/blog/投机解码-小模型打草稿大模型一次批改/)
+21. [《PD 分离：把 Prefill 和 Decode 拆开部署》](/blog/pd分离-把prefill和decode拆开部署/)
+22. [推理加速专栏](/inference/)

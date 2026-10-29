@@ -1,0 +1,44 @@
+---
+// 图4：一个请求从上到下穿过的层，每层一个典型卡点
+// 左：层带标签；中：四个节点；右：红色卡点标签
+---
+
+<figure>
+  <svg viewBox="0 0 640 332" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="rl-arrow" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto">
+        <path d="M0,0 L9,4.5 L0,9 Z" fill="#94a3b8"/>
+      </marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">请求穿层图：排障深度 = 你能下探到第几层</text>
+
+      {/* 左：层带 */}
+      <rect x="30" y="56" width="46" height="50" rx="7" fill="#e8f4f7" stroke="#8fc4d3"/>
+      <text x="53" y="85" font-size="12" font-weight="bold" fill="#0c5f74" text-anchor="middle">L3</text>
+      <rect x="30" y="118" width="46" height="112" rx="7" fill="#d9eef3" stroke="#7fb8c6"/>
+      <text x="53" y="178" font-size="12" font-weight="bold" fill="#0c5f74" text-anchor="middle">L2</text>
+      <rect x="30" y="242" width="46" height="50" rx="7" fill="#e8f4f7" stroke="#8fc4d3"/>
+      <text x="53" y="271" font-size="12" font-weight="bold" fill="#0c5f74" text-anchor="middle">L1</text>
+
+      {/* 节点与箭头：x=92，宽 356，高 50 */}
+      {[
+        { y: 56, title: "模型网关", sub: "统一入口 · 模型路由 · 配额限流", pain: "卡点：请求排队，首字延迟抬升" },
+        { y: 118, title: "引擎调度", sub: "连续批处理 · chunked prefill 切片", pain: "卡点：抢占 → KV 重算 recompute" },
+        { y: 180, title: "KV 块", sub: "PagedAttention 分块 · APC 前缀复用", pain: "卡点：前缀命中率掉，总块数上涨" },
+        { y: 242, title: "GPU 硬件", sub: "SM 计算 · HBM 显存搬运", pain: "卡点：掉卡 / Xid / 慢卡" },
+      ].map((n, i) => (
+        <g>
+          <rect x="92" y={n.y} width="356" height="50" rx="8" fill="#f2f8fa" stroke="#0085a1"/>
+          <text x="108" y={n.y + 21} font-size="12" font-weight="bold" fill="#0c5f74">{n.title}</text>
+          <text x="108" y={n.y + 39} font-size="10" fill="#475569">{n.sub}</text>
+          <rect x="462" y={n.y + 9} width="154" height="32" rx="7" fill="#fbe3e3" stroke="#e67e7e"/>
+          <text x="539" y={n.y + 29} font-size="9.5" fill="#b14a4a" text-anchor="middle">{n.pain}</text>
+          {i < 3 && <line x1="270" y1={n.y + 50} x2="270" y2={n.y + 62} stroke="#94a3b8" stroke-width="1.8" marker-end="url(#rl-arrow)"/>}
+        </g>
+      ))}
+
+      <text x="320" y="316" font-size="10.5" fill="#94a3b8" text-anchor="middle">这张图没有 L4——L4 不在请求路上，在看这条路的账本里</text>
+    </g>
+  </svg>
+</figure>

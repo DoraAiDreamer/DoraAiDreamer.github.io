@@ -1,0 +1,68 @@
+---
+// 图3：两种前缀索引——左 哈希定长块（满块+半透明尾块）；右 radix tree（共享主干+分叉，叶子 LRU）
+---
+
+<figure>
+  <svg viewBox="0 0 640 274" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="pci-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">两种「前缀户口」：定长哈希块 vs 变长基数树</text>
+
+      {/* 左：哈希链 */}
+      {[0, 1, 2].map(i => {
+        const x = 40 + i * 72;
+        return (
+          <g>
+            <rect x={x} y="70" width="58" height="42" rx="7" fill="#d9eef3" stroke="#0085a1"/>
+            <text x={x + 29} y="90" font-size="10" font-weight="bold" fill="#006377" text-anchor="middle">块 {i + 1}</text>
+            <text x={x + 29} y="104" font-size="8" fill="#64748b" text-anchor="middle">16 token</text>
+            {i < 2 && <line x1={x + 60} y1="91" x2={x + 70} y2="91" stroke="#94a3b8" marker-end="url(#pci-arw)"/>}
+          </g>
+        );
+      })}
+      {/* 半透明尾块 */}
+      <rect x="256" y="70" width="44" height="42" rx="7" fill="#e2e8f0" stroke="#94a3b8" stroke-dasharray="4,3" opacity="0.55"/>
+      <text x="278" y="95" font-size="9" fill="#94a3b8" text-anchor="middle">尾块</text>
+      <text x="150" y="140" font-size="9" fill="#64748b" text-anchor="middle">哈希 = hash(父块哈希 + 本块 token + extra)</text>
+      <text x="150" y="158" font-size="10" font-weight="bold" fill="#334155" text-anchor="middle">只认写满 16 token 的块，尾块不缓存</text>
+      <rect x="40" y="178" width="260" height="26" rx="8" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="170" y="195" font-size="10.5" font-weight="bold" fill="#0c5f74" text-anchor="middle">vLLM：哈希定长块</text>
+
+      <line x1="320" y1="50" x2="320" y2="222" stroke="#cbd5e1" stroke-dasharray="4,4"/>
+
+      {/* 右：radix tree */}
+      <rect x="448" y="58" width="44" height="22" rx="6" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="470" y="73" font-size="9.5" font-weight="bold" fill="#006377" text-anchor="middle">根</text>
+      <line x1="470" y1="80" x2="470" y2="98" stroke="#94a3b8"/>
+      <rect x="448" y="98" width="44" height="22" rx="6" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="470" y="113" font-size="8.5" fill="#006377" text-anchor="middle">共享主干</text>
+
+      <line x1="458" y1="120" x2="408" y2="138" stroke="#94a3b8"/>
+      <line x1="482" y1="120" x2="532" y2="138" stroke="#94a3b8"/>
+      <rect x="386" y="138" width="44" height="22" rx="6" fill="#d9eef3" stroke="#0085a1"/>
+      <rect x="510" y="138" width="44" height="22" rx="6" fill="#d9eef3" stroke="#0085a1"/>
+
+      <line x1="396" y1="160" x2="376" y2="180" stroke="#94a3b8"/>
+      <line x1="420" y1="160" x2="440" y2="180" stroke="#94a3b8"/>
+      <line x1="520" y1="160" x2="500" y2="180" stroke="#94a3b8"/>
+      <line x1="544" y1="160" x2="564" y2="180" stroke="#94a3b8"/>
+      <rect x="358" y="180" width="38" height="22" rx="6" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="377" y="195" font-size="8" fill="#0a7a50" text-anchor="middle">叶</text>
+      <rect x="422" y="180" width="38" height="22" rx="6" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="441" y="195" font-size="8" fill="#b97a1f" text-anchor="middle">LRU</text>
+      <rect x="482" y="180" width="38" height="22" rx="6" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="501" y="195" font-size="8" fill="#0a7a50" text-anchor="middle">叶</text>
+      <rect x="546" y="180" width="38" height="22" rx="6" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="565" y="195" font-size="8" fill="#0a7a50" text-anchor="middle">叶</text>
+
+      <rect x="360" y="210" width="220" height="26" rx="8" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="470" y="227" font-size="10" font-weight="bold" fill="#0c5f74" text-anchor="middle">SGLang RadixAttention：任意长度前缀，尾巴也缓存</text>
+
+      <text x="320" y="256" font-size="11.5" font-weight="bold" fill="#334155" text-anchor="middle">
+        都在回答「怎么认出同一份前缀」——一个按定长块查，一个按任意长度前缀查
+      </text>
+    </g>
+  </svg>
+</figure>

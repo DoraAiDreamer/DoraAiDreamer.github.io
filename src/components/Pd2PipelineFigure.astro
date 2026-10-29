@@ -1,0 +1,72 @@
+---
+// 图4：逐层异步流水三格——①整发 51ms → ②每层切成一片 → ③传输片压进下一层计算的缝隙
+---
+
+<figure>
+  <svg viewBox="0 0 640 332" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="pd2p-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">GB 级搬家为什么不疼：把传输切成薄片塞进计算缝隙</text>
+
+      {/* ① 串行整发 */}
+      <text x="20" y="52" font-size="11" font-weight="bold" fill="#334155">① 整发：80 层全算完，一次端走</text>
+      <rect x="70" y="62" width="120" height="24" rx="5" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="130" y="78" font-size="9" fill="#006377" text-anchor="middle">Prefill 计算</text>
+      <rect x="200" y="62" width="240" height="24" rx="5" fill="#fdf0e0" stroke="#e6a23c" stroke-width="1.6"/>
+      <text x="320" y="78" font-size="9.5" fill="#b97a1f" text-anchor="middle">KV 整发 ≈ 51ms（单流线速，未计开销）</text>
+      <rect x="450" y="62" width="90" height="24" rx="5" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="495" y="78" font-size="9" fill="#0a7a50" text-anchor="middle">D 才开工</text>
+      <line x1="190" y1="74" x2="198" y2="74" stroke="#94a3b8" marker-end="url(#pd2p-arw)"/>
+      <line x1="440" y1="74" x2="448" y2="74" stroke="#94a3b8" marker-end="url(#pd2p-arw)"/>
+
+      <line x1="20" y1="102" x2="620" y2="102" stroke="#e2e8f0" stroke-dasharray="4,4"/>
+
+      {/* ② 切片 */}
+      <text x="20" y="124" font-size="11" font-weight="bold" fill="#334155">② 切片：每层一片，共约 80 片，每片约 4MB（TP=8）</text>
+      {[0,1,2,3,4].map((i)=>(
+        <g>
+          <rect x={70+i*92} y="134" width="80" height="22" rx="5" fill="#d9eef3" stroke="#0085a1"/>
+          <text x={110+i*92} y="149" font-size="9" fill="#006377" text-anchor="middle">第 {i+1} 层算完</text>
+          {i<4 && <line x1={150+i*92} y1="145" x2={160+i*92} y2="145" stroke="#94a3b8" marker-end="url(#pd2p-arw)"/>}
+        </g>
+      ))}
+      <text x="540" y="149" font-size="9" fill="#94a3b8">…</text>
+      {Array.from({length:40},(_,i)=>(
+        <rect x={70+i*6} y="166" width="4" height="10" fill="#f3c87f"/>
+      ))}
+      {Array.from({length:40},(_,i)=>(
+        <rect x={70+i*6} y="178" width="4" height="10" fill="#f3c87f"/>
+      ))}
+      <text x="322" y="176" font-size="8.5" fill="#b97a1f">↑ 每层的 KV 立刻发出，不等后面的层</text>
+
+      <line x1="20" y1="198" x2="620" y2="198" stroke="#e2e8f0" stroke-dasharray="4,4"/>
+
+      {/* ③ 重叠：两条泳道 */}
+      <text x="20" y="220" font-size="11" font-weight="bold" fill="#334155">③ 重叠：传第 i 层时，GPU 已经在算第 i+1 层</text>
+      <text x="44" y="249" font-size="9.5" fill="#006377" text-anchor="end">GPU</text>
+      {[0,1,2,3,4].map((i)=>(
+        <g>
+          <rect x={80+i*96} y="234" width="96" height="24" rx="4" fill="#d9eef3" stroke="#0085a1"/>
+          <text x={128+i*96} y="250" font-size="9" fill="#006377" text-anchor="middle">L{i+1} 计算</text>
+        </g>
+      ))}
+      {/* 层界虚线 */}
+      {[1,2,3,4].map((i)=>(
+        <line x1={80+i*96} y1="262" x2={80+i*96} y2="286" stroke="#cbd5e1" stroke-dasharray="3,3"/>
+      ))}
+      <text x="44" y="286" font-size="9.5" fill="#b97a1f" text-anchor="end">网卡</text>
+      {[0,1,2,3].map((i)=>(
+        <g>
+          <rect x={88+(i+1)*96} y="276" width="30" height="12" rx="3" fill="#fdf0e0" stroke="#e6a23c"/>
+          <text x={103+(i+1)*96} y="285" font-size="7.5" fill="#b97a1f" text-anchor="middle">发 L{i+1}</text>
+        </g>
+      ))}
+      <text x="560" y="285" font-size="8.5" fill="#94a3b8">D 边收边等开工</text>
+
+      <rect x="60" y="300" width="520" height="24" rx="8" fill="#fffaf2" stroke="#e6c388"/>
+      <text x="320" y="316" font-size="9.5" fill="#b97a1f" text-anchor="middle">藏得住的条件：每片传输 ≈ 4MB ÷ 50GB/s ≈ 0.08ms　≪　一层 Prefill 计算（ms 级）；慢网或短 prompt 时条件翻转</text>
+    </g>
+  </svg>
+</figure>

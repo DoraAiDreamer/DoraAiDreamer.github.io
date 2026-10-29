@@ -1,5 +1,5 @@
 ---
-// 钩子图：同一个模型经三种判分协议得到三个分数；±10pp 是单模型置信区间
+// 钩子图：同一个模型经三种判分协议得到三个分数；±10pp 是单模型置信区间不是分差容差
 ---
 
 <figure>
@@ -10,10 +10,12 @@
     <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
       <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">同一个模型，为什么能拿三个分？</text>
 
+      {/* 模型 */}
       <rect x="40" y="96" width="110" height="60" rx="10" fill="#d9eef3" stroke="#0085a1" stroke-width="1.6"/>
       <text x="95" y="122" font-size="11" font-weight="bold" fill="#006377" text-anchor="middle">同一个模型</text>
       <text x="95" y="140" font-size="9" fill="#475569" text-anchor="middle">同一套基准题</text>
 
+      {/* 三个判分器 */}
       {[
         {y:48, t:"likelihood", s:"比选项 logprob", c:"#7fc3d8", sc:"#0085a1", v:"86"},
         {y:96, t:"生成匹配", s:"生成字母再匹配", c:"#fde2b8", sc:"#e6a23c", v:"90"},
@@ -37,8 +39,8 @@
       <text x="568" y="152" font-size="9" font-weight="bold" fill="#b14a4a" text-anchor="middle">±10pp 是单模型</text>
       <text x="568" y="166" font-size="9" font-weight="bold" fill="#b14a4a" text-anchor="middle">95% 置信区间</text>
 
-      <text x="320" y="220" font-size="10" fill="#475569" text-anchor="middle">分数由模型能力、判分协议、题目集版本、推理配置共同决定，只有后三项对齐才可比</text>
-      <text x="320" y="238" font-size="9" fill="#94a3b8" text-anchor="middle">不同题集上两模型分差噪声约 ±14pp；同题配对只看「你对我错」的不一致对</text>
+      <text x="320" y="220" font-size="10" fill="#475569" text-anchor="middle">分数 = 模型能力 × 判分协议 × 题目集 × 推理配置（× 为共同决定，不是数学乘法）</text>
+      <text x="320" y="238" font-size="9" fill="#94a3b8" text-anchor="middle">两模型分差的容差在不同题集上约为 ±14pp；同题配对时只看「你对我错」的不一致对</text>
     </g>
   </svg>
 </figure>

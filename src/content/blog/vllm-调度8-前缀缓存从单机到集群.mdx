@@ -1,31 +1,36 @@
 ---
 title: "vLLM 调度 8：前缀缓存——从单机命中到集群命中率"
-date: 2026-09-29
-author: DoraAiDreamer
-category: 大模型
-tags: ["vLLM","KV Cache","调度"]
+subtitle: "block_size、实际命中与命中率：为什么同样的前缀在集群里会重复算、重复存"
+date: 2026-09-28
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "vLLM"
+  - "源码解读"
+  - "前缀缓存"
+  - "KV Cache"
+  - "SGLang"
+  - "Mooncake"
 ---
+
 import Expand from "../../components/Expand.astro";
-import Vllm8RecFig1 from "../../components/Vllm8RecFig1.astro";
-import Vllm8RecFig2 from "../../components/Vllm8RecFig2.astro";
-import Vllm8RecFig3 from "../../components/Vllm8RecFig3.astro";
-import Vllm8RecFig4 from "../../components/Vllm8RecFig4.astro";
-import Vllm8RecFig5 from "../../components/Vllm8RecFig5.astro";
-import Vllm8RecFig6 from "../../components/Vllm8RecFig6.astro";
-import Vllm8RecFig7 from "../../components/Vllm8RecFig7.astro";
+import PcPainFigure from "../../components/PcPainFigure.astro";
+import PcLayerFigure from "../../components/PcLayerFigure.astro";
+import PcIndexFigure from "../../components/PcIndexFigure.astro";
+import PcDiluteFigure from "../../components/PcDiluteFigure.astro";
+import PcRouteFigure from "../../components/PcRouteFigure.astro";
+import PcPoolFigure from "../../components/PcPoolFigure.astro";
+import PcPayoffFigure from "../../components/PcPayoffFigure.astro";
 
-
-block_size、实际命中与命中率：为什么同样的前缀在集群里会重复算、重复存
-
-源码版本：**vLLM 0.21.0**（2026-05）。本系列锁定该版本，源码链接指向 v0.21.0 tag。
+<p class="version-note">源码版本：<b>vLLM 0.21.0</b>（2026-05）。本系列锁定该版本，源码链接指向 v0.21.0 tag。</p>
 
 你可能已经遇到过这种事：同一个智能体应用，压测单实例时 TTFT 漂亮得很，一旦上了十几个实例、前面挂个随机负载均衡，首字延迟反而变差了——CPU 没涨、GPU 没满，谁也没偷懒，但请求就是经常「冷启动」。
 
 这背后是一项在单机上近乎免费、在集群上却很容易用坏的优化：**前缀缓存（Prefix Caching）**——把算过的前缀 KV 存下来，让重复的前缀只算一次。
 
-在之前的三篇文章里，地基已经打好：[《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存)讲了分页块表与 APC 的工作原理，[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)讲了 Prefill 和 Decode 是两种完全不同的计算，[《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署)讲了 KV 如何跨节点交接。这篇不再从零讲 KV，而是把「**复用**」这条线从单机一路追到集群：单机上两种索引怎么选？为什么实例越多、命中率反而可能塌掉？集群有哪几条手段把命中率救回来？以及——为什么「命中率高」并不自动等于「省钱」？
+在之前的三篇文章里，地基已经打好：[《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存/)讲了分页块表与 APC 的工作原理，[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode/)讲了 Prefill 和 Decode 是两种完全不同的计算，[《PD 分离》](/blog/pd分离-把prefill和decode拆开部署/)讲了 KV 如何跨节点交接。这篇不再从零讲 KV，而是把「**复用**」这条线从单机一路追到集群：单机上两种索引怎么选？为什么实例越多、命中率反而可能塌掉？集群有哪几条手段把命中率救回来？以及——为什么「命中率高」并不自动等于「省钱」？
 
-<Expand title="▸术语速查（先扫一眼，读完再回看）">
+<Expand title="术语速查（先扫一眼，读完再回看）">
 
 - **前缀缓存**：缓存已算过的前缀 KV，相同前缀再次出现时直接复用，跳过对应 Prefill。
 - **命中率**：被查询的 token 里、在缓存中找到的比例（注意是 token 口径，不是请求口径）。
@@ -61,25 +66,23 @@ block_size、实际命中与命中率：为什么同样的前缀在集群里会�
 
 再算容量账。以 **Llama-3-8B 这一级模型**为条件（32 层 × 8 个 KV 头 × head_dim 128 × 2(K,V) × 2 字节 = 131,072 B/token ≈ 128 KiB/token），4096 token 前缀的 KV 大约是 512 MiB；32 个实例各存一份重复副本，占的就是约 **16 GiB**。注意换个模型结论要重算：70B 级模型每 token 的 KV 更大（约 320 KiB/token），同一份 4K 前缀每份约 1.3 GiB、32 份约 40 GiB，不能把 8B 的数字外推过去。
 
+<PcPainFigure />
+
 问题摆上桌了：为什么实例越多，命中率反而可能越低？这 16 GiB 有没有办法变成一份？要回答它，先得看清「前缀」究竟长在请求的什么位置。
-
-<Vllm8RecFig1 />
-
 
 ## 1. 前缀从哪来：一个请求的分层结构
 
 先看一个真实请求。你在应用日志里看到的「用户问了一句话」，送进模型之前通常已经被裹了好几层；把它展开，自外向内是这样五层：
 
-- **模板头**：chat template 的特殊符号、BOS——所有请求逐字节相同；
-- **系统与工具层**：system prompt、安全提示、function/tool 说明书。智能体场景里这层常常有几千 token，Preble 论文测过五个真实负载，其中**共享前缀占整个 prompt 的 85%–97%**[2]；
-- **共享文档 / 知识层**：同一份手册、年报、代码仓库上下文、few-shot 例子；
-- **历史对话层**：多轮对话会把整段历史重新发一遍——每一轮你都在为历史付费；
-- **独有任务层**：本次的问题，这是唯一不共享的部分。
+<PcLayerFigure />
+
+1. **模板头**：chat template 的特殊符号、BOS——所有请求逐字节相同；
+2. **系统与工具层**：system prompt、安全提示、function/tool 说明书。智能体场景里这层常常有几千 token，Preble 论文测过五个真实负载，其中**共享前缀占整个 prompt 的 85%–97%**[2]；
+3. **共享文档 / 知识层**：同一份手册、年报、代码仓库上下文、few-shot 例子；
+4. **历史对话层**：多轮对话会把整段历史重新发一遍——每一轮你都在为历史付费；
+5. **独有任务层**：本次的问题，这是唯一不共享的部分。
 
 规律很清楚：**越靠前的层，被越多请求共享；缓存命中沿层向下，第一个不同的地方就停。** 前缀缓存的收益盘子，就是前四层占 prompt 的比例。
-
-<Vllm8RecFig2 />
-
 
 之前讲 S-LoRA 数字时给过一个对照口径：PagedAttention 论文的实验里，prompt 的 KV 平均只占一个请求**全生命周期 KV** 的 12%——这是 parallel sampling 场景共享盘子偏小的原因。注意这里的 12% 是 KV 容量口径、对照的是整个请求的 KV（含生成），不是「前四层占 prompt 的 12%」，也不是算力口径。
 
@@ -87,7 +90,7 @@ block_size、实际命中与命中率：为什么同样的前缀在集群里会�
 
 ## 2. 单机原理：90 秒回顾与两种索引
 
-链式哈希、满块 16、三种打不中的情形，在 [《PagedAttention》§4.3](/blog/pagedattention-给kv-cache装上虚拟内存) 已经完整讲过，那篇的自测 Q5 也考过，这里不重讲，只做个 90 秒回顾：
+链式哈希、满块 16、三种打不中的情形，在 [《PagedAttention》§4.3](/blog/pagedattention-给kv-cache装上虚拟内存/) 已经完整讲过，那篇的自测 Q5 也考过，这里不重讲，只做个 90 秒回顾：
 
 - **链式身份证**：每个块的哈希 = hash(父块哈希 + 本块 token + extra)，沿链一路编码；
 - **只认从头开始、写满 16 token 的块**；最后一个 token 为了取 logits 必须重算，由于分配要求块对齐，重算量是 1–16 token（**可能是整个末块**，不只是一个 token）；
@@ -99,6 +102,8 @@ block_size、实际命中与命中率：为什么同样的前缀在集群里会�
 
 旧的内容回顾完，真正的新增量在这里：给前缀「上户口」有两种主流做法。
 
+<PcIndexFigure />
+
 | 维度 | 哈希定长块（vLLM APC） | RadixAttention（SGLang） |
 | --- | --- | --- |
 | 一句话 | 给每 16-token 块上哈希户口 | 一棵能分叉的前缀树，没凑满的尾巴也缓存 |
@@ -109,10 +114,7 @@ block_size、实际命中与命中率：为什么同样的前缀在集群里会�
 
 直白点说：vLLM 像按固定大小的抽屉登记物品，没塞满的抽屉不登记；SGLang 像直接画一棵家族树，任意长度的共同祖先都能一眼看出来。两者没有绝对优劣——定长块实现简单、和分页内存天然契合；基数树没有尾块浪费、但要维护树结构。
 
-<Vllm8RecFig3 />
-
-
-<Expand title="默认开关、驱逐顺序与多租户隔离">
+<Expand title="折叠：默认开关、驱逐顺序与多租户隔离">
 
 **APC 默认是否开启，要看模型类型（vLLM 0.21）**：CacheConfig 字段默认 True，之后还要经一层 is_prefix_caching_supported 裁决——
 
@@ -164,16 +166,15 @@ block_size、实际命中与命中率：为什么同样的前缀在集群里会�
 
 那「去重只存一份」和后面要讲的「热点前缀复制」是不是自相矛盾？这里先把裁决句立好：
 
-> 冷前缀全局逻辑一份；热点前缀允许物理上存多份、用来换带宽和均衡。「一份」讲的是容量账，不是物理事实。
+> **冷前缀全局逻辑一份；热点前缀允许物理上存多份、用来换带宽和均衡。「一份」讲的是容量账，不是物理事实。**
 
 最后，小集群和大集群的结论可能反过来：$N=2$ 时重访间隔只有 0.64 秒、小于 churn，前缀在两个实例上一直是热的；$N=32$ 时间隔 3.2 秒、大于 churn，次次冷启动——这个交叉点，是实例加到一定数量之后才出现的。规模很小时，「一个池服务所有请求」的统计复用反而是最好的。
 
-<Vllm8RecFig4 />
-
+<PcDiluteFigure />
 
 记住这句钉死的话，结尾还要回声：
 
-> 「加机器做了两件事：把同一前缀的到达率除以 N，把它的副本数乘以 N——见面更少，占地方更多。」
+> **「加机器做了两件事：把同一前缀的到达率除以 N，把它的副本数乘以 N——见面更少，占地方更多。」**
 
 怎么破？后面给四类手段。先看最直接的：让请求「回到」已经持有它前缀的实例。
 
@@ -187,14 +188,13 @@ block_size、实际命中与命中率：为什么同样的前缀在集群里会�
 
 ### 主角：Preble
 
-这条路线最有代表性的系统是 **Preble**[2]（ICLR’25，UCSD WukLab）。它的全局调度器维护一棵全局前缀 radix tree，每个节点记录三样东西：token 数、**缓存了这个节点的 GPU 集合**、历史窗口内各 GPU 上共享这个节点的请求数。
+这条路线最有代表性的系统是 **Preble**[2]（ICLR'25，UCSD WukLab）。它的全局调度器维护一棵全局前缀 radix tree，每个节点记录三样东西：token 数、**缓存了这个节点的 GPU 集合**、历史窗口内各 GPU 上共享这个节点的请求数。
 
 调度算法叫 E2（Exploitation + Exploration）：当请求命中的前缀 token 数**大于**还没命中的剩余 token 数，就走 Exploit——派给持有最长匹配前缀的 GPU（多个就选负载最轻的）；否则走 Explore——按统一的「负载代价」选最轻的 GPU。这个代价把窗口内的计算负载、为新请求腾显存的驱逐重算成本、以及未命中部分的 Prefill 全部折算成 GPU 时间，只靠 token 计数加上按 GPU 型号离线标定的回归来估算，不做在线 profiling。
 
 实测数字（4×A6000 跑 Mistral-7B、8×H100 跑 Llama-3-70B，五个负载加 Azure 到达模式；基线是 SGLang 的默认分散调度）：**平均延迟改善 1.5–14.5 倍，p99 改善 2–10 倍**。至于「调度器每秒处理 245–2931 个请求、能支撑 70–391 块 GPU」——这是**调度器 CPU 侧的处理能力和拓扑外推**，不是端到端实测，引用时要分清。
 
-<Vllm8RecFig5 />
-
+<PcRouteFigure />
 
 ### 同路线的其他工作
 
@@ -207,7 +207,7 @@ block_size、实际命中与命中率：为什么同样的前缀在集群里会�
 
 CacheRoute 的负结果值得单独在正文留一句：**当低命中流量被强行集中，负载和容量反而下降，所以任何新路由策略上线前，都应该先做 shadow replay（影子重放）**——用真实流量的副本比对「命中率、p99、容量」三项，而不是看一眼负载统计就拍板。论文自己也交代了：主力结论来自半合成 trace，而它对比的 Preble 是在统一框架下的重新实现、不是原系统。
 
-<Expand title="前缀感知的本地批处理">
+<Expand title="折叠：前缀感知的本地批处理">
 
 路由之外，Preble 的本地调度器会按「被缓存 token 的百分比」把等待队列分成若干优先级组、再按比例从各组取请求——作用是多租户之间的公平，避免某一类长前缀请求霸占整批。RAGCache 里还有个「缓存感知请求重排」：先服务能命中大块上下文的请求，防止缓存颠簸。
 
@@ -227,13 +227,15 @@ CacheRoute 的负结果值得单独在正文留一句：**当低命中流量被�
 
 具体数字上，TokenLake 用 Roofline 模型 $C\geq 2\alpha_{net}/k_{comp}+4d/(k_{comp}B_{net})$，在**它第 7 节的实验硬件**（8×A100、4×200Gbps IB）下算出这个门槛约 **568 token**。三条围栏必须同时记住：
 
-- 它随算力、网络带宽、hidden dim 变化，**不是宇宙常数**；
-- 它算的是 **Decode 迭代里访问远端 KV 分片**（序列长 $S$、段大小 $C=S/N$），不是 Prefill 阶段拉取；
-- Mooncake 论文里「大于 1000 token」是另一个东西——chunked prefill 节点的块阈值，别混。
+1. 它随算力、网络带宽、hidden dim 变化，**不是宇宙常数**；
+2. 它算的是 **Decode 迭代里访问远端 KV 分片**（序列长 $S$、段大小 $C=S/N$），不是 Prefill 阶段拉取；
+3. Mooncake 论文里「大于 1000 token」是另一个东西——chunked prefill 节点的块阈值，别混。
+
+<PcPoolFigure />
 
 ### 主角：Mooncake 与 MemServe
 
-**Mooncake**[7]（FAST’25，月之关键词 Kimi 的服务平台）是「KVCache-centric」架构的代表：用集群里闲置的 CPU/DRAM/SSD 组成全局池，前缀感知哈希**去重**，Conductor 按缓存局部性做全局调度、可以复制或换出块，Messenger 经 RDMA/GPUDirect 搬运。
+**Mooncake**[7]（FAST'25，月之关键词 Kimi 的服务平台）是「KVCache-centric」架构的代表：用集群里闲置的 CPU/DRAM/SSD 组成全局池，前缀感知哈希**去重**，Conductor 按缓存局部性做全局调度、可以复制或换出块，Messenger 经 RDMA/GPUDirect 搬运。
 
 数字要分两类记：模拟场景里吞吐**最高 +525%**——这是一个与 Llama-2-70B 同构的 **dummy 模型**、在 800Gbps RDMA 集群上测的（「50%」在论文里是模拟数据集的缓存比例参数，**没有「+50% 下限」这种说法**）；而在 **23,000 条真实生产 trace** 按时间戳重放时，系统多承载了 **75%** 的请求。这两类条件不能混。
 
@@ -249,13 +251,13 @@ CacheRoute 的负结果值得单独在正文留一句：**当低命中流量被�
 | CachedAttention[10] | HBM/DRAM/SSD 三级 + look-ahead 预取 + 位置编码解耦后可截断 | **单机 4×A100**（128GB DRAM + 10TB SSD）：命中率 71%–90%（Llama-13B 为 86%）、86% vs LRU 58%、99.6% 的命中落在 DRAM、TTFT −61%–87% | 需要相对位置编码；实验只有单机 |
 | LMCache[11] | 企业级 KV 缓存层：批量数据搬运、计算/I/O 流水线、模块化引擎连接器、一等缓存控制 API（pin/lookup/move/compress） | 与 vLLM 结合吞吐最高 **15×**（多轮 QA / 文档分析）；另一条工业洞见：context truncation 能让前缀命中率腰斩 | 论文很新；落地以官方文档为准 |
 
-命名史提醒：第 10 条的 arXiv 预印本 v1/v2 原名 **AttentionStore**，ATC’24 正式发表时改名 **CachedAttention**（它里面那个分层存储子系统仍叫 AttentionStore）——引用时两个名字都给，读者才不会以为是两篇论文。
+命名史提醒：第 10 条的 arXiv 预印本 v1/v2 原名 **AttentionStore**，ATC'24 正式发表时改名 **CachedAttention**（它里面那个分层存储子系统仍叫 AttentionStore）——引用时两个名字都给，读者才不会以为是两篇论文。
 
-<Expand title="传输压缩与 SSD 方向的新工作">
+<Expand title="折叠：传输压缩与 SSD 方向的新工作">
 
-- **CacheGen**[12]（SIGCOMM’24）：自定义张量编码（分层动态量化 + 利用 token 间局部性做 delta/算术编码成比特流），码率像视频流一样自适应、带宽极低时退化为发文本。KV 体积比 8-bit 量化小 3.5–4.3×（622MB→176MB，质量 1.00→0.98）；3 Gbps 下 TTFT 比 8-bit 快 1.67–1.81×、比发文本快 3.1–4.7×（掉点不到 2%）；带宽超过 20 Gbps 收益缩小。
-- **HCache**[13]（EuroSys’25）：不搬完整 KV，而是缓存中间的 hidden states（部分层的 H 加少量 KV 就能重建）；TTFT 比 KV offload 快至 1.93×、比重算快至 5.73×，存储省 1.92–2.40×；需要存储带宽约 24/21/37 GB/s（7B/13B/30B）。
-- **Contextra**（原名 Strata）[14]（OSDI’26，NVIDIA/UIUC/Stanford，基于 SGLang）：GPU-assisted I/O——解耦 GPU 和 CPU 的内存布局、治理分页小 IO 碎片；cache-aware 调度，用互补任务填加载停顿。Llama-70B 的 TTFT 比 vLLM v0.8.5 + LMCache v0.2.1 快 5×、比 TensorRT-LLM 快 3.75×。
+- **CacheGen**[12]（SIGCOMM'24）：自定义张量编码（分层动态量化 + 利用 token 间局部性做 delta/算术编码成比特流），码率像视频流一样自适应、带宽极低时退化为发文本。KV 体积比 8-bit 量化小 3.5–4.3×（622MB→176MB，质量 1.00→0.98）；3 Gbps 下 TTFT 比 8-bit 快 1.67–1.81×、比发文本快 3.1–4.7×（掉点不到 2%）；带宽超过 20 Gbps 收益缩小。
+- **HCache**[13]（EuroSys'25）：不搬完整 KV，而是缓存中间的 hidden states（部分层的 H 加少量 KV 就能重建）；TTFT 比 KV offload 快至 1.93×、比重算快至 5.73×，存储省 1.92–2.40×；需要存储带宽约 24/21/37 GB/s（7B/13B/30B）。
+- **Contextra**（原名 Strata）[14]（OSDI'26，NVIDIA/UIUC/Stanford，基于 SGLang）：GPU-assisted I/O——解耦 GPU 和 CPU 的内存布局、治理分页小 IO 碎片；cache-aware 调度，用互补任务填加载停顿。Llama-70B 的 TTFT 比 vLLM v0.8.5 + LMCache v0.2.1 快 5×、比 TensorRT-LLM 快 3.75×。
 - **AdaptCache**[15]：观察到多数命中落在慢速 SSD，改用有损 KV 压缩提升 DRAM 命中率；**Tutti**[16]：GPU 用 io_uring 直连 NVMe、把 CPU 逐出关键路径，严格 SLO 下 TTFT 降低 78.3%。
 
 </Expand>
@@ -274,13 +276,13 @@ CacheRoute 的负结果值得单独在正文留一句：**当低命中流量被�
 
 ### PD 交接：命中率视角
 
-PD 交接的完整机制（接法 A/B、逐层薄片、SplitWise 数字）在 [《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署) 里讲过，这里只看命中率：P 节点算完，把 KV 写进共享池或传给 D，D 不必重算 prompt；而这份 KV 同时就进了跨请求的池子，供后来的请求复用——**P 是前缀的「生产者」，D 是「消费者」**。开服时要灌的公共前缀，也可以直接在 P 池里预热好。
+PD 交接的完整机制（接法 A/B、逐层薄片、SplitWise 数字）在 [《PD 分离》](/blog/pd分离-把prefill和decode拆开部署/) 里讲过，这里只看命中率：P 节点算完，把 KV 写进共享池或传给 D，D 不必重算 prompt；而这份 KV 同时就进了跨请求的池子，供后来的请求复用——**P 是前缀的「生产者」，D 是「消费者」**。开服时要灌的公共前缀，也可以直接在 P 池里预热好。
 
 口径对齐：「PD 分离不提升裸吞吐、只提 goodput」是 **vLLM 当前连接器实现**的文档原句；DistServe、SplitWise 在各自的系统里报告的是 SLO 之内的吞吐增益，别把这句话当成学界共识。
 
 ### 迁移主角：Llumnix
 
-**Llumnix**[17]（OSDI’24，阿里）做的是请求的在线热迁移。它利用 KV 的 **append-only** 特性：源实例一边继续解码、一边把已经完成迭代的 KV 拷到目标，再追拷这期间新增的量，最后只停一个迭代拷尾块——借用了 VM 活迁移的 pre-copy 思想，但**不需要脏页跟踪**（KV 只往后追加，不存在「某一页被改写」）。工程上用 Gloo 在独立 CUDA stream 上拷、小块先 fusion，两端有 pre-allocate/commit/abort 握手来处理 OOM、请求提前结束等异常。
+**Llumnix**[17]（OSDI'24，阿里）做的是请求的在线热迁移。它利用 KV 的 **append-only** 特性：源实例一边继续解码、一边把已经完成迭代的 KV 拷到目标，再追拷这期间新增的量，最后只停一个迭代拷尾块——借用了 VM 活迁移的 pre-copy 思想，但**不需要脏页跟踪**（KV 只往后追加，不存在「某一页被改写」）。工程上用 Gloo 在独立 CUDA stream 上拷、小块先 fusion，两端有 pre-allocate/commit/abort 握手来处理 OOM、请求提前结束等异常。
 
 实测：迁移停机时间随序列长度**恒约 20–30ms**（比单个 decode step 还短），而重算或阻塞拷贝的基线停机最长达到它的 111×（8K 序列重算要 3.5s、相当于 54 个 decode step）；对同批 decode 速度的影响 ≤1%；**抢占损失平均降低 84%**；对 round-robin 的端到端 mean/p99 延迟为 2×/2.9×；成本最多省 **36%**。
 
@@ -288,7 +290,7 @@ PD 交接的完整机制（接法 A/B、逐层薄片、SplitWise 数字）在 [�
 
 同方向还有 BanaServe[18]：它的全局 CPU/SSD store 让路由可以只按负载调度；另有**注意力层级**的 KV 迁移——本地和卸载两路注意力并行，只交换局部 softmax 分母 $\ell^{(1)}$ 和局部输出 $O^{(1)}$ 再合并归一化（是「注意力层级」，不是「头级」），限单区域。FlowKV[19] 则把 KV 传输做连续化、合并 NCCL 调用（每请求 23,469 次降到 1 次），平均传输延迟降低 **96%**（0.944s→0.053s）。
 
-<Expand title="什么时候选路由，什么时候选迁移">
+<Expand title="折叠：什么时候选路由，什么时候选迁移">
 
 数据已经在某个实例、只需要把请求指对路——用路由，零搬运；负载已经倾斜、数据在错误的实例上——用迁移，付一次搬运。实际部署里两者通常和全局池叠加：路由负责大多数请求的亲和，迁移负责救场，全局池保证「本地没有」时总能拉得到。迁移的边界：两端都要有内存余量，集群负载过高或过低时收益都有限。
 
@@ -312,26 +314,26 @@ PD 交接的完整机制（接法 A/B、逐层薄片、SplitWise 数字）在 [�
 
 ### 桶 2：让更多东西能共享——基座与跨前缀
 
-LoRA 只改网络的旁路，同一个基座的 KV 在挂不同 adapter 的请求之间天然可以共享。**S-LoRA**[20]（MLSys’24）用 Unified Paging 统一管理 adapter 权重和变长 KV、消除碎片，单卡 A100 能同时服务 2000 个 adapter、吞吐比 vLLM-packed 最高高 4×；**Punica**[21]（MLSys’24）用 SGMV 算子把多租户批到一起，固定集群下多 LoRA 的吞吐约 12×。注意这两篇本身不做跨位置的 KV 融合。
+LoRA 只改网络的旁路，同一个基座的 KV 在挂不同 adapter 的请求之间天然可以共享。**S-LoRA**[20]（MLSys'24）用 Unified Paging 统一管理 adapter 权重和变长 KV、消除碎片，单卡 A100 能同时服务 2000 个 adapter、吞吐比 vLLM-packed 最高高 4×；**Punica**[21]（MLSys'24）用 SGMV 算子把多租户批到一起，固定集群下多 LoRA 的吞吐约 12×。注意这两篇本身不做跨位置的 KV 融合。
 
 再往前一步，就突破了「连续前缀」的边界。**先说清楚：精确的前缀复用始终是唯一零风险的基线，下面这些都依赖某种稀疏性或微调、都有质量风险。**
 
-- **CacheBlend**[22]（EuroSys’25）：RAG 要复用的文档块**不在前缀位置**，正常的前/后缀缓存都失效。它的做法是把各块预存的 KV 直接拼起来，只挑「高 KV 偏差」的 token（用注意力分数启发式识别，占 5%–18%）跨层选择性重算，RoPE 的位置用旋转矩阵一次纠正，Loading Controller 还会让重算时间恰好被 KV 加载延迟盖住。结果 TTFT 比全重算快 2.2–3.3 倍、吞吐高 2.8–5×；F1/Rouge-L 的差距 ≤0.002（embedding 相似度口径 ≤0.02）。边界：依赖交叉注意力稀疏、只利 Prefill，不适用纯 SSM。
+- **CacheBlend**[22]（EuroSys'25）：RAG 要复用的文档块**不在前缀位置**，正常的前/后缀缓存都失效。它的做法是把各块预存的 KV 直接拼起来，只挑「高 KV 偏差」的 token（用注意力分数启发式识别，占 5%–18%）跨层选择性重算，RoPE 的位置用旋转矩阵一次纠正，Loading Controller 还会让重算时间恰好被 KV 加载延迟盖住。结果 TTFT 比全重算快 2.2–3.3 倍、吞吐高 2.8–5×；F1/Rouge-L 的差距 ≤0.002（embedding 相似度口径 ≤0.02）。边界：依赖交叉注意力稀疏、只利 Prefill，不适用纯 SSM。
 - 同族一句一个：**EPIC**[23] 做位置无关缓存并修复 attention-sink（TTFT 最高 8×）；**KVLink**[24] 给独立编码的文档做拼接、加可训练特殊 token（TTFT 最多 −96%）；**Cache-Craft**[25] 管理任意位置的 chunk，冗余计算比 SOTA 前缀缓存少 51%；**TurboRAG**[26] 通过一次性微调让模型适应 KV 直拼（TTFT 平均快 8.6×）。
 
 ### 桶 3：让该留的留下——驱逐超越 LRU
 
-- **LPC**[27]（NeurIPS’25）：第一个用学习方法做驱逐——118M 的嵌入模型加 3 层 MLP，预测「这个会话还会不会继续」，按概率（并做指数衰减）驱逐；达到相同命中率需要的缓存比 LRU 少 18%–47%，Prefill 吞吐高至 +11%。
-- **RAGCache**[28]（TOCS’25）的知识树加 PGDSF 驱逐：用重算代价给频率加权，命中率比 LRU 高 1.06–1.62 倍，TTFT 比 vLLM 快 1.2–4×。
+- **LPC**[27]（NeurIPS'25）：第一个用学习方法做驱逐——118M 的嵌入模型加 3 层 MLP，预测「这个会话还会不会继续」，按概率（并做指数衰减）驱逐；达到相同命中率需要的缓存比 LRU 少 18%–47%，Prefill 吞吐高至 +11%。
+- **RAGCache**[28]（TOCS'25）的知识树加 PGDSF 驱逐：用重算代价给频率加权，命中率比 LRU 高 1.06–1.62 倍，TTFT 比 vLLM 快 1.2–4×。
 - **Marconi**[29]：面向 Attention+SSM 的混合模型——循环层状态就地更新、无法回滚，只能精确匹配；用 FLOP-aware 的准入和驱逐。它的 **token 命中率提升 4.5–34.4 倍（这是命中率之比、不是延迟倍数）**，对应的实际收益是 TTFT 降低 71.1% / 617ms（Jamba-1.5-Mini、4×A100，基线是扩展过的 vLLM+/SGLang+）。
 
-最后留一个收尾警告。**Don’t Break the Cache**[30]（2026）系统评测了智能体负载下的商用 API 缓存：费用降低 41%–80%、TTFT 改善 13%–31%；但**朴素地把全部历史上下文塞进去，可能反而增加延迟**——真正收益稳定的做法是「缓存边界控制」：动态内容往后放、把动态工具结果排除在缓存段之外。
+最后留一个收尾警告。**Don't Break the Cache**[30]（2026）系统评测了智能体负载下的商用 API 缓存：费用降低 41%–80%、TTFT 改善 13%–31%；但**朴素地把全部历史上下文塞进去，可能反而增加延迟**——真正收益稳定的做法是「缓存边界控制」：动态内容往后放、把动态工具结果排除在缓存段之外。
 
 ## 8. 观测：命中率怎么量
 
 vLLM 021 里和缓存相关的指标，要按三组分开口径，不能合在一起看。
 
-第一组，Prometheus 计数器 `vllm:prefix_cache_queries` 和 `vllm:prefix_cache_hits`，**单位是 token**（metric 帮助原文就是 “number of queried/cached tokens”）：每个请求在 get_computed_blocks 时记一次，queries 是 prompt 的总 token 数，hits 是命中的 token 数——因为只有满块能命中，hits 永远是 16 的整数倍。
+第一组，Prometheus 计数器 `vllm:prefix_cache_queries` 和 `vllm:prefix_cache_hits`，**单位是 token**（metric 帮助原文就是 "number of queried/cached tokens"）：每个请求在 get_computed_blocks 时记一次，queries 是 prompt 的总 token 数，hits 是命中的 token 数——因为只有满块能命中，hits 永远是 16 的整数倍。
 
 第二组，**KV connector 的跨实例命中有独立计数器** `vllm:external_prefix_cache_queries/hits`；第三组，多模态还有 `mm_cache_*`。这三组要是合一，口径就全乱了——比如论文里 CacheRoute 那种 93.2% 的命中率，和 vLLM 面板上这两个计数器根本不是一回事。
 
@@ -345,8 +347,7 @@ vLLM 021 里和缓存相关的指标，要按三组分开口径，不能合在�
 
 ### 为什么「命中率高」不等于「收益高」
 
-<Vllm8RecFig7 />
-
+<PcPayoffFigure />
 
 两条原因：第一，前缀缓存只省 Prefill，如果负载里 Prefill 占端到端的比例很小（超长输出、短输入），命中率再高，端到端收益也小；第二，远端命中要付网络代价，慢网时一次「命中」可能比本地重算还慢（568 门槛、MemServe 的缓存比例阈值都在讲这件事）。
 
@@ -384,7 +385,7 @@ vLLM 021 里和缓存相关的指标，要按三组分开口径，不能合在�
 | production-stack | ~2.6k | 官方 K8s 栈：prefix router + LMCache |
 | NIXL | ~1.3k | KV 传输抽象 |
 
-最后是显式警告：PD/disagg 在 vLLM 0.21 文档里仍然标注 “(experimental)，subject to change”，生产级连接器依赖第三方。产品形态演进很快，落地之前务必核对当前版本的文档。
+最后是显式警告：PD/disagg 在 vLLM 0.21 文档里仍然标注 "(experimental)，subject to change"，生产级连接器依赖第三方。产品形态演进很快，落地之前务必核对当前版本的文档。
 
 ## 10. 收束
 
@@ -401,90 +402,76 @@ vLLM 021 里和缓存相关的指标，要按三组分开口径，不能合在�
 
 ## 11. 自测（答案点击展开）
 
-<Expand title="▸Q1：手算——R=1000、P=4000、U=500，完美复用后 Prefill 总量是多少？相对无缓存省多少？">
-
+<Expand title="Q1：手算——R=1000、P=4000、U=500，完美复用后 Prefill 总量是多少？相对无缓存省多少？">
 $P+R\cdot U=4000+1000\times500=504{,}000$ token；无缓存是 $1000\times4500=4{,}500{,}000$，比值约 8.9，Prefill 降到约九分之一。前提是零驱逐、满块对齐。
-
 </Expand>
 
-<Expand title="▸Q2：为什么实例从 1 增到 32、随机路由下命中率可能反而下降？">
-
+<Expand title="Q2：为什么实例从 1 增到 32、随机路由下命中率可能反而下降？">
 稀释：单实例的重访间隔从 100ms 变成 $N/r=3.2$ 秒，超过 churn 前缀就被驱逐；冗余：公共前缀被复制成 32 份、有效容量小于 $N\times C$。实例很少时（如 N=2，间隔 0.64s）统计复用反而最好。
-
 </Expand>
 
-<Expand title="▸Q3：前缀感知路由为什么必须带「负载闸门」？热点前缀复制解决什么？">
-
+<Expand title="Q3：前缀感知路由为什么必须带「负载闸门」？热点前缀复制解决什么？">
 纯亲和会让持有热门前缀的实例先撞上单实例容量上限、被压垮；负载闸门在命中分之外再看实时负载、超载就溢出到次优实例。热点前缀复制到多个实例并按负载分裂子树，兼顾亲和与均衡。
-
 </Expand>
 
-<Expand title="▸Q4：全局池「冷前缀去重一份」省的是什么？它和热点复制为什么不矛盾？">
-
+<Expand title="Q4：全局池「冷前缀去重一份」省的是什么？它和热点复制为什么不矛盾？">
 省下的是 32 份冗余副本占用的容量（账 2：16 GiB→512 MiB），让格子能装更多不同前缀。「一份」是容量账：冷前缀逻辑一份；热点前缀物理上允许多份、用来换带宽和均衡。
-
 </Expand>
 
-<Expand title="▸Q5：568 token 这个门槛由什么决定、为什么不是宇宙常数？它算的是哪个阶段？">
-
+<Expand title="Q5：568 token 这个门槛由什么决定、为什么不是宇宙常数？它算的是哪个阶段？">
 它是 Roofline 门槛（省下的计算 ≥ 通信代价），随算力、网络带宽、hidden dim 变化；算的是 Decode 迭代访问远端 KV 分片（C=S/N），不是 Prefill 拉取。Mooncake 的「1000+ token」是另一个 chunk 阈值。
-
 </Expand>
 
-<Expand title="▸Q6：Llumnix 迁移、Preble 路由、PD 交接，时机和搬运内容各有什么不同？">
-
+<Expand title="Q6：Llumnix 迁移、Preble 路由、PD 交接，时机和搬运内容各有什么不同？">
 路由：请求还没开始，不搬数据、挑实例；交接：P 刚算完，KV 从 P 搬到 D；迁移：请求正在跑，连请求带 KV 搬走、停机恒约 20–30ms。Llumnix 治的是负载不均，不是前缀亲和。
-
 </Expand>
 
-<Expand title="▸加分题：命中率已经 90% 却几乎没省钱，给出两种原因">
-
+<Expand title="加分题：命中率已经 90% 却几乎没省钱，给出两种原因">
 一是 Prefill 占端到端比例很小（超长输出、短输入），命中再多端到端收益也小；二是远端命中走慢网，拉取的延迟抵消了省下的 Prefill、甚至比本地重算还慢。正确做法是和 TTFT/ITL/goodput 联测、影子流量验证。
-
 </Expand>
 
 ## 12. 参考资料
 
 **论文（编号均已打开 abs/全文页核对，2026-09）**
 
-- Kwon et al., [Efficient Memory Management for Large Language Model Serving with PagedAttention](https://arxiv.org/abs/2309.06180)（SOSP’23）；Zheng et al., [SGLang](https://arxiv.org/abs/2312.07104)（MLSys’24）
-- Srivatsa et al., [Preble: Efficient Distributed Prompt Scheduling for LLM Serving](https://arxiv.org/abs/2407.00023)（ICLR’25）
-- Cao et al., [Locality-aware Fair Scheduling in LLM Serving](https://arxiv.org/abs/2501.14312)（DLPM/D²LPM）
-- Li et al., [Parrot: Efficient Serving of LLM-based Applications with Semantic Variable](https://arxiv.org/abs/2405.19888)（OSDI’24）
-- Xia et al., [SkyWalker: A Locality-Aware Cross-Region Load Balancer](https://arxiv.org/abs/2505.24095)（EuroSys’26）
-- Cheng, [CacheRoute: Planned Prefix-Affinity Routing](https://arxiv.org/abs/2608.19677)（2026）
-- Qin et al., [Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving](https://arxiv.org/abs/2407.00079)（FAST’25）
-- Cui et al., [MemServe: Context Caching with Elastic Memory Pool](https://arxiv.org/abs/2406.17565)（2024）
-- Wu et al., [TokenLake: A Unified Segment-level Prefix Cache Pool](https://arxiv.org/abs/2508.17219)（2025）
-- Gao et al., [Cost-Efficient LLM Serving for Multi-turn Conversations with CachedAttention](https://arxiv.org/abs/2403.19708)（ATC’24；预印本名 AttentionStore）
-- Cheng et al., [LMCache: An Efficient KV Cache Layer for Enterprise-Scale LLM Inference](https://arxiv.org/abs/2510.09665)（2025）
-- Li et al., [CacheGen: KV Cache Compression and Streaming](https://arxiv.org/abs/2310.07240)（SIGCOMM’24）
-- Gao et al., [Fast State Restoration in LLM Serving with HCache](https://arxiv.org/abs/2410.05004)（EuroSys’25）
-- Xie et al., [Strata: Hierarchical Context Caching](https://arxiv.org/abs/2508.18572)（OSDI’26，正式名 Contextra）
-- [AdaptCache: KV Cache Native Storage Hierarchy](https://arxiv.org/abs/2509.00105)（2025）
-- Qiu et al., [Tutti: Making SSD-Backed KV Cache Practical](https://arxiv.org/abs/2605.03375)（2026）
-- Sun et al., [Llumnix: Dynamic Scheduling for Large Language Model Serving](https://arxiv.org/abs/2406.03243)（OSDI’24）
-- [BanaServe: Unified KV Cache and Dynamic Module Migration](https://arxiv.org/abs/2510.13223)（2025）
-- [FlowKV: Low-Latency KV Cache Transfer](https://arxiv.org/abs/2504.03775)（2025）
-- Sheng et al., [S-LoRA: Serving Thousands of Concurrent LoRA Adapters](https://arxiv.org/abs/2311.03285)（MLSys’24）
-- Chen et al., [Punica: Multi-Tenant LoRA Serving](https://arxiv.org/abs/2310.18547)（MLSys’24）
-- Yao et al., [CacheBlend: Fast LLM Serving for RAG with Cached Knowledge Fusion](https://arxiv.org/abs/2405.16444)（EuroSys’25）
-- [EPIC: Efficient Position-Independent Context Caching](https://arxiv.org/abs/2410.15332)（2024）
-- [KVLink: Accelerating Long-Context Generation](https://arxiv.org/abs/2502.16002)（2025）
-- Agarwal et al., [Cache-Craft: Managing Chunk-Caches for RAG](https://arxiv.org/abs/2502.15734)（2025）
-- [TurboRAG: Accelerating RAG with Precomputed KV Caches](https://arxiv.org/abs/2410.07590)（2024）
-- Yang et al., Learned Prefix Caching for Efficient LLM Inference（[NeurIPS’25 proceedings](https://proceedings.neurips.cc/paper_files/paper/2025/hash/414f642a1ea9350006669774cba9bcd4-Abstract-Conference.html)）
-- Jin et al., [RAGCache: Efficient Knowledge Caching for RAG](https://arxiv.org/abs/2404.12457)（TOCS’25）
-- Pan et al., [Marconi: Prefix Caching for the Era of Hybrid LLMs](https://arxiv.org/abs/2411.19379)（2024）
-- Lumer et al., [Don’t Break the Cache: Prompt Caching for Long-Horizon Agentic Tasks](https://arxiv.org/abs/2601.06007)（2026）
+1. Kwon et al., [Efficient Memory Management for Large Language Model Serving with PagedAttention](https://arxiv.org/abs/2309.06180)（SOSP'23）；Zheng et al., [SGLang](https://arxiv.org/abs/2312.07104)（MLSys'24）
+2. Srivatsa et al., [Preble: Efficient Distributed Prompt Scheduling for LLM Serving](https://arxiv.org/abs/2407.00023)（ICLR'25）
+3. Cao et al., [Locality-aware Fair Scheduling in LLM Serving](https://arxiv.org/abs/2501.14312)（DLPM/D²LPM）
+4. Li et al., [Parrot: Efficient Serving of LLM-based Applications with Semantic Variable](https://arxiv.org/abs/2405.19888)（OSDI'24）
+5. Xia et al., [SkyWalker: A Locality-Aware Cross-Region Load Balancer](https://arxiv.org/abs/2505.24095)（EuroSys'26）
+6. Cheng, [CacheRoute: Planned Prefix-Affinity Routing](https://arxiv.org/abs/2608.19677)（2026）
+7. Qin et al., [Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving](https://arxiv.org/abs/2407.00079)（FAST'25）
+8. Cui et al., [MemServe: Context Caching with Elastic Memory Pool](https://arxiv.org/abs/2406.17565)（2024）
+9. Wu et al., [TokenLake: A Unified Segment-level Prefix Cache Pool](https://arxiv.org/abs/2508.17219)（2025）
+10. Gao et al., [Cost-Efficient LLM Serving for Multi-turn Conversations with CachedAttention](https://arxiv.org/abs/2403.19708)（ATC'24；预印本名 AttentionStore）
+11. Cheng et al., [LMCache: An Efficient KV Cache Layer for Enterprise-Scale LLM Inference](https://arxiv.org/abs/2510.09665)（2025）
+12. Li et al., [CacheGen: KV Cache Compression and Streaming](https://arxiv.org/abs/2310.07240)（SIGCOMM'24）
+13. Gao et al., [Fast State Restoration in LLM Serving with HCache](https://arxiv.org/abs/2410.05004)（EuroSys'25）
+14. Xie et al., [Strata: Hierarchical Context Caching](https://arxiv.org/abs/2508.18572)（OSDI'26，正式名 Contextra）
+15. [AdaptCache: KV Cache Native Storage Hierarchy](https://arxiv.org/abs/2509.00105)（2025）
+16. Qiu et al., [Tutti: Making SSD-Backed KV Cache Practical](https://arxiv.org/abs/2605.03375)（2026）
+17. Sun et al., [Llumnix: Dynamic Scheduling for Large Language Model Serving](https://arxiv.org/abs/2406.03243)（OSDI'24）
+18. [BanaServe: Unified KV Cache and Dynamic Module Migration](https://arxiv.org/abs/2510.13223)（2025）
+19. [FlowKV: Low-Latency KV Cache Transfer](https://arxiv.org/abs/2504.03775)（2025）
+20. Sheng et al., [S-LoRA: Serving Thousands of Concurrent LoRA Adapters](https://arxiv.org/abs/2311.03285)（MLSys'24）
+21. Chen et al., [Punica: Multi-Tenant LoRA Serving](https://arxiv.org/abs/2310.18547)（MLSys'24）
+22. Yao et al., [CacheBlend: Fast LLM Serving for RAG with Cached Knowledge Fusion](https://arxiv.org/abs/2405.16444)（EuroSys'25）
+23. [EPIC: Efficient Position-Independent Context Caching](https://arxiv.org/abs/2410.15332)（2024）
+24. [KVLink: Accelerating Long-Context Generation](https://arxiv.org/abs/2502.16002)（2025）
+25. Agarwal et al., [Cache-Craft: Managing Chunk-Caches for RAG](https://arxiv.org/abs/2502.15734)（2025）
+26. [TurboRAG: Accelerating RAG with Precomputed KV Caches](https://arxiv.org/abs/2410.07590)（2024）
+27. Yang et al., Learned Prefix Caching for Efficient LLM Inference（[NeurIPS'25 proceedings](https://proceedings.neurips.cc/paper_files/paper/2025/hash/414f642a1ea9350006669774cba9bcd4-Abstract-Conference.html)）
+28. Jin et al., [RAGCache: Efficient Knowledge Caching for RAG](https://arxiv.org/abs/2404.12457)（TOCS'25）
+29. Pan et al., [Marconi: Prefix Caching for the Era of Hybrid LLMs](https://arxiv.org/abs/2411.19379)（2024）
+30. Lumer et al., [Don't Break the Cache: Prompt Caching for Long-Horizon Agentic Tasks](https://arxiv.org/abs/2601.06007)（2026）
 
 **官方文档与源码（vLLM 0.21，本地中文教程仓库一手核对）**
 
-prefix_caching.md、automatic_prefix_caching.md、data_parallel_deployment.md、metrics.md、disagg_prefill.md、mooncake_store_connector_usage.md；vllm/config/`{cache,model}.py`、vllm/v1/core/kv_cache_manager.py、vllm/v1/metrics/`{loggers,stats}.py`；[GIE 官方文档](https://gateway-api-inference-extension.sigs.k8s.io/)；[llm-d KV Indexer](https://llm-d.ai/)。
+prefix_caching.md、automatic_prefix_caching.md、data_parallel_deployment.md、metrics.md、disagg_prefill.md、mooncake_store_connector_usage.md；vllm/config/\{cache,model\}.py、vllm/v1/core/kv_cache_manager.py、vllm/v1/metrics/\{loggers,stats\}.py；[GIE 官方文档](https://gateway-api-inference-extension.sigs.k8s.io/)；[llm-d KV Indexer](https://llm-d.ai/)。
 
-**站内延伸**：前置必读 [《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存)、[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)、[《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署)；相关 [《注意力机制演进》](/blog/注意力机制演进-从mha到gqa与mla)、[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改)、[《连续批处理》](/blog/连续批处理-每个迭代步重新组批)；动手实践见[推理加速专栏](/inference/)。
+**站内延伸**：前置必读 [《PagedAttention》](/blog/pagedattention-给kv-cache装上虚拟内存/)、[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode/)、[《PD 分离》](/blog/pd分离-把prefill和decode拆开部署/)；相关 [《注意力机制演进》](/blog/注意力机制演进-从mha到gqa与mla/)、[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改/)、[《连续批处理》](/blog/连续批处理-每个迭代步重新组批/)；动手实践见[推理加速专栏](/inference/)。
 
-<Expand title="▸附：术语对照表（读完回看）">
+<Expand title="附：术语对照表（读完回看）">
 
 - **前缀缓存**：缓存前缀 KV、相同前缀直接复用；**命中率**：被查询 token 中命中的比例（token 口径）。
 - **LPM**：最长前缀匹配，谁的前缀与请求重合得最长；**Deficit 配额**：给客户端记账、亏欠的后续优先补。

@@ -1,0 +1,54 @@
+---
+// 图7：命中率—实际 TTFT 收益关系；RDMA 近线性，慢网拉平、末端反噬区虚线问号。示意非实测
+---
+
+<figure>
+  <svg viewBox="0 0 640 250" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">命中率 × 网络代价 = 实际 TTFT 收益（示意，非实测）</text>
+
+      {/* 坐标轴 */}
+      <line x1="80" y1="192" x2="424" y2="192" stroke="#64748b"/>
+      <line x1="80" y1="66" x2="80" y2="192" stroke="#64748b"/>
+      {[
+        [80, "0"], [166, "25"], [252, "50"], [338, "75"], [424, "100"],
+      ].map(([x, t]) => {
+        return (
+          <g>
+            <line x1={x} y1="192" x2={x} y2="197" stroke="#64748b"/>
+            <text x={x} y="205" font-size="8.5" fill="#64748b" text-anchor="middle">{t}</text>
+          </g>
+        );
+      })}
+      <text x="252" y="222" font-size="9.5" fill="#334155" text-anchor="middle">前缀缓存命中率（%）</text>
+      <text x="36" y="130" font-size="9.5" fill="#334155" text-anchor="middle" transform="rotate(-90 36 130)">TTFT 实际收益</text>
+
+      {/* RDMA 近线性 */}
+      <path d="M80,192 C150,172 210,154 252,142 C300,124 360,98 424,80"
+        fill="none" stroke="#0085a1" stroke-width="2.4"/>
+      {/* 慢网拉平 */}
+      <path d="M80,192 C130,176 170,166 210,160 C250,156 280,154 310,153"
+        fill="none" stroke="#e6a23c" stroke-width="2.4"/>
+      <path d="M310,153 C350,152 390,150 424,146"
+        fill="none" stroke="#e6a23c" stroke-width="2" stroke-dasharray="5,4"/>
+      <text x="436" y="146" font-size="10" font-weight="bold" fill="#b97a1f">？</text>
+
+      {/* 图例 */}
+      <line x1="330" y1="52" x2="352" y2="52" stroke="#0085a1" stroke-width="2.4"/>
+      <text x="358" y="55" font-size="9" fill="#334155">RDMA / 快网</text>
+      <line x1="330" y1="66" x2="352" y2="66" stroke="#e6a23c" stroke-width="2.4"/>
+      <text x="358" y="69" font-size="9" fill="#334155">TCP / 慢网</text>
+
+      {/* 右侧说明 */}
+      <rect x="452" y="78" width="158" height="92" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+      <text x="466" y="100" font-size="9.5" font-weight="bold" fill="#334155">为什么会拉平？</text>
+      <text x="466" y="120" font-size="9" fill="#64748b">• 拉取代价抵消节省的 prefill</text>
+      <text x="466" y="138" font-size="9" fill="#64748b">• prefill 占端到端比例小</text>
+      <text x="466" y="156" font-size="9" fill="#64748b">• 慢网命中不如本地重算</text>
+
+      <text x="320" y="244" font-size="10.5" font-weight="bold" fill="#334155" text-anchor="middle" transform="translate(-60 0)">
+        必须与 TTFT / ITL / goodput 联测，用影子流量验证
+      </text>
+    </g>
+  </svg>
+</figure>

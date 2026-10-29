@@ -72,7 +72,7 @@ import CpTuningLoopFigure from "../../components/CpTuningLoopFigure.astro";
 
 ## 2. 理论支点：算术强度
 
-算术强度——每搬 1 字节能做多少次乘加——以及屋顶图的完整教学，在[《一次推理的旅程》第 4 节](/blog/一次推理的旅程-Prefill与Decode/)里讲过。这里不重教，直接拿它来定位这台机器上的两个工作点。
+算术强度——每搬 1 字节能做多少次乘加——以及屋顶图的完整教学，在[《一次推理的旅程》第 4 节](/blog/一次推理的旅程-prefill与decode/)里讲过。这里不重教，直接拿它来定位这台机器上的两个工作点。
 
 **Prefill 在平台区。** LLaMA-13B 的所有主要算子，在 batch=1 时算术强度已经很高；单个请求的序列长到 512 token，就足以打满 A6000 的算力，每 token 成本几乎不随 batch 变化。注意一个口径坑：论文 Fig 4a 里那个约 **180 tokens/ms 的峰值**是单层微观数字（图注原文就是 single layer）；整机单请求的口径是 $1/0.229 \approx 4.4$ tokens/ms，batch=4 时四个请求并行推进、聚合约 17.4 tokens/ms。
 
@@ -92,7 +92,7 @@ import CpTuningLoopFigure from "../../components/CpTuningLoopFigure.astro";
 
 ### 先有两条铺垫，再命名
 
-回忆两条旧知识：第一，因果掩码是「并行计算与串行计算结果等价」的保证（见[《一次推理的旅程》2.1](/blog/一次推理的旅程-Prefill与Decode/)）；第二，前序块算完之后，它的 K、V 作为历史存在 KV cache 里，而前序块的 query 不会在后面的步骤里重新出现。
+回忆两条旧知识：第一，因果掩码是「并行计算与串行计算结果等价」的保证（见[《一次推理的旅程》2.1](/blog/一次推理的旅程-prefill与decode/)）；第二，前序块算完之后，它的 K、V 作为历史存在 KV cache 里，而前序块的 query 不会在后面的步骤里重新出现。
 
 在这两条之上，才好命名本节的机制：**分块因果掩码**。
 
@@ -175,7 +175,7 @@ Chunk 不是越小越好，它由三个理论量共同决定，顺序是：先�
 
 ### 5.1 最小饱和块（地板）
 
-第一约束是 prefill 块本身要能打满算力：**能让 prefill 吞吐达峰的最小长度，就是 chunk 的地板**。LLaMA-13B / A6000 上这个长度是 512——chunk 取 256 时，峰值吞吐掉 12.5%。模型的隐藏维度越大，饱和块越小：单层 GPT-3（hidden 12288）在 A100 上 256 就饱和了。这和[《一次推理的旅程》第 4 节](/blog/一次推理的旅程-Prefill与Decode/)讲的「很短的 prefill 会滑下屋顶」是同一件事。
+第一约束是 prefill 块本身要能打满算力：**能让 prefill 吞吐达峰的最小长度，就是 chunk 的地板**。LLaMA-13B / A6000 上这个长度是 512——chunk 取 256 时，峰值吞吐掉 12.5%。模型的隐藏维度越大，饱和块越小：单层 GPT-3（hidden 12288）在 A100 上 256 就饱和了。这和[《一次推理的旅程》第 4 节](/blog/一次推理的旅程-prefill与decode/)讲的「很短的 prefill 会滑下屋顶」是同一件事。
 
 ### 5.2 tile 料盒（离散悬崖）
 
@@ -300,7 +300,7 @@ Chunk 不是越小越好，它由三个理论量共同决定，顺序是：先�
 
 ## 9. 指标口径、抢占的 ITL 口径与压测闭环
 
-指标的逐项定义在[《一次推理的旅程》第 8 节](/blog/一次推理的旅程-Prefill与Decode/)，这里只做口径辨析和诊断，不重写定义。
+指标的逐项定义在[《一次推理的旅程》第 8 节](/blog/一次推理的旅程-prefill与decode/)，这里只做口径辨析和诊断，不重写定义。
 
 ### 抢占与 ITL：一个必须修正的口径
 
@@ -351,7 +351,7 @@ Goodput（有效服务吞吐）沿用 DistServe 的口径：TTFT 与 ITL 两个�
 - **MoE 模型**：decode 的权重搬运口径与 dense 模型不同，默认建议要重新自测；
 - **超长 prompt 且小块很多**：重读字节随块数线性累积，开始计费。
 
-下游怎么走：如果 chunk 已经压得很小、高混部下 P99 仍被干扰打爆，问题就在 prefill/decode 共用节拍器本身——那是[《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署/)的场景（拆成两个节拍器，代价约 2 倍实例、依赖 RDMA，0.21/0.29 官方仍标 experimental、原话不提升裸吞吐）。同车的邻居还有[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改/)（草稿 token 的校验行也吃同一套预算）和 APC（前序块复用，见[《PagedAttention》4.3](/blog/PagedAttention-给KV-Cache装上虚拟内存/)）。想看本文这套机制的代码实现，去推理加速专栏的[《调度与 KV Cache》](/inference/)。
+下游怎么走：如果 chunk 已经压得很小、高混部下 P99 仍被干扰打爆，问题就在 prefill/decode 共用节拍器本身——那是[《PD 分离》](/blog/pd分离-把prefill和decode拆开部署/)的场景（拆成两个节拍器，代价约 2 倍实例、依赖 RDMA，0.21/0.29 官方仍标 experimental、原话不提升裸吞吐）。同车的邻居还有[《投机解码》](/blog/投机解码-小模型打草稿大模型一次批改/)（草稿 token 的校验行也吃同一套预算）和 APC（前序块复用，见[《PagedAttention》4.3](/blog/pagedattention-给kv-cache装上虚拟内存/)）。想看本文这套机制的代码实现，去推理加速专栏的[《调度与 KV Cache》](/inference/)。
 
 最后回头算钩子那笔账：同样一趟权重搬运，GEMV 下每个 decode token 要 12.49ms；拼进融合 GEMM，每个只摊 1.2ms。**Chunked Prefill 做的事，就是把「一趟搬运喂更多 token」的时间安排标准化**；它不让这趟搬运消失，只让尖刺有界——剩下的差距，只属于 PD 那样的部署形态。
 
@@ -414,9 +414,9 @@ Goodput（有效服务吞吐）沿用 DistServe 的口径：TTFT 与 ITL 两个�
 
 **站内延伸：**
 
-12. [一次推理的旅程：Prefill 与 Decode](/blog/一次推理的旅程-Prefill与Decode/)
+12. [一次推理的旅程：Prefill 与 Decode](/blog/一次推理的旅程-prefill与decode/)
 13. [连续批处理：为什么推理引擎不「凑够一批再发车」](/blog/连续批处理-每个迭代步重新组批/)
-14. [PagedAttention：给 KV Cache 装上「虚拟内存」](/blog/PagedAttention-给KV-Cache装上虚拟内存/)
-15. [PD 分离：把 Prefill 和 Decode 拆开部署](/blog/PD分离-把Prefill和Decode拆开部署/)
+14. [PagedAttention：给 KV Cache 装上「虚拟内存」](/blog/pagedattention-给kv-cache装上虚拟内存/)
+15. [PD 分离：把 Prefill 和 Decode 拆开部署](/blog/pd分离-把prefill和decode拆开部署/)
 16. [投机解码：小模型打草稿，大模型一次批改](/blog/投机解码-小模型打草稿大模型一次批改/)
 17. [推理加速专栏：调度与 KV Cache](/inference/)

@@ -1,0 +1,45 @@
+---
+// 图6：全局 KV 池金字塔（HBM/CPU/远端DRAM/SSD），实例 miss 后 RDMA one-sided 拉取，冷前缀去重一份
+---
+
+<figure>
+  <svg viewBox="0 0 640 272" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="pcp2-o" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto"><path d="M0,0 L8,3.5 L0,7 Z" fill="#e6a23c"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">全局 KV 池：冷前缀去重一份，任何实例按需拉取</text>
+
+      {/* 金字塔四层 */}
+      <polygon points="140,58 260,58 275,92 125,92" fill="#d9eef3" stroke="#0085a1"/>
+      <polygon points="125,92 275,92 300,126 100,126" fill="#c8e2ec" stroke="#0085a1"/>
+      <polygon points="100,126 300,126 325,160 75,160" fill="#b7d7e4" stroke="#0085a1"/>
+      <polygon points="75,160 325,160 350,194 50,194" fill="#a6cbdb" stroke="#0085a1"/>
+
+      <text x="200" y="79" font-size="9.5" font-weight="bold" fill="#006377" text-anchor="middle">GPU HBM</text>
+      <text x="200" y="113" font-size="9.5" font-weight="bold" fill="#006377" text-anchor="middle">节点 CPU 内存</text>
+      <text x="200" y="147" font-size="9.5" font-weight="bold" fill="#005c6e" text-anchor="middle">远端 DRAM</text>
+      <text x="200" y="181" font-size="9.5" font-weight="bold" fill="#005263" text-anchor="middle">SSD（最便宜、最大）</text>
+      <text x="42" y="60" font-size="8.5" fill="#64748b">最快</text>
+      <text x="38" y="190" font-size="8.5" fill="#64748b">最慢</text>
+
+      {/* 右侧实例与 RDMA 拉取 */}
+      <rect x="430" y="92" width="158" height="48" rx="10" fill="#f8fafc" stroke="#94a3b8"/>
+      <text x="509" y="112" font-size="10.5" font-weight="bold" fill="#334155" text-anchor="middle">实例本地 miss</text>
+      <text x="509" y="128" font-size="8.5" fill="#64748b" text-anchor="middle">按块找全局池</text>
+
+      <path d="M430,116 C380,116 340,118 302,122" fill="none" stroke="#e6a23c" stroke-width="2" marker-end="url(#pcp2-o)"/>
+      <text x="372" y="106" font-size="9" font-weight="bold" fill="#b97a1f" text-anchor="middle">RDMA one-sided pull</text>
+
+      <rect x="430" y="156" width="158" height="30" rx="8" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="509" y="175" font-size="9.5" font-weight="bold" fill="#0c5f74" text-anchor="middle">全局去重：冷前缀只存一份</text>
+
+      <rect x="430" y="196" width="158" height="28" rx="14" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="509" y="214" font-size="10" font-weight="bold" fill="#0a7a50" text-anchor="middle">16 GiB → 512 MiB</text>
+
+      <text x="320" y="252" font-size="10.5" font-weight="bold" fill="#334155" text-anchor="middle">
+        门槛：省下的计算 ≥ 通信代价（TokenLake 在其实验硬件下 ≈568 token，随设备变化）
+      </text>
+    </g>
+  </svg>
+</figure>

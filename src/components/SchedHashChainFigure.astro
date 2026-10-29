@@ -1,0 +1,43 @@
+---
+// 篇5 图：链式哈希 + 最长前缀命中
+// 每个满块哈希 = hash(父哈希 + 本块 token + extra)
+// 两个请求沿哈希链逐块比对，第一个不匹配处停
+---
+
+<figure>
+  <svg viewBox="0 0 640 268" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="s5-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="13.5" font-weight="bold" fill="#0c5f74" text-anchor="middle">每个块的哈希，把父块、本块 token 与 extra 编在一起</text>
+
+      {["h1 = hash(NONE, tokens)", "h2 = hash(h1, tokens)", "h3 = hash(h2, tokens)"].map((label, i) => (
+        <g>
+          <rect x={70 + i * 180} y="56" width="120" height="58" rx="7" fill="#f2f8fa" stroke="#0085a1" stroke-width={i < 2 ? 1.4 : 0.8}/>
+          <text x={130 + i * 180} y="82" font-size="10.5" font-weight="bold" fill="#006377" text-anchor="middle">块 {i + 1}（16 token）</text>
+          <text x={130 + i * 180} y="102" font-size="8.5" fill="#64748b" text-anchor="middle">{label}</text>
+          {i < 2 && <line x1={192 + i * 180} y1="85" x2={226 + i * 180} y2="85" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#s5-arw)"/>}
+        </g>
+      ))}
+      <text x="40" y="90" font-size="9" fill="#94a3b8" text-anchor="end">NONE</text>
+
+      <line x1="70" y1="140" x2="610" y2="140" stroke="#e2e8f0" stroke-dasharray="4,4"/>
+
+      <text x="70" y="166" font-size="10" font-weight="bold" fill="#334155">请求 X：</text>
+      <rect x="150" y="152" width="90" height="26" rx="4" fill="#d4f0e0" stroke="#0f9d68"/>
+      <rect x="240" y="152" width="90" height="26" rx="4" fill="#d4f0e0" stroke="#0f9d68"/>
+      <rect x="330" y="152" width="90" height="26" rx="4" fill="#fde2e2" stroke="#dc2626" stroke-dasharray="3,2"/>
+
+      <text x="70" y="204" font-size="10" font-weight="bold" fill="#334155">请求 Y：</text>
+      <rect x="150" y="190" width="90" height="26" rx="4" fill="#d4f0e0" stroke="#0f9d68"/>
+      <rect x="240" y="190" width="90" height="26" rx="4" fill="#d4f0e0" stroke="#0f9d68"/>
+      <rect x="330" y="190" width="90" height="26" rx="4" fill="#eef2f7" stroke="#94a3b8" stroke-dasharray="3,2"/>
+
+      <text x="450" y="170" font-size="9.5" fill="#0a7a50">前两块哈希相同 → touch 复用</text>
+      <text x="450" y="208" font-size="9.5" fill="#b91c1c">第三块起不同 → 在此停，余下重算</text>
+
+      <text x="320" y="250" font-size="9.5" fill="#64748b" text-anchor="middle">只缓存写满的块；即使全部命中，最后一个 token 仍要重算（要新 logits），按块对齐可能整块重算</text>
+    </g>
+  </svg>
+</figure>

@@ -1,5 +1,5 @@
 ---
-// 榜单可信度阶梯
+// 榜单可信度阶梯：谁施测、能否独立复核
 ---
 
 <figure>
@@ -14,6 +14,7 @@
         {y:194, c:"#b14a4a", fill:"#fbe3e3", t:"厂商技术报告自测", d:"内部 scaffold/私有题集 · 信息多但无外部监考"},
       ].map((r,i)=>(
         <g>
+          {/* 阶梯缩进 */}
           <rect x={40+i*22} y={r.y} width={520-i*44} height="42" rx="8" fill={r.fill} stroke={r.c} stroke-width="1.4"/>
           <text x={56+i*22} y={r.y+17} font-size="10.5" font-weight="bold" fill={r.c}>{r.t}</text>
           <text x={56+i*22} y={r.y+33} font-size="8.3" fill="#475569">{r.d}</text>

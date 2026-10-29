@@ -1,27 +1,30 @@
 ---
 title: "vLLM 调度 5：相同前缀为什么不用重算——哈希链、查询与惰性驱逐"
-date: 2026-09-25
-author: DoraAiDreamer
-category: 大模型
-tags: ["vLLM","KV Cache","调度"]
+subtitle: "块哈希怎么长、waiting 怎么查、缓存块什么时候被赶走"
+date: 2026-10-22
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "vLLM"
+  - "源码解读"
+  - "前缀缓存"
+  - "KV Cache"
 ---
 
 import Expand from "../../components/Expand.astro";
+import SchedHashChainFigure from "../../components/SchedHashChainFigure.astro";
 
+<p class="version-note">源码版本：<b>vLLM 0.21.0</b>（2026-05）。本系列锁定该版本，源码链接指向 v0.21.0 tag。</p>
 
-块哈希怎么长、waiting 怎么查、缓存块什么时候被赶走
+[篇 4](/blog/vllm-调度4-块不够怎么办/)结尾留了个问题：被抢占、回队首重放的请求，如果前面的块还在，能不能不全部重算？这一篇讲清前缀缓存的源码机制，答案自然就有了。
 
-源码版本：**vLLM 0.21.0**（2026-05）。本系列锁定该版本，源码链接指向 v0.21.0 tag。
-
-[篇 4](/blog/vllm-调度4-块不够怎么办)结尾留了个问题：被抢占、回队首重放的请求，如果前面的块还在，能不能不全部重算？这一篇讲清前缀缓存的源码机制，答案自然就有了。
-
-使用层面的收益、集群命中率与各种论文系统，[篇 8](/blog/vllm-调度8-前缀缓存从单机到集群)已经完整讲过；本篇只讲引擎内部的三件事：**块的哈希怎么长、新请求怎么查、缓存块什么时候被赶走**。
+使用层面的收益、集群命中率与各种论文系统，[篇 8](/blog/vllm-调度8-前缀缓存从单机到集群/)已经完整讲过；本篇只讲引擎内部的三件事：**块的哈希怎么长、新请求怎么查、缓存块什么时候被赶走**。
 
 ## 1. 拍一：哈希增量长成链
 
-引擎不给”任意长度前缀”建索引，只给**写满的块**算哈希，而且哈希沿链编码父块（kv_cache_utils.py:539）：
+引擎不给"任意长度前缀"建索引，只给**写满的块**算哈希，而且哈希沿链编码父块（kv_cache_utils.py:539）：
 
-```
+```python
 def hash_block_tokens(hash_function, parent_block_hash,
                       curr_block_token_ids, extra_keys=None) -> BlockHash:
     ...
@@ -33,15 +36,17 @@ def hash_block_tokens(hash_function, parent_block_hash,
 
 这天然防住了一类误命中：同一批 token 出现在序列的不同位置（RoPE 让位置不同、KV 就不同），因为父哈希链不同，哈希必然不同。
 
+<SchedHashChainFigure />
+
 *图 1：沿哈希链逐块比对，在第一个哈希不同的位置停下。*
 
-`extra_keys` 把”除 token 外还会改变 KV 的因素”编进键，默认包含（kv_cache_utils.py:522-530）：LoRA 的 id、多模态输入标识与偏移、**只加在第一个块**的 `cache_salt`（多租户隔离）、prompt embeds 的哈希。注意一个易错点：KV group id **不在**请求的哈希链里，它只在 BlockPool 的字典层拼 4 字节区分。
+`extra_keys` 把"除 token 外还会改变 KV 的因素"编进键，默认包含（kv_cache_utils.py:522-530）：LoRA 的 id、多模态输入标识与偏移、**只加在第一个块**的 `cache_salt`（多租户隔离）、prompt embeds 的哈希。注意一个易错点：KV group id **不在**请求的哈希链里，它只在 BlockPool 的字典层拼 4 字节区分。
 
 ## 2. 拍二：waiting 请求上车前查一次
 
 只有 waiting（新请求或重放请求）会在分配前查缓存，入口是 `get_computed_blocks`（kv_cache_manager.py:183）：
 
-```
+```python
 if not self.enable_caching or request.skip_reading_prefix_cache:
     return self.empty_kv_cache_blocks, 0
 
@@ -54,15 +59,15 @@ computed_blocks, num_new_computed_tokens = \
 
 三个要点：
 
-- **只缓存满块**，所以命中长度是块对齐的；源码注释特别指出：减 1 个 token 在块对齐下可能触发**整个末块重算**（不是只重算 1 个 token）；
-- 某些情况跳过查询：请求要 `prompt_logprobs`、pooling 模型全池化、或显式标了 skip；
-- running 请求**不查**——它已经在车上，复用发生在抢占重放回到 waiting 时。
+1. **只缓存满块**，所以命中长度是块对齐的；源码注释特别指出：减 1 个 token 在块对齐下可能触发**整个末块重算**（不是只重算 1 个 token）；
+2. 某些情况跳过查询：请求要 `prompt_logprobs`、pooling 模型全池化、或显式标了 skip；
+3. running 请求**不查**——它已经在车上，复用发生在抢占重放回到 waiting 时。
 
-命中的块经 `touch` 增加引用计数（[篇 3](/blog/vllm-调度3-要N个token怎么摆进物理块)讲过），从空闲队列摘出，这一步就把它们和”待驱逐”区分开了。
+命中的块经 `touch` 增加引用计数（[篇 3](/blog/vllm-调度3-要n个token怎么摆进物理块/)讲过），从空闲队列摘出，这一步就把它们和"待驱逐"区分开了。
 
 ## 3. 拍三：惰性 LRU，没有主动清理线程
 
-缓存块什么时候被赶走？答案是”**不主动赶，只在需要新块时顺带处理**”：
+缓存块什么时候被赶走？答案是"**不主动赶，只在需要新块时顺带处理**"：
 
 - 请求结束/被抢占调 `free` 时，块按**逆序**（尾块先）归还；引用归零的块进空闲队列**尾部**，并保留哈希、成为驱逐候选；
 - 分配新块时从空闲队列**头部 popleft**；拿到的如果还带哈希（是别人的缓存），才真正执行驱逐、清掉哈希；
@@ -77,7 +82,7 @@ computed_blocks, num_new_computed_tokens = \
 - 它之前释放的块只要还没被别人 popleft 走（大概率在队尾、还活着），哈希一查就命中，`touch` 拿回，**只重算没命中的部分**；
 - 若中途已被重分配给别人，哈希不在了，那一段才真正整段重算。
 
-所以”V1 抢占只有重算”指的是机制上**没有 swap**；实际重算量由前缀缓存决定——块活着就便宜，被驱逐了才全量。
+所以"V1 抢占只有重算"指的是机制上**没有 swap**；实际重算量由前缀缓存决定——块活着就便宜，被驱逐了才全量。
 
 ## 5. 边界与一个进阶机制
 
@@ -87,7 +92,7 @@ computed_blocks, num_new_computed_tokens = \
 
 ## 自测（答案点击展开）
 
-**1.** 为什么哈希要把”父块哈希”也编进去？只哈希本块 token 会出什么问题？
+**1.** 为什么哈希要把"父块哈希"也编进去？只哈希本块 token 会出什么问题？
 
 **2.** 一个 40 token 的 prompt、block_size=16，理论最多命中多少 token？为什么不是 39？
 
@@ -95,9 +100,9 @@ computed_blocks, num_new_computed_tokens = \
 
 **4.** vLLM 有没有一个后台线程定期驱逐冷门缓存块？真实的驱逐在什么时候发生？
 
-<Expand title="▸参考答案">
+<Expand title="参考答案">
 
-1. 防位置误命中：同一批 token 出现在不同位置时 KV 因 RoPE 而不同；编入父哈希后，只有”从开头起整条前缀都相同”哈希才相等。
+1. 防位置误命中：同一批 token 出现在不同位置时 KV 因 RoPE 而不同；编入父哈希后，只有"从开头起整条前缀都相同"哈希才相等。
 2. 最多 32（两个满块）。命中按满块对齐，max_cache_hit 虽是 num_tokens−1=39，但分配要求块对齐，第 3 块没写满不缓存；减 1 在对齐下也可能让整个末块重算。
 3. 普通 decode 不查（running 不经过 get_computed_blocks）；被抢占后回到 waiting、重新调度时会查，幸存块因此能 touch 复用、减少重算。
 4. 没有主动驱逐线程。free 时引用归零的块带哈希进空闲队列尾部成为候选，分配新块从头部 popleft、拿到带哈希的块时才清哈希完成驱逐（惰性 LRU）。
@@ -106,6 +111,6 @@ computed_blocks, num_new_computed_tokens = \
 
 ## 参考资料
 
-- vLLM 0.21.0 源码：`vllm/v1/core/kv_cache_utils.py`（hash_block_tokens、extra_keys）、`kv_cache_manager.py:183`（get_computed_blocks）、`block_pool.py`（touch/free/驱逐）、`kv_cache_coordinator.py`（多 group 收敛）——[GitHub v0.21.0 tag](https://github.com/vllm-project/vllm/tree/v0.21.0)
-- 更细的源码注解：[调度与 KV Cache（02）](/inference/view/?src=core/02_scheduler_kv_cache.md)
-- 姊妹篇：[调度 8：前缀缓存——从单机命中到集群命中率](/blog/vllm-调度8-前缀缓存从单机到集群)、[PagedAttention](/blog/PagedAttention-给KV-Cache装上虚拟内存)
+1. vLLM 0.21.0 源码：`vllm/v1/core/kv_cache_utils.py`（hash_block_tokens、extra_keys）、`kv_cache_manager.py:183`（get_computed_blocks）、`block_pool.py`（touch/free/驱逐）、`kv_cache_coordinator.py`（多 group 收敛）——[GitHub v0.21.0 tag](https://github.com/vllm-project/vllm/tree/v0.21.0)
+2. 更细的源码注解：[调度与 KV Cache（02）](/inference/view/?src=core/02_scheduler_kv_cache.md)
+3. 姊妹篇：[调度 8：前缀缓存——从单机命中到集群命中率](/blog/vllm-调度8-前缀缓存从单机到集群/)、[PagedAttention](/blog/pagedattention-给kv-cache装上虚拟内存/)

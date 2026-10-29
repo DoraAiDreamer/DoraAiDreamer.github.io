@@ -1,12 +1,13 @@
 ---
-// 统计硬核图：左=误差棒随题量按 1/√n 缩短；右=独立两组 vs 同题配对检出 2pp 所需题量
+// 统计硬核图：左=误差棒随题量按 1/√n 缩短；右=独立两组 vs 同题配对检出同一分差所需题量
 ---
 
 <figure>
   <svg viewBox="0 0 640 272" width="100%" xmlns="http://www.w3.org/2000/svg">
     <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
-      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">差几分才算「赢」：题量与怎么比，决定分差有没有意义</text>
+      <text x="320" y="22" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">差几分才算「赢」：题量与怎么比，决定分差有没有意义</text>
 
+      {/* 左：误差棒 */}
       <text x="160" y="56" font-size="11" font-weight="bold" fill="#334155" text-anchor="middle">单模型正确率的 95% 置信区间</text>
       <line x1="60" y1="210" x2="270" y2="210" stroke="#94a3b8"/>
       <line x1="60" y1="80" x2="60" y2="210" stroke="#94a3b8"/>
@@ -26,10 +27,12 @@
       <text x="160" y="80" font-size="9" fill="#64748b" text-anchor="middle">误差约按 1/√n 缩小：±10pp → ±3pp → ±1pp</text>
       <text x="40" y="134" font-size="8.5" fill="#64748b" text-anchor="end">正确率</text>
 
+      {/* 右：独立 vs 配对 */}
       <text x="470" y="56" font-size="11" font-weight="bold" fill="#334155" text-anchor="middle">要检出 2 个百分点，需要多少题</text>
       <rect x="350" y="80" width="240" height="58" rx="8" fill="#fdf0e0" stroke="#e6a23c"/>
       <text x="470" y="104" font-size="10" font-weight="bold" fill="#b97a1f" text-anchor="middle">不同题集、独立两组</text>
       <text x="470" y="125" font-size="13" font-weight="bold" fill="#b97a1f" text-anchor="middle">每组约 9,800 题（≈1 万）</text>
+
       <rect x="350" y="152" width="240" height="58" rx="8" fill="#e4f5ec" stroke="#0f9d68"/>
       <text x="470" y="176" font-size="10" font-weight="bold" fill="#0a7a50" text-anchor="middle">同一套卷、只看不一致对</text>
       <text x="470" y="197" font-size="13" font-weight="bold" fill="#0a7a50" text-anchor="middle">200 题级即可见信号（如 15:5）</text>

@@ -1,0 +1,43 @@
+---
+// 图2：一个真实请求的五层结构；前四层别人也有，只有最末层独有
+---
+
+<figure>
+  <svg viewBox="0 0 640 234" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">一个真实请求像叠层：越靠前的层，越可能和别人共享</text>
+
+      {[
+        ["① 模板头", "BOS、chat template 固定符号"],
+        ["② 系统与工具层", "system prompt、安全提示、工具说明书"],
+        ["③ 共享文档 / 知识层", "同一份手册、年报、仓库上下文、few-shot"],
+        ["④ 历史对话层", "多轮对话里被整段重发的历史"],
+        ["⑤ 独有任务层", "本次的问题"],
+      ].map((row, i) => {
+        const y = 48 + i * 32;
+        const shared = i < 4;
+        return (
+          <g>
+            <rect x="40" y={y} width="560" height="26" rx="7"
+              fill={shared ? '#d9eef3' : '#fdf0e0'}
+              stroke={shared ? '#0085a1' : '#e6a23c'}/>
+            <text x="56" y={y + 17} font-size="11" font-weight="bold"
+              fill={shared ? '#006377' : '#b97a1f'}>{row[0]}</text>
+            <text x="232" y={y + 17} font-size="9.5" fill="#64748b">{row[1]}</text>
+            <rect x="540" y={y + 5} width="48" height="16" rx="8"
+              fill={shared ? '#e4f5ec' : '#fff7ed'}
+              stroke={shared ? '#0f9d68' : '#e6a23c'}/>
+            <text x="564" y={y + 16} font-size="9" font-weight="bold"
+              fill={shared ? '#0a7a50' : '#b97a1f'} text-anchor="middle">
+              {shared ? '别人也有' : '本次独有'}
+            </text>
+          </g>
+        );
+      })}
+
+      <text x="320" y="218" font-size="11" font-weight="bold" fill="#334155" text-anchor="middle">
+        缓存命中沿层向下、第一个不同处即停；收益盘子 = 前 4 层占 prompt 的比例
+      </text>
+    </g>
+  </svg>
+</figure>

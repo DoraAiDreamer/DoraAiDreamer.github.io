@@ -1,0 +1,102 @@
+---
+// 图5：PD 多卡部署拓扑（降载示意）——机内 NVSwitch + PCIe 对网卡，出机沿同色 rail 经 IB 交换；紫虚线 all-reduce 关在机内
+---
+
+<figure>
+  <svg viewBox="0 0 640 402" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="pd2t-kv" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#e6a23c"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">多卡通信地形：集合通信不出机，KV 沿轨道出机</text>
+
+      {/* P 节点框 */}
+      <rect x="14" y="40" width="252" height="270" rx="12" fill="#f7fbfc" stroke="#0085a1" stroke-width="1.5"/>
+      <text x="140" y="60" font-size="11" font-weight="bold" fill="#006377" text-anchor="middle">P 节点（实机 8 卡 8 网卡，图中示意 4 对）</text>
+
+      {/* D 节点框 */}
+      <rect x="374" y="40" width="252" height="270" rx="12" fill="#fffaf2" stroke="#e6a23c" stroke-width="1.5"/>
+      <text x="500" y="60" font-size="11" font-weight="bold" fill="#b97a1f" text-anchor="middle">D 节点（实机 8 卡 8 网卡，图中示意 4 对）</text>
+
+      {/* 紫色 all-reduce 弧（关在机内） */}
+      <path d="M40,92 Q140,72 240,92" fill="none" stroke="#8b6fb8" stroke-width="1.4" stroke-dasharray="5,3"/>
+      <path d="M400,92 Q500,72 600,92" fill="none" stroke="#8b6fb8" stroke-width="1.4" stroke-dasharray="5,3"/>
+      <text x="140" y="80" font-size="8" fill="#6d5796" text-anchor="middle">all-reduce（NCCL，不出机）</text>
+      <text x="500" y="80" font-size="8" fill="#6d5796" text-anchor="middle">all-reduce（NCCL，不出机）</text>
+
+      {/* GPU 行 + NVSwitch + NIC 行 */}
+      {[0,1,2,3].map((i)=>{
+        const x=36+i*56;
+        const dx=396+i*56;
+        return (
+          <g>
+            <rect x={x} y="88" width="46" height="26" rx="5" fill="#d9eef3" stroke="#0085a1"/>
+            <text x={x+23} y="105" font-size="8.5" fill="#006377" text-anchor="middle">GPU {i}</text>
+            <rect x={dx} y="88" width="46" height="26" rx="5" fill="#fdf0e0" stroke="#e6a23c"/>
+            <text x={dx+23} y="105" font-size="8.5" fill="#b97a1f" text-anchor="middle">GPU {i}</text>
+
+            {/* 机内 NVLink：各卡汇到同一条水平总线，再进 NVSwitch */}
+            {i===0 && <line x1="59" y1="132" x2="227" y2="132" stroke="#94a3b8" stroke-width="2"/>}
+            {i===0 && <line x1="419" y1="132" x2="587" y2="132" stroke="#94a3b8" stroke-width="2"/>}
+            <line x1={x+23} y1="114" x2={x+23} y2="132" stroke="#94a3b8" stroke-width="2"/>
+            <line x1={dx+23} y1="114" x2={dx+23} y2="132" stroke="#94a3b8" stroke-width="2"/>
+
+            {/* PCIe 到 NIC */}
+            <line x1={x+23} y1="190" x2={x+23} y2="246" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,3"/>
+            <line x1={dx+23} y1="190" x2={dx+23} y2="246" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,3"/>
+            <rect x={x} y="246" width="46" height="24" rx="5" fill="#f4f6f8" stroke="#64748b"/>
+            <text x={x+23} y="262" font-size="8" fill="#334155" text-anchor="middle">NIC {i}</text>
+            <rect x={dx} y="246" width="46" height="24" rx="5" fill="#f4f6f8" stroke="#64748b"/>
+            <text x={dx+23} y="262" font-size="8" fill="#334155" text-anchor="middle">NIC {i}</text>
+          </g>
+        );
+      })}
+
+      {/* NVSwitch 块 */}
+      <rect x="84" y="146" width="112" height="44" rx="8" fill="#eef2f5" stroke="#64748b"/>
+      <text x="140" y="165" font-size="9" fill="#334155" text-anchor="middle">NVSwitch</text>
+      <text x="140" y="179" font-size="8" fill="#64748b" text-anchor="middle">全互联 900GB/s 双向聚合</text>
+      <rect x="444" y="146" width="112" height="44" rx="8" fill="#eef2f5" stroke="#64748b"/>
+      <text x="500" y="165" font-size="9" fill="#334155" text-anchor="middle">NVSwitch</text>
+      <text x="500" y="179" font-size="8" fill="#64748b" text-anchor="middle">全互联 900GB/s 双向聚合</text>
+
+      <text x="140" y="228" font-size="8" fill="#64748b" text-anchor="middle">PCIe Gen5 ≈ 64GB/s</text>
+      <text x="500" y="228" font-size="8" fill="#64748b" text-anchor="middle">PCIe Gen5 ≈ 64GB/s</text>
+
+      {/* IB 交换块（置于网卡下方） */}
+      <rect x="274" y="310" width="92" height="34" rx="8" fill="#ffffff" stroke="#e6a23c" stroke-width="1.6"/>
+      <text x="320" y="326" font-size="8.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">IB 交换</text>
+      <text x="320" y="338" font-size="7.5" fill="#b97a1f" text-anchor="middle">50GB/s·rail</text>
+
+      {/* 橙色 KV 通道：各网卡汇入多 NIC 总线，再扇出进交换机不同端口 */}
+      {[0,1,2,3].map((i)=>{
+        const pxc=[59,115,171,227][i];
+        const dxc=[419,475,531,587][i];
+        return (
+          <g>
+            <line x1={pxc} y1="270" x2={pxc} y2="314" stroke="#e6a23c" stroke-width="1.8"/>
+            <line x1={dxc} y1="270" x2={dxc} y2="314" stroke="#e6a23c" stroke-width="1.8"/>
+          </g>
+        );
+      })}
+      <line x1="59" y1="314" x2="227" y2="314" stroke="#e6a23c" stroke-width="3.2"/>
+      <line x1="419" y1="314" x2="587" y2="314" stroke="#e6a23c" stroke-width="3.2"/>
+      {[0,1,2,3].map((i)=>{
+        const py=315+i*8;
+        return (
+          <g>
+            <line x1="227" y1="314" x2="272" y2={py} stroke="#e6a23c" stroke-width="1.6" marker-end="url(#pd2t-kv)"/>
+            <line x1="368" y1={py} x2="419" y2="314" stroke="#e6a23c" stroke-width="1.6"/>
+          </g>
+        );
+      })}
+      <text x="143" y="306" font-size="7.5" fill="#b97a1f" text-anchor="middle">多 NIC 并发</text>
+      <text x="503" y="306" font-size="7.5" fill="#b97a1f" text-anchor="middle">多 NIC 并发</text>
+      <text x="320" y="368" font-size="9" fill="#b97a1f" text-anchor="middle">rank i 的 KV 固定走 rail i：两端 GPU–NIC 亲和、轨号一一对齐（图中 4 条，实机 8 条并发）</text>
+
+      {/* 底部带宽阶梯 */}
+      <text x="20" y="386" font-size="8.5" fill="#64748b">带宽阶梯：NVLink 机内 900GB/s 双向聚合（单向 450）　→　PCIe ≈ 64GB/s　→　InfiniBand NDR 400Gb ≈ 50GB/s 每 rail</text>
+      <text x="20" y="399" font-size="8.5" fill="#64748b">（50GB/s 为单向线速、有效载荷更低；云上每 GPU 对常见 25–50GB/s，详见 SplitWise 引文）</text>
+    </g>
+  </svg>
+</figure>

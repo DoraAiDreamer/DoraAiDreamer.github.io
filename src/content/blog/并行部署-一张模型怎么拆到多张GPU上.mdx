@@ -1,42 +1,45 @@
 ---
 title: "并行部署：一张模型怎么拆到多张 GPU 上"
-date: 2026-09-26
-author: DoraAiDreamer
-category: 大模型
-tags: ["推理加速","并行"]
+subtitle: "TP、PP、DP、EP、CP 五种并行机制图解——切什么、传什么、为什么这条网络不能走"
+date: 2026-10-20
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "推理加速"
+  - "分布式推理"
+  - "vLLM"
+  - "张量并行"
 ---
 
 import Expand from "../../components/Expand.astro";
-import ParaRecFig1 from "../../components/ParaRecFig1.astro";
-import ParaRecFig2 from "../../components/ParaRecFig2.astro";
-import ParaRecFig3 from "../../components/ParaRecFig3.astro";
-import ParaRecFig4 from "../../components/ParaRecFig4.astro";
-import ParaRecFig5 from "../../components/ParaRecFig5.astro";
-import ParaRecFig6 from "../../components/ParaRecFig6.astro";
-import ParaRecFig7 from "../../components/ParaRecFig7.astro";
-import ParaRecFig8 from "../../components/ParaRecFig8.astro";
+import ParaPainFigure from "../../components/ParaPainFigure.astro";
+import ParaMapFigure from "../../components/ParaMapFigure.astro";
+import ParaTpFigure from "../../components/ParaTpFigure.astro";
+import ParaPpBubbleFigure from "../../components/ParaPpBubbleFigure.astro";
+import ParaDpFigure from "../../components/ParaDpFigure.astro";
+import ParaEpFigure from "../../components/ParaEpFigure.astro";
+import ParaCpFigure from "../../components/ParaCpFigure.astro";
+import ParaDecisionFigure from "../../components/ParaDecisionFigure.astro";
 
-TP、PP、DP、EP、CP 五种并行机制图解——切什么、传什么、为什么这条网络不能走
-
-在[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode)里我们算过一笔账：70B 模型 FP16 权重约 140GB，而一张 H100 只有 80GB 显存——**模型根本装不进去**。后来在[《PD 分离》](/blog/PD分离-把Prefill和Decode拆开部署)里我们又认识了 rank、三级网络和”TP 留在节点内、PP 可以跨节点”这条工程经验，在[《MoE 混合专家模型》](/blog/moe混合专家模型-以deepseek为例)里瞥见过 all-to-all 通信，在[《Chunked Prefill》](/blog/chunkedprefill-把长prompt切成节拍器能消化的小块)里听说过流水线气泡。
+在[《一次推理的旅程》](/blog/一次推理的旅程-prefill与decode/)里我们算过一笔账：70B 模型 FP16 权重约 140GB，而一张 H100 只有 80GB 显存——**模型根本装不进去**。后来在[《PD 分离》](/blog/pd分离-把prefill和decode拆开部署/)里我们又认识了 rank、三级网络和"TP 留在节点内、PP 可以跨节点"这条工程经验，在[《MoE 混合专家模型》](/blog/moe混合专家模型-以deepseek为例/)里瞥见过 all-to-all 通信，在[《Chunked Prefill》](/blog/chunkedprefill-把长prompt切成节拍器能消化的小块/)里听说过流水线气泡。
 
 这些片段散落在各处，始终缺一张总地图。本文把地图补上：多卡部署一张模型，一共只有五种本质不同的并行机制——**TP、PP、DP、EP、CP**。本文逐一图解它们各自在切什么、谁和谁通信、要求什么档次的网络，最后给出拿到机器和模型时的决策顺序。工程配置以 vLLM 0.21（2026-10 快照）为准，接口仍在快速演进，上线请以官方文档为准。
 
 读完你应该能回答：
 
-- 一张卡装不下时，“切开一个模型”和”复制多个副本”差在哪？
-- 张量并行为什么必须关在 NVLink 域里、每层都要通信？
-- 流水线气泡在推理里怎么算？为什么单请求必然吃亏？
-- 数据并行扩的是吞吐还是单请求速度？
-- 专家并行、上下文并行各自在切什么，为什么是 MoE 与长上下文时代才走到台前？
-- 拿到 8 卡机、无 NVLink 机型或多机集群，按什么顺序选策略？
+1. 一张卡装不下时，"切开一个模型"和"复制多个副本"差在哪？
+2. 张量并行为什么必须关在 NVLink 域里、每层都要通信？
+3. 流水线气泡在推理里怎么算？为什么单请求必然吃亏？
+4. 数据并行扩的是吞吐还是单请求速度？
+5. 专家并行、上下文并行各自在切什么，为什么是 MoE 与长上下文时代才走到台前？
+6. 拿到 8 卡机、无 NVLink 机型或多机集群，按什么顺序选策略？
 
-<Expand title="▸术语速查（先扫一眼，读完再回看）">
+<Expand title="术语速查（先扫一眼，读完再回看）">
 
-- **rank**：并行组里的”工号”，一张卡通常对应一个 rank。
+- **rank**：并行组里的"工号"，一张卡通常对应一个 rank。
 - **TP / PP / DP / EP / CP**：张量并行 / 流水线并行 / 数据并行 / 专家并行 / 上下文并行，后文逐个图解。
 - **合稿**（all-reduce）：每个人手里拿着部分结果，交换后人人拿到一份完整结果的集合通信。
-- **换组**（all-to-all）：每个人按”收件人”把手里的小包重新分发，交换后各拿各的那份。
+- **换组**（all-to-all）：每个人按"收件人"把手里的小包重新分发，交换后各拿各的那份。
 - **NVLink 域**：经 NVSwitch 全互联、可以像同屋喊话一样通信的一组卡，可能比一台机器更大。
 - **TTFT / ITL**：首字延迟 / 相邻两字的蹦字间隔。
 
@@ -48,19 +51,19 @@ TP、PP、DP、EP、CP 五种并行机制图解——切什么、传什么、为
 
 70B 模型 FP16 的权重是 $70\times10^9\times2$ 字节 ≈ **140GB**，而一张 H100 SXM 是 80GB：$140>80$，单卡连加载都做不到，先撞上的是容量墙。现在给你两张 H100，摆法有三种：
 
-<ParaRecFig1 />
+<ParaPainFigure />
 
-*图 1：前两种摆法把模型切开（TP 与 PP 的雏形），第三种想复制两份完整副本——80 < 140，当场红叉。复制副本是”装得下之后”才有的奢侈。*
+*图 1：前两种摆法把模型切开（TP 与 PP 的雏形），第三种想复制两份完整副本——80 < 140，当场红叉。复制副本是"装得下之后"才有的奢侈。*
 
 摆法 ① 和 ② 装得下，摆法 ③ 连门都进不去。这个红叉就是全文的主轴：**装不下才需要拆**（TP/PP/CP），**装得下才谈得上抄**（DP 多副本），而 EP 是 MoE 结构白送的一种拆法。
 
-再算一笔速度账。单卡若放得下整个模型，decode 阶段每生成一个 token 约等于把所有权重读一遍：$140\text{GB}/3.35\text{TB·s}^{-1}\approx42$ 毫秒，这是《一次推理的旅程》里的经典锚点。两张卡走摆法 ①，每卡只持有 70GB，纯权重搬运时间变成 $70/3.35\approx21$ 毫秒——但注意三个限定：这是 dense 模型、batch=1、只算权重搬运的**理论下界**；每一层算完两卡都要停下来”对一次答案”，80 层要对上百次，单次在 NVLink 上多为微秒级、累计落在亚毫秒到数毫秒（随并行度和拓扑变化，不要当成固定值）；再加上 KV 与激活的读取，**实际提速明显小于 2 倍**——21ms 是通信为零时的下界，不是承诺。
+再算一笔速度账。单卡若放得下整个模型，decode 阶段每生成一个 token 约等于把所有权重读一遍：$140\text{GB}/3.35\text{TB·s}^{-1}\approx42$ 毫秒，这是《一次推理的旅程》里的经典锚点。两张卡走摆法 ①，每卡只持有 70GB，纯权重搬运时间变成 $70/3.35\approx21$ 毫秒——但注意三个限定：这是 dense 模型、batch=1、只算权重搬运的**理论下界**；每一层算完两卡都要停下来"对一次答案"，80 层要对上百次，单次在 NVLink 上多为微秒级、累计落在亚毫秒到数毫秒（随并行度和拓扑变化，不要当成固定值）；再加上 KV 与激活的读取，**实际提速明显小于 2 倍**——21ms 是通信为零时的下界，不是承诺。
 
-最后留一个反转：把权重换成 FP8，70B 模型只要约 70GB，一张 80GB 的卡就放得下了——上面整套”非拆不可”的结论当场失效，回到第 8 节的第一原则”放得下就别并行”。并行策略永远是模型尺寸、量化精度与硬件代际的函数。
+最后留一个反转：把权重换成 FP8，70B 模型只要约 70GB，一张 80GB 的卡就放得下了——上面整套"非拆不可"的结论当场失效，回到第 8 节的第一原则"放得下就别并行"。并行策略永远是模型尺寸、量化精度与硬件代际的函数。
 
 ## 1. 地形：卡的编号与三级网络
 
-讲拆法之前先认清卡间地形。多卡任务里每张卡有一个”工号”，叫 **rank**：一个 8 卡张量并行组就像 8 个工人，工号 0–7，每次集合通信 8 人必须同时在岗。
+讲拆法之前先认清卡间地形。多卡任务里每张卡有一个"工号"，叫 **rank**：一个 8 卡张量并行组就像 8 个工人，工号 0–7，每次集合通信 8 人必须同时在岗。
 
 卡与卡之间的路分三级，每跨一级带宽大约掉一个数量级（H100 时代的典型值，口径沿用《PD 分离》的网络表）：
 
@@ -68,13 +71,13 @@ TP、PP、DP、EP、CP 五种并行机制图解——切什么、传什么、为
 - **PCIe Gen5 x16**：约 64GB/s（单向理论值），同小区寄件；
 - **InfiniBand NDR**：每 rail 约 50GB/s 单向线速（有效载荷还要打折），跨城高铁。
 
-要补一句《PD 分离》没展开的校准：三级之间差的不只是带宽，更是**往返延迟**。后面会看到，张量并行恰好死于”高频小消息等回复”，所以它对延迟敏感、对带宽反而没那么敏感。另外，“节点内”这个说法正在过时——NVSwitch 全互联的范围叫 **NVLink 域**，可以比一台机器大，例如 GB200 NVL72 把 72 张卡编进同一个 NVLink 域；本文举例仍用熟悉的 8 卡机。
+要补一句《PD 分离》没展开的校准：三级之间差的不只是带宽，更是**往返延迟**。后面会看到，张量并行恰好死于"高频小消息等回复"，所以它对延迟敏感、对带宽反而没那么敏感。另外，"节点内"这个说法正在过时——NVSwitch 全互联的范围叫 **NVLink 域**，可以比一台机器大，例如 GB200 NVL72 把 72 张卡编进同一个 NVLink 域；本文举例仍用熟悉的 8 卡机。
 
 ## 2. 总图：两堵墙，五把刀
 
 所有并行机制都在应付两堵墙：**容量墙**（权重和 KV 放不放得下）与**延迟墙**（单条请求要等多久）。五种策略各治一处：
 
-<ParaRecFig2 />
+<ParaMapFigure />
 
 *图 2：五把刀的切分对象、通信模式与网络要求截然不同。它们可以组合，但共用同一组卡、组合有约束。*
 
@@ -82,19 +85,19 @@ TP、PP、DP、EP、CP 五种并行机制图解——切什么、传什么、为
 
 - **TP 切层内的矩阵**、**PP 切整层**：前者每层都要全员合稿，后者只在工位边界递一次工件；
 - **DP 什么都不切**，摆 N 个完整副本，副本之间推理时几乎不说话；
-- **EP 与 CP 是”结构红利”**：EP 只在 MoE 上存在，沿专家切；CP 沿 token 序列切，治超长上下文。
+- **EP 与 CP 是"结构红利"**：EP 只在 MoE 上存在，沿专家切；CP 沿 token 序列切，治超长上下文。
 
 它们不是互斥的单选题。同一片 8 卡，可以是一个 TP=8 副本，也可以是 4 个 TP=2 副本（即 DP=4）；MoE 模型上专家并行度自动等于 TP×DP；上下文并行则必须叠在张量并行之上。后面六节逐个拆解。
 
 ## 3. 张量并行 TP：层内切矩阵，每层合两次稿
 
-《PD 分离》给过结论”TP 每层有两次 all-reduce、尽量关在节点内”。本节算三笔新账：矩阵到底怎么切、合稿合的是什么、decode 为什么特别疼。
+《PD 分离》给过结论"TP 每层有两次 all-reduce、尽量关在节点内"。本节算三笔新账：矩阵到底怎么切、合稿合的是什么、decode 为什么特别疼。
 
 ### 3.1 最小例子：一个矩阵怎么分给两张卡
 
-一层 Transformer 的主要计算是矩阵乘 $Y=XW$。把 $W$ 沿列切成两半 $W=[W_1\ W_2]$，两张卡各持一半，各算 $Y_1=XW_1$、$Y_2=XW_2$，沿列拼起来就是完整的 $Y$——列切不用通信。但 Megatron-LM 的切法[1]是成对设计的：$W$ 的第一个矩阵沿**列**切、紧接的第二个矩阵沿**行**切。行切之后，每张卡只算出”一半行的部分和”，必须把部分和加起来才是完整答案，这就需要一次**合稿**（all-reduce）：
+一层 Transformer 的主要计算是矩阵乘 $Y=XW$。把 $W$ 沿列切成两半 $W=[W_1\ W_2]$，两张卡各持一半，各算 $Y_1=XW_1$、$Y_2=XW_2$，沿列拼起来就是完整的 $Y$——列切不用通信。但 Megatron-LM 的切法[1]是成对设计的：$W$ 的第一个矩阵沿**列**切、紧接的第二个矩阵沿**行**切。行切之后，每张卡只算出"一半行的部分和"，必须把部分和加起来才是完整答案，这就需要一次**合稿**（all-reduce）：
 
-<ParaRecFig3 />
+<ParaTpFigure />
 
 *图 3：列切各算各的、行切必须求和；合稿结束后，每张卡手里都有一份完整 Y——不是交给一个总编辑，因为下一层人人都要用完整结果。*
 
@@ -102,21 +105,21 @@ TP、PP、DP、EP、CP 五种并行机制图解——切什么、传什么、为
 
 Megatron 把这套配对刀法用进一层 Transformer：注意力块的 QKV 三个矩阵沿列切（注意力本身天然按头各算各的），输出投影 $O$ 沿行切，**第一次合稿发生在注意力块出口**；MLP 的第一个矩阵沿列切、第二个沿行切，**第二次合稿发生在 FFN 出口**。一层恰好两次，位置是固定的[1]。
 
-于是可以算量级：80 层的模型，每生成一个 token 要做 $80\times2=160$ 次逻辑合稿。在 profiler 里，每次合稿就是一次集合通信调用（如一次 ncclAllReduce）；它的 ring 实现**内部**再分 reduce-scatter 与 all-gather 两个阶段、共 $2(N-1)$ 跳——口径上分清楚即可，不存在”320 次调用”。
+于是可以算量级：80 层的模型，每生成一个 token 要做 $80\times2=160$ 次逻辑合稿。在 profiler 里，每次合稿就是一次集合通信调用（如一次 ncclAllReduce）；它的 ring 实现**内部**再分 reduce-scatter 与 all-gather 两个阶段、共 $2(N-1)$ 跳——口径上分清楚即可，不存在"320 次调用"。
 
-这 160 次合稿解释了一个反复出现的工程现象：**TP 对 decode 的单 token 延迟伤害最直接**。decode 每生成一个字就要完整付一遍这 160 次；而一次 prefill 把同样的 160 次摊到了几千个输入 token 上，几乎听不见。这正是《PD 分离》里”Decode 池用较低 TP”的原因。
+这 160 次合稿解释了一个反复出现的工程现象：**TP 对 decode 的单 token 延迟伤害最直接**。decode 每生成一个字就要完整付一遍这 160 次；而一次 prefill 把同样的 160 次摊到了几千个输入 token 上，几乎听不见。这正是《PD 分离》里"Decode 池用较低 TP"的原因。
 
 ### 3.3 为什么必须是 NVLink 域
 
-合稿的物理动作是”全员到齐、交换部分和、才能进下一层”：消息小、频次高、而且**阻塞下一步**。这种通信怕的是往返延迟而不是带宽。NVLink 域内一次合稿是微秒级，一出域走 InfiniBand，每跳延迟翻几十倍，160 次叠加就是硬邦邦的延迟税。所以 vLLM 的多机标准拓扑永远是”TP 留在 NVLink 域内、跨域用 PP”[11]。对没有 NVLink 的机型（如 L40S），官方文档在高吞吐语境下直接建议用 PP 代替 TP；围栏是：若你只跑单条低延迟流，TP-over-PCIe 仍可能更划算，这个建议的语境是吞吐，需要按自己的流量测。
+合稿的物理动作是"全员到齐、交换部分和、才能进下一层"：消息小、频次高、而且**阻塞下一步**。这种通信怕的是往返延迟而不是带宽。NVLink 域内一次合稿是微秒级，一出域走 InfiniBand，每跳延迟翻几十倍，160 次叠加就是硬邦邦的延迟税。所以 vLLM 的多机标准拓扑永远是"TP 留在 NVLink 域内、跨域用 PP"[11]。对没有 NVLink 的机型（如 L40S），官方文档在高吞吐语境下直接建议用 PP 代替 TP；围栏是：若你只跑单条低延迟流，TP-over-PCIe 仍可能更划算，这个建议的语境是吞吐，需要按自己的流量测。
 
 ### 3.4 KV 也被切，以及切不动的时候
 
-TP 不只切权重，注意力的 KV 也按 KV 头分到各卡。MHA 时代头多，随便切；GQA/MLA 把头数大幅压缩后（见[《注意力机制演进》](/blog/注意力机制演进-从mha到gqa与mla)），麻烦来了：**1 个 KV 头面对 8 把刀**，切不开，就只能每把刀旁边放一份。MLA 只有 1 个 KV 头，TP=8 时同一段 KV 被复制 8 份。这是第 7 节上下文并行要回收的伏笔。并行度本身也受整除约束：注意力头数不能被卡数整除时，这个 TP 度就切不成。
+TP 不只切权重，注意力的 KV 也按 KV 头分到各卡。MHA 时代头多，随便切；GQA/MLA 把头数大幅压缩后（见[《注意力机制演进》](/blog/注意力机制演进-从mha到gqa与mla/)），麻烦来了：**1 个 KV 头面对 8 把刀**，切不开，就只能每把刀旁边放一份。MLA 只有 1 个 KV 头，TP=8 时同一段 KV 被复制 8 份。这是第 7 节上下文并行要回收的伏笔。并行度本身也受整除约束：注意力头数不能被卡数整除时，这个 TP 度就切不成。
 
 最后划清 TP 的能力边界：它的**首要目的是装得下**，不是提速。batch 很小时算力分摊确实送一点延迟红利，但合稿开销随卡数增长、边际收益递减，DistServe 的实测（图 5，大 batch 下 TP 边际递减、多副本近乎线性）在《PD 分离》里引过——通信追平算力之后，继续加 TP 反而更慢。
 
-<Expand title="▸展开：一次合稿到底传多少数据（ring all-reduce）">
+<Expand title="展开：一次合稿到底传多少数据（ring all-reduce）">
 
 $N$ 张卡、每张持有一条长度 $S$ 的部分和，环式实现分两步：先 reduce-scatter，每张卡拿到 $1/N$ 条完整的和；再 all-gather，把 $N$ 份拼回全员。每步环上传输 $(N-1)/N\cdot S$，总通信量（带宽项）为 $2(N-1)/N\cdot S$，卡数很多时趋近 $2S$；延迟项是固定的 $2(N-1)$ 跳。这是教科书环式口径，NCCL 实际会按拓扑在 ring、tree 等算法间选择，消息很小时延迟项主导。
 
@@ -124,7 +127,7 @@ $N$ 张卡、每张持有一条长度 $S$ 的部分和，环式实现分两步�
 
 ## 4. 流水线并行 PP：层间分工位，气泡是等出来的
 
-《PD 分离》给过”TP 留域内、PP 跨节点”的经验。本节回答为什么跨机能忍 PP，以及推理里的气泡账到底怎么算。
+《PD 分离》给过"TP 留域内、PP 跨节点"的经验。本节回答为什么跨机能忍 PP，以及推理里的气泡账到底怎么算。
 
 ### 4.1 机制：8 道工位，边界只递一次工件
 
@@ -134,54 +137,54 @@ $N$ 张卡、每张持有一条长度 $S$ 的部分和，环式实现分两步�
 
 流水线的代价是**气泡**（bubble）：第一个工件流过 8 道工位期间，后面的工位全在空等；最后一个工件排空时，前面的工位也在空等。训练时代的经典解法是 GPipe[2]：把一个 batch 切成 $M$ 个 micro-batch 连续灌进流水线，气泡被摊薄，占比约为 $\dfrac{P-1}{M+P-1}$，其中 $P$ 是工位数，$M$ 越大气泡越小（PipeDream[3] 进一步给出 1F1B 调度）。
 
-**推理的账要讲准确**。从 Orca 开始，推理系统同样用 micro-batch 灌流水线：连续批处理里同时在跑的 $M$ 个请求，每个步就是流过工位的 $M$ 个小片——“推理没有 micro-batch、气泡无法填充”是常见的错误说法。真正的病灶是**片重不均**：整段 prefill 的片很重，decode 的片每个请求只有一个 token、很轻，轻重交替进站，后工位算完轻片也得等前面的重片，气泡就这样等了出来。
+**推理的账要讲准确**。从 Orca 开始，推理系统同样用 micro-batch 灌流水线：连续批处理里同时在跑的 $M$ 个请求，每个步就是流过工位的 $M$ 个小片——"推理没有 micro-batch、气泡无法填充"是常见的错误说法。真正的病灶是**片重不均**：整段 prefill 的片很重，decode 的片每个请求只有一个 token、很轻，轻重交替进站，后工位算完轻片也得等前面的重片，气泡就这样等了出来。
 
 Chunked prefill 把每个 prefill 也切成等计算量的小块，于是每一步流过工位的片轻重一致，**显著减少气泡**（注意：不是消除）。Sarathi 论文[9]在 GPT-3、64 张 A100 的 profile 驱动仿真上给出的数字是：**每请求中位气泡时间**（median bubble time per request，论文图 12a 的指标，不是吞吐倍数）降到原来的 1/6.29，同配置端到端吞吐提升 1.91×——这是仿真口径，不是真机实测。
 
-<ParaRecFig4 />
+<ParaPpBubbleFigure />
 
 *图 4：左——单请求 M=1 时没有任何填料，P−1 跳填充延迟必须全额照付；中——M 个请求连续灌满时只剩首尾气泡；右——prefill 重片与 decode 轻片不匀，后工位被重片卡住。*
 
-那么 PP 到底伤在哪？**伤在单请求延迟**：当 $M=1$（系统里只有一条请求），没有任何东西可填，第一个字必须等工件走过全部 $P$ 道工位，$P-1$ 跳的流水线填充延迟一个子儿都少不了；而大 batch 的稳态吞吐可以灌得很满。这就是官方优化文档明说增加 PP 有 “latency penalties”、但它仍被用于大规模装模型的原因。
+那么 PP 到底伤在哪？**伤在单请求延迟**：当 $M=1$（系统里只有一条请求），没有任何东西可填，第一个字必须等工件走过全部 $P$ 道工位，$P-1$ 跳的流水线填充延迟一个子儿都少不了；而大 batch 的稳态吞吐可以灌得很满。这就是官方优化文档明说增加 PP 有 "latency penalties"、但它仍被用于大规模装模型的原因。
 
 ### 4.3 工程定位与两个边角用途
 
-PP 的主业是**跨 NVLink 域装模型**：官方标准拓扑是 TP 等于每域卡数、PP 等于域（节点）数[11]。两个边角用途也出自官方文档：模型在单机放得下但卡数不能整除模型规模时，PP 支持不均匀的层数分配（TP 切不了时的出路）；无 NVLink 机型上用 PP 代替 TP。成熟度上补一道围栏：PP 与 MTP/部分投机解码、多模态、个别 attention backend 的组合兼容矩阵以官方文档为准，不要假设”全特性成熟”。
+PP 的主业是**跨 NVLink 域装模型**：官方标准拓扑是 TP 等于每域卡数、PP 等于域（节点）数[11]。两个边角用途也出自官方文档：模型在单机放得下但卡数不能整除模型规模时，PP 支持不均匀的层数分配（TP 切不了时的出路）；无 NVLink 机型上用 PP 代替 TP。成熟度上补一道围栏：PP 与 MTP/部分投机解码、多模态、个别 attention backend 的组合兼容矩阵以官方文档为准，不要假设"全特性成熟"。
 
-<Expand title="▸展开：1F1B 与交错调度（训练语境）">
+<Expand title="展开：1F1B 与交错调度（训练语境）">
 
-训练框架里还有两种进阶排法：1F1B 让每个工位”前向一步、反向一步”交替，把激活显存峰值压下来；Megatron 的集群训练论文[4]提出交错调度（interleaved schedule），让每个工位持有多段不连续的层，把气泡再压小。这些是训练语境的成果；本文不声称 vLLM 0.21 支持交错调度，需要时查官方文档。
+训练框架里还有两种进阶排法：1F1B 让每个工位"前向一步、反向一步"交替，把激活显存峰值压下来；Megatron 的集群训练论文[4]提出交错调度（interleaved schedule），让每个工位持有多段不连续的层，把气泡再压小。这些是训练语境的成果；本文不声称 vLLM 0.21 支持交错调度，需要时查官方文档。
 
 </Expand>
 
 ## 5. 数据并行 DP：装得下之后，开 N 个相同窗口
 
-TP 与 PP 都在拆”一个请求怎么过多张卡”。数据并行完全换了个维度：**模型不拆**，摆 N 个完整副本，请求在副本之间分流。
+TP 与 PP 都在拆"一个请求怎么过多张卡"。数据并行完全换了个维度：**模型不拆**，摆 N 个完整副本，请求在副本之间分流。
 
 一句话钉死两者的区别：**TP 是 1 条请求 8 张卡一起算**，**DP 是 8 条请求各找 1 张卡**。 训练里的数据并行每步还要对梯度答案（副本间必须同步），推理则各算各的——每条请求只落在一个副本上，副本之间推理时几乎不通信，只有启动时的权重加载与运行中的控制面消息。
 
-<ParaRecFig5 />
+<ParaDpFigure />
 
 *图 5：同一片 8 张卡的两种用法。左图 8 卡共同产出一条回答；右图每卡一个完整引擎、各接各的请求，吞吐近 8 倍而单请求的计算时间不变。*
 
 ### 5.1 收益口径：扩的是吞吐，不是单请求速度
 
-4 个副本的稳态吞吐在理想情况下接近 ×4，但这个”近线性”在正文里就要把四个前提写全：
+4 个副本的稳态吞吐在理想情况下接近 ×4，但这个"近线性"在正文里就要把四个前提写全：
 
-- **副本资源真正独立**：同一台机器内的副本仍在争 PCIe、NVLink 域、网卡、电源与主机内存，会打折；
-- **启动时权重加载是 N 份** host 内存到 GPU 的 PCIe 流量，副本越多启动越慢；
-- **负载均衡器不是万能的**：vLLM 0.21 内置的 API server 负载均衡按各引擎 running/waiting 队列长度分流，**目前不是 KV-cache 感知**的（官方文档列为未来方向），前缀类流量可能分配不均；
-- **API server 自身可能成瓶颈**：大 DP 规模下要用 `--api-server-count` 横扩，但这个横扩只能在 head 节点内。
+1. **副本资源真正独立**：同一台机器内的副本仍在争 PCIe、NVLink 域、网卡、电源与主机内存，会打折；
+2. **启动时权重加载是 N 份** host 内存到 GPU 的 PCIe 流量，副本越多启动越慢；
+3. **负载均衡器不是万能的**：vLLM 0.21 内置的 API server 负载均衡按各引擎 running/waiting 队列长度分流，**目前不是 KV-cache 感知**的（官方文档列为未来方向），前缀类流量可能分配不均；
+4. **API server 自身可能成瓶颈**：大 DP 规模下要用 `--api-server-count` 横扩，但这个横扩只能在 head 节点内。
 
-更要紧的是指标口径：DP **不改变单请求的计算下界**，它消掉的只是排队项。所以高负载下加副本，TTFT 和 p99 可能明显变好（排队短了），但不要说”单条请求算得更快”；一条请求在空闲系统里的延迟，DP=1 和 DP=8 几乎一样。DP 也不解决装不下——每个副本仍要放下整张模型。
+更要紧的是指标口径：DP **不改变单请求的计算下界**，它消掉的只是排队项。所以高负载下加副本，TTFT 和 p99 可能明显变好（排队短了），但不要说"单条请求算得更快"；一条请求在空闲系统里的延迟，DP=1 和 DP=8 几乎一样。DP 也不解决装不下——每个副本仍要放下整张模型。
 
 ### 5.2 组合用法与 MoE 例外
 
-TP 与 DP 可以嵌套：8 卡 = 4 个 TP=2 副本（`-dp 4 -tp 2`），每个副本内部还是逐层合稿。注意 `--max-num-seqs` 是**按 rank**（副本）计数的，调容量时别按总数心算。每个副本的 KV cache 各自独立，同一个热门前缀在 N 个副本里各存一份，前缀缓存命中率可能被稀释；缓存感知的智能路由（RadixAttention 一类工作[10]）是进阶话题，详见[《vLLM 调度 8》](/blog/vllm-调度8-前缀缓存从单机到集群)。
+TP 与 DP 可以嵌套：8 卡 = 4 个 TP=2 副本（`-dp 4 -tp 2`），每个副本内部还是逐层合稿。注意 `--max-num-seqs` 是**按 rank**（副本）计数的，调容量时别按总数心算。每个副本的 KV cache 各自独立，同一个热门前缀在 N 个副本里各存一份，前缀缓存命中率可能被稀释；缓存感知的智能路由（RadixAttention 一类工作[10]）是进阶话题，详见[《vLLM 调度 8》](/blog/vllm-调度8-前缀缓存从单机到集群/)。
 
 最后一个例外先记住、下一节展开：**MoE 模型上的 DP 不纯粹**。各 rank 的前向必须对齐，没有请求的 rank 也要跑空的（dummy）前向，专家层默认还会组成一个 DP×TP 的同步组。
 
-<Expand title="▸展开：vLLM 0.21 的三种数据并行形态（2026-10 快照）">
+<Expand title="展开：vLLM 0.21 的三种数据并行形态（2026-10 快照）">
 
 - **内置负载均衡**：`-dp N`，一个 API endpoint 对外，API server 进程按各引擎队列分流；可与 TP 组合。多机时每节点一条 `vllm serve`、用 `--data-parallel-size-local/--data-parallel-start-rank` 报户口。
 - **混合负载均衡**：`--data-parallel-hybrid-lb`，每节点只把请求排给本节点引擎，上游再用 ingress 分流，减少跨节点流量。
@@ -193,7 +196,7 @@ TP 与 DP 可以嵌套：8 卡 = 4 个 TP=2 副本（`-dp 4 -tp 2`），每个�
 
 ## 6. 专家并行 EP：MoE 结构白送的一种拆法
 
-[《MoE 混合专家模型》](/blog/moe混合专家模型-以deepseek为例)讲过路由与 all-to-all 的概念。本节算三笔那篇没展开的账：为什么所有专家必须常驻显存、热专家为什么会堵、8 卡上到底怎么摆。
+[《MoE 混合专家模型》](/blog/moe混合专家模型-以deepseek为例/)讲过路由与 all-to-all 的概念。本节算三笔那篇没展开的账：为什么所有专家必须常驻显存、热专家为什么会堵、8 卡上到底怎么摆。
 
 ### 6.1 事实锚：256 个专科诊室
 
@@ -204,11 +207,11 @@ TP 与 DP 可以嵌套：8 卡 = 4 个 TP=2 副本（`-dp 4 -tp 2`），每个�
 
 那就把专家摊到不同卡上。EP 的物理动作是**分诊**：每个 token 带着路由小票，先被送到持有对应专家的卡（dispatch，一次全员换组 all-to-all），专家算完，再换一次组分发回原卡（combine），每个 MoE 层两次。
 
-<ParaRecFig6 />
+<ParaEpFigure />
 
-*图 6：换组前 token 按”所在卡”聚集，换组后按”目标专家”重新排队；热专家一列排队，全线都要等它。*
+*图 6：换组前 token 按"所在卡"聚集，换组后按"目标专家"重新排队；热专家一列排队，全线都要等它。*
 
-这个类比有三道围栏必须一起记住：路由是**模型自己算的**，会选错；所有专家像**全天空岗的专科医生**，没病人也占着诊室（显存）；医生有冷有热，**热医生门口排队、冷医生闲着**——负载倾斜是 EP 的内生问题。与 TP 合稿的对照也在这里：合稿是”全员汇总同一份答案”，每个消息一样大；分诊是”各找各的医生”，消息大小完全随路由分布变化。
+这个类比有三道围栏必须一起记住：路由是**模型自己算的**，会选错；所有专家像**全天空岗的专科医生**，没病人也占着诊室（显存）；医生有冷有热，**热医生门口排队、冷医生闲着**——负载倾斜是 EP 的内生问题。与 TP 合稿的对照也在这里：合稿是"全员汇总同一份答案"，每个消息一样大；分诊是"各找各的医生"，消息大小完全随路由分布变化。
 
 倾斜的标准治法是 **EPLB**（专家并行负载均衡器，`--enable-eplb` 显式开启）：统计各专家热度，周期性地把热专家复制（冗余）到多个 rank 上。冗余要占显存，官方文档给的口径是 DeepSeek-V3 上约 **2.4GB / 每个冗余专家 / 每卡**（FP8、61 个 MoE 层），显存紧张或 KV 空间宝贵时不要开；粗算校验（按专家矩阵 $7168\times2048\times3$、61 层、FP8）约 2.7GB，与官方同量级，差异是参数与打包口径。
 
@@ -220,19 +223,19 @@ vLLM 0.21 开启 `--enable-expert-parallel` 后，**专家并行度自动等于 
 
 工程状态上两道围栏：EP 在 0.21 文档里仍明确标注 **experimental**（参数名与默认值可能变）；跨机 EP 依赖专用栈——DeepEP 的两套 kernel（高吞吐档给 prefill、低延迟档给 decode）之外，还要 NVSHMEM、IBGDA、gdrcopy/GDRDMA 就位，IB 集群初始化时另有 `GLOO_SOCKET_IFNAME` 一类的坑。
 
-<Expand title="▸展开：MoE 为什么是 EP+DP，而不是纯 DP 或纯 TP">
+<Expand title="展开：MoE 为什么是 EP+DP，而不是纯 DP 或纯 TP">
 
-纯 DP：每个副本都放全部 256 个专家，显存 ×N 份重复，浪费的恰好是 MoE 最大的一块参数；纯 TP：专家矩阵虽能按矩阵维切，但每个 token 的每次专家计算都要全员合稿，丢掉了”只碰 8 个专家”的稀疏性。EP+DP 让专家在全组摊开（显存不重复）、token 按路由换组（只找相关专家）；而专家层仍需跨 rank 同步，是因为每一步的路由分布都不同，谁持有哪些专家是固定的、token 想去哪里是动态的，dispatch/combine 这两次换组省不掉。
+纯 DP：每个副本都放全部 256 个专家，显存 ×N 份重复，浪费的恰好是 MoE 最大的一块参数；纯 TP：专家矩阵虽能按矩阵维切，但每个 token 的每次专家计算都要全员合稿，丢掉了"只碰 8 个专家"的稀疏性。EP+DP 让专家在全组摊开（显存不重复）、token 按路由换组（只找相关专家）；而专家层仍需跨 rank 同步，是因为每一步的路由分布都不同，谁持有哪些专家是固定的、token 想去哪里是动态的，dispatch/combine 这两次换组省不掉。
 
 </Expand>
 
-## 7. 上下文并行 CP：把”序列”切开
+## 7. 上下文并行 CP：把"序列"切开
 
 前面四把刀切的都是模型或副本。最后一把刀切的是**输入本身**——沿 token 序列维度做文章，所以叫上下文并行。它有两副面孔，分别对付长上下文的两堵墙：prefill 的 $O(T^2)$ 注意力计算让 TTFT 爆炸；decode 的 KV cache 随 $T$ 线性增长、撑爆显存。
 
 ### 7a. Prefill CP：治长 prompt 的 TTFT
 
-$N$ 张卡各持 $1/N$ 的 query token，分工读同一篇长文。这个类比有个关键围栏：注意力要求**每个字都看到全文**，所以不是”各读一半、各写一半总结”，而是边读边轮流传阅笔记。按笔记怎么传，分两档：
+$N$ 张卡各持 $1/N$ 的 query token，分工读同一篇长文。这个类比有个关键围栏：注意力要求**每个字都看到全文**，所以不是"各读一半、各写一半总结"，而是边读边轮流传阅笔记。按笔记怎么传，分两档：
 
 - **partial Q / full KV**：长度中等、各卡放得下完整 KV 时，先传阅汇总 KV 全集，再各算各的 query 块（一次 all-gather 式的代价）；
 - **partial Q / partial KV**：序列长到完整 KV 也放不下时，每张卡只留自己的 KV 块，用 Ring Attention[5] 的方式逐块传阅 KV、每块经过时就地累加注意力。
@@ -245,7 +248,7 @@ decode 阶段每步只有几个新 query，却要对着全部历史 KV 做注意
 
 Decode CP（DCP，`-dcp`）的做法是换一个维度下刀：KV 再沿**序列维 $T$** 交错（interleave）落盘——位置 0 给卡 0、位置 1 给卡 1……轮转存放，于是每卡只持有 $1/N$ 的 KV，后续新生成的 token 也天然续进同一轮转。
 
-<ParaRecFig7 />
+<ParaCpFigure />
 
 *图 7：左——1 个 KV 头、TP=8，同一段笔记 8 个工人各抄了一整本（8× 容量浪费）；右——按条目编号轮流上架，每卡只存 1/8，代价是算注意力时要跨卡传阅笔记。*
 
@@ -257,9 +260,9 @@ Decode CP（DCP，`-dcp`）的做法是换一个维度下刀：KV 再沿**序列
 
 交错落盘的分法来自 Moonshot 团队的 Helix Parallelism[8]。0.21 的 DCP 已支持 MLA 与 GQA 模型，部分 attention backend 还能与 MTP 组合；通信后端默认 ag_rs（all-gather/reduce-scatter），细节随版本变化。一句话定位：**TP 切的是大脑**（权重与头），**CP 切的是材料**（token）——CP 不是独立副本，它叠在 TP 之上。
 
-<Expand title="▸展开：Ring Attention 与 Ulysses 两种通信范式">
+<Expand title="展开：Ring Attention 与 Ulysses 两种通信范式">
 
-Ring Attention[5]把 KV 切成环上的块，每步把自己的 KV 块传给下一张卡、同时接收上一张的块，$N$ 步后每卡都”在线”看过全部 KV；优点是单步消息小，代价是 $P2P$ 跳数随卡数线性增长。DeepSpeed Ulysses[6]走另一条路：一次 all-to-all 把完整 QKV 按注意力头换组，每张卡拿到所有卡在若干完整头上的 query 来算注意力、算完再换回来；只需两次全局换组，但要求注意力头数不小于并行度且能整除，并且很吃全互联拓扑。推理 prefill CP 的两档实现与这两种训练范式一脉相承。
+Ring Attention[5]把 KV 切成环上的块，每步把自己的 KV 块传给下一张卡、同时接收上一张的块，$N$ 步后每卡都"在线"看过全部 KV；优点是单步消息小，代价是 $P2P$ 跳数随卡数线性增长。DeepSpeed Ulysses[6]走另一条路：一次 all-to-all 把完整 QKV 按注意力头换组，每张卡拿到所有卡在若干完整头上的 query 来算注意力、算完再换回来；只需两次全局换组，但要求注意力头数不小于并行度且能整除，并且很吃全互联拓扑。推理 prefill CP 的两档实现与这两种训练范式一脉相承。
 
 </Expand>
 
@@ -267,7 +270,7 @@ Ring Attention[5]把 KV 切成环上的块，每步把自己的 KV 块传给下�
 
 把全文压成一张流程图。顺序是**先容量、再单请求延迟、最后并发**，特例结构（MoE、超长序列）走专门的支路：
 
-<ParaRecFig8 />
+<ParaDecisionFigure />
 
 *图 8：放得下且够快就别并行；装不下时 NVLink 决定 TP 还是 PP；跨域才 TP×PP；吞吐不够才上 DP；MoE 与长上下文各自走 EP 与 CP。*
 
@@ -282,7 +285,7 @@ vLLM 0.21 的相关参数快照如下（2026-10，以官方文档为准）：
 | `-pcp` / `-dcp` | prefill / decode 上下文并行 | pcp 活跃开发；dcp 已支持 MLA/GQA，先 TP 后 DCP |
 | `--distributed-executor-backend` | 分布式执行后端 | 单机默认多进程；跨机主流 Ray，0.21 也支持多机多进程 |
 
-高频坑速查：TP 硬跨 InfiniBand（160 次合稿的延迟税）；以为加 DP 能降低单请求延迟（只消排队项）；以为 MoE 的 DP rank 完全独立（dummy 前向与专家同步组）；跨机 EP 没装 DeepEP/NVSHMEM/gdrcopy 就上线；dcp 违反整除约束（启动报错）或超过 tp/H（不支持）；在 MIG 实例上跑 NCCL 并行（不支持，见[《AI-Ops 工程师能力图谱》](/blog/ai-ops工程师能力图谱)）。
+高频坑速查：TP 硬跨 InfiniBand（160 次合稿的延迟税）；以为加 DP 能降低单请求延迟（只消排队项）；以为 MoE 的 DP rank 完全独立（dummy 前向与专家同步组）；跨机 EP 没装 DeepEP/NVSHMEM/gdrcopy 就上线；dcp 违反整除约束（启动报错）或超过 tp/H（不支持）；在 MIG 实例上跑 NCCL 并行（不支持，见[《AI-Ops 工程师能力图谱》](/blog/ai-ops工程师能力图谱/)）。
 
 ## 9. 收束：三种动作，一时代有一代的配比
 
@@ -308,11 +311,11 @@ vLLM 0.21 的相关参数快照如下（2026-10，以官方文档为准）：
 
 **6.**（加分辨析）DeepSeek-V3 单机 8 卡部署，注意力权重为什么敢复制 8 份，专家权重却必须摊开？
 
-<Expand title="▸参考答案">
+<Expand title="参考答案">
 
 1. 层内切（TP）两卡合服务一条请求，装得下，单请求的纯搬运时间理论减半但被逐层合稿追回一部分，容量是 2×；两份完整副本（DP）在 FP16 下根本放不下（80 < 140），只能在放得下之后成立，成立后吞吐近 2× 而单请求计算时间不变。FP8 后 70B≈70GB 单卡可放，原则上两种拆法都不需要了——先单卡，吞吐不够再 DP。
 2. TP 每层两次合稿、80 层上百次，小消息高频且阻塞下一步，怕往返延迟，必须待在 NVLink 域；PP 只在工位边界每步传一次激活，整步均摊通信量小一两个数量级，能容忍 IB 的延迟。
-3. 公式本身仍适用（推理 micro-batch 就是连续批处理里同时在跑的 M 个请求），但推理的 micro-batch 轻重不匀（整段 prefill 重、decode 单 token 轻），不均本身会额外等出气泡，要靠 chunked prefill 均泡；Sarathi 的 6.29× 是每请求中位气泡时间的仿真改善，且只是”显著减少”不是消除。单请求 M=1 时无料可填，$P-1$ 跳流水线填充延迟全额照付。
+3. 公式本身仍适用（推理 micro-batch 就是连续批处理里同时在跑的 M 个请求），但推理的 micro-batch 轻重不匀（整段 prefill 重、decode 单 token 轻），不均本身会额外等出气泡，要靠 chunked prefill 均泡；Sarathi 的 6.29× 是每请求中位气泡时间的仿真改善，且只是"显著减少"不是消除。单请求 M=1 时无料可填，$P-1$ 跳流水线填充延迟全额照付。
 4. 不会。单请求的计算下界不变；DP 只消排队项，高负载下 TTFT/p99 可能因排队变短而改善，空闲系统里几乎无差别。近 ×4 的只是聚合吞吐，且有资源争用、LB 非 KV 感知等四个前提。
 5. MLA 只有 1 个 KV 头，沿头切不动，8 张卡各放一份完整 KV（8× 重复）。-dcp 8 把 KV 再沿 token 序列交错落盘，每卡只存 1/8；代价是注意力计算要跨卡传阅 KV、通信增加。硬约束：tp 必须被 dcp 整除，且 dcp ≤ tp/H。
 6. MLA 把注意力压得很小，注意力参数相对 256 个路由专家的总参数量只是零头，复制 8 份的显存代价可接受；而专家是参数主体（256 个 ×61 层），每副本重复存放会撑爆显存，且每 token 只路由到 8 个专家，摊开后正好用 EP 的按路由换组兑现稀疏性。
@@ -323,33 +326,33 @@ vLLM 0.21 的相关参数快照如下（2026-10，以官方文档为准）：
 
 **论文**（编号经 arXiv 原文核对）：
 
-- Shoeybi et al., [Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism](https://arxiv.org/abs/1909.08053)（2019，张量并行切法与每层两次 all-reduce 的出处）
-- Huang et al., [GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism](https://arxiv.org/abs/1811.06965)（2019，micro-batch 与气泡公式）
-- Narayanan et al., [PipeDream: Generalized Pipeline Parallelism for DNN Training](https://arxiv.org/abs/1806.03377)（2019，1F1B 调度）
-- Narayanan et al., [Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM](https://arxiv.org/abs/2104.04473)（2021，交错调度与 1F1B 细化）
-- Liu et al., [Ring Attention with Blockwise Transformers for Near-Infinite Context](https://arxiv.org/abs/2310.01889)（2023，环式逐块传 KV）
-- DeepSpeed, [DeepSpeed Ulysses: System Optimizations for Enabling Training of Extreme Long Sequence Transformer Models](https://arxiv.org/abs/2309.14509)（2023，all-to-all 按头换组）
-- DeepSeek-AI, [DeepSeek-V3 Technical Report](https://arxiv.org/abs/2412.19437)（2024，256 路由专家+1 共享、top-8）
-- Hong et al., [Helix Parallelism: Rethinking Sharding Strategies for Interactive Multi-Million-Token LLM Decoding](https://arxiv.org/abs/2507.07120)（2025，decode 上下文并行的交错落盘）
-- Agrawal et al., [Sarathi: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills](https://arxiv.org/abs/2308.16369)（2023，切片均泡；6.29× 为 GPT-3/64×A100 仿真的每请求中位气泡时间）
-- Zheng et al., [SGLang: Efficient Execution of Structured Language Model Programs](https://arxiv.org/abs/2312.07104)（2023，RadixAttention 与缓存感知路由）
+1. Shoeybi et al., [Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism](https://arxiv.org/abs/1909.08053)（2019，张量并行切法与每层两次 all-reduce 的出处）
+2. Huang et al., [GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism](https://arxiv.org/abs/1811.06965)（2019，micro-batch 与气泡公式）
+3. Narayanan et al., [PipeDream: Generalized Pipeline Parallelism for DNN Training](https://arxiv.org/abs/1806.03377)（2019，1F1B 调度）
+4. Narayanan et al., [Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM](https://arxiv.org/abs/2104.04473)（2021，交错调度与 1F1B 细化）
+5. Liu et al., [Ring Attention with Blockwise Transformers for Near-Infinite Context](https://arxiv.org/abs/2310.01889)（2023，环式逐块传 KV）
+6. DeepSpeed, [DeepSpeed Ulysses: System Optimizations for Enabling Training of Extreme Long Sequence Transformer Models](https://arxiv.org/abs/2309.14509)（2023，all-to-all 按头换组）
+7. DeepSeek-AI, [DeepSeek-V3 Technical Report](https://arxiv.org/abs/2412.19437)（2024，256 路由专家+1 共享、top-8）
+8. Hong et al., [Helix Parallelism: Rethinking Sharding Strategies for Interactive Multi-Million-Token LLM Decoding](https://arxiv.org/abs/2507.07120)（2025，decode 上下文并行的交错落盘）
+9. Agrawal et al., [Sarathi: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills](https://arxiv.org/abs/2308.16369)（2023，切片均泡；6.29× 为 GPT-3/64×A100 仿真的每请求中位气泡时间）
+10. Zheng et al., [SGLang: Efficient Execution of Structured Language Model Programs](https://arxiv.org/abs/2312.07104)（2023，RadixAttention 与缓存感知路由）
 
 **官方文档**（vLLM，0.21 快照）：
 
-- [Parallelism and Scaling](https://docs.vllm.ai/en/latest/serving/parallelism_scaling.html)（TP/PP 标准拓扑、L40S 用 PP、不均匀切分）
-- [Optimization Guide — Parallelism Strategies](https://docs.vllm.ai/en/latest/configuration/optimization.html)（TP/PP/EP/DP 的延迟代价与调优）
-- [Data Parallel Deployment](https://docs.vllm.ai/en/latest/serving/data_parallel_deployment.html)（三种 LB、MoE DP 的 dummy 前向）
-- [Expert Parallel Deployment](https://docs.vllm.ai/en/latest/serving/expert_parallel_deployment.html)（EP=TP×DP、EPLB、DeepEP 后端）
-- [Context Parallel Deployment](https://docs.vllm.ai/en/latest/serving/context_parallel_deployment.html)（prefill CP 两档、DCP 与三个机型案例）
+11. [Parallelism and Scaling](https://docs.vllm.ai/en/latest/serving/parallelism_scaling.html)（TP/PP 标准拓扑、L40S 用 PP、不均匀切分）
+12. [Optimization Guide — Parallelism Strategies](https://docs.vllm.ai/en/latest/configuration/optimization.html)（TP/PP/EP/DP 的延迟代价与调优）
+13. [Data Parallel Deployment](https://docs.vllm.ai/en/latest/serving/data_parallel_deployment.html)（三种 LB、MoE DP 的 dummy 前向）
+14. [Expert Parallel Deployment](https://docs.vllm.ai/en/latest/serving/expert_parallel_deployment.html)（EP=TP×DP、EPLB、DeepEP 后端）
+15. [Context Parallel Deployment](https://docs.vllm.ai/en/latest/serving/context_parallel_deployment.html)（prefill CP 两档、DCP 与三个机型案例）
 
 **站内延伸**：
 
-- [《一次推理的旅程：Prefill 与 Decode》](/blog/一次推理的旅程-prefill与decode)（42ms 锚点、两阶段的瓶颈性质）
-- [《PagedAttention：给 KV Cache 装上虚拟内存》](/blog/pagedattention-给kv-cache装上虚拟内存)（KV cache 的组织）
-- [《PD 分离：把 Prefill 和 Decode 拆开部署》](/blog/PD分离-把Prefill和Decode拆开部署)（rank、三级网络、DistServe 的 TP/副本实验、KV 传输）
-- [《Chunked Prefill》](/blog/chunkedprefill-把长prompt切成节拍器能消化的小块)（切块机制、TBT 上界、调参闭环）
-- [《连续批处理》](/blog/连续批处理-每个迭代步重新组批)（迭代级调度与 Sarathi 仿真表）
-- [《MoE 混合专家模型》](/blog/moe混合专家模型-以deepseek为例)（路由、稀疏激活的入门）
-- [《注意力机制演进：从 MHA 到 GQA 与 MLA》](/blog/注意力机制演进-从mha到gqa与mla)（KV 头为什么变少）
-- [《vLLM 调度 8：前缀缓存从单机到集群》](/blog/vllm-调度8-前缀缓存从单机到集群)（缓存感知路由）
-- [《AI-Ops 工程师能力图谱》](/blog/ai-ops工程师能力图谱)（MIG/NCCL、NUMA 与拓扑对齐）
+- [《一次推理的旅程：Prefill 与 Decode》](/blog/一次推理的旅程-prefill与decode/)（42ms 锚点、两阶段的瓶颈性质）
+- [《PagedAttention：给 KV Cache 装上虚拟内存》](/blog/pagedattention-给kv-cache装上虚拟内存/)（KV cache 的组织）
+- [《PD 分离：把 Prefill 和 Decode 拆开部署》](/blog/pd分离-把prefill和decode拆开部署/)（rank、三级网络、DistServe 的 TP/副本实验、KV 传输）
+- [《Chunked Prefill》](/blog/chunkedprefill-把长prompt切成节拍器能消化的小块/)（切块机制、TBT 上界、调参闭环）
+- [《连续批处理》](/blog/连续批处理-每个迭代步重新组批/)（迭代级调度与 Sarathi 仿真表）
+- [《MoE 混合专家模型》](/blog/moe混合专家模型-以deepseek为例/)（路由、稀疏激活的入门）
+- [《注意力机制演进：从 MHA 到 GQA 与 MLA》](/blog/注意力机制演进-从mha到gqa与mla/)（KV 头为什么变少）
+- [《vLLM 调度 8：前缀缓存从单机到集群》](/blog/vllm-调度8-前缀缓存从单机到集群/)（缓存感知路由）
+- [《AI-Ops 工程师能力图谱》](/blog/ai-ops工程师能力图谱/)（MIG/NCCL、NUMA 与拓扑对齐）

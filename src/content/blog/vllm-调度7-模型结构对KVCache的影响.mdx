@@ -1,0 +1,73 @@
+---
+title: "vLLM 调度 7：换一种模型结构，KV Cache 哪里变了"
+subtitle: "KVCacheSpec 家族——MHA/GQA、MLA、滑动窗口、Mamba 各自要缓存什么"
+date: 2026-10-22
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "vLLM"
+  - "源码解读"
+  - "KVCacheSpec"
+  - "模型结构"
+---
+
+import Expand from "../../components/Expand.astro";
+
+<p class="version-note">源码版本：<b>vLLM 0.21.0</b>（2026-05）。本系列锁定该版本，源码链接指向 v0.21.0 tag。</p>
+
+前六篇默认讨论的都是标准 Transformer（full attention）。这一篇横向收束：换成 GQA、MLA、滑动窗口、Mamba，KV Cache 的**形状、每块字节、能否复用前缀**分别怎么变？答案藏在一个抽象里——`KVCacheSpec`。
+
+## 1. 引擎只面向 spec 工作
+
+每个注意力层都通过 `get_kv_cache_spec()` 声明自己需要什么样的缓存（vllm/v1/kv_cache_interface.py）。调度器和块池不认识具体模型，只拿到 spec：它告诉系统**一层每个块要多少字节、是什么形状、滑动窗口多长**。换模型 = 换一种 spec，调度主流程（[篇 2](/blog/vllm-调度2-一个step里让谁推进/)–[篇 5](/blog/vllm-调度5-相同前缀为什么不用重算/)）几乎不动。
+
+## 2. 七类结构对照
+
+| 模型结构 | 0.21 中的 spec 类 | 缓存的是什么 | 对调度/复用的影响 |
+| --- | --- | --- | --- |
+| MHA / GQA / MQA | `FullAttentionSpec`（只有 `num_kv_heads` 不同） | 每层每 token 的 K/V，头数 = n / n_kv / 1 | 仅每 token KV 字节随头数缩；块布局、调度、APC **完全一样** |
+| MLA（DeepSeek-V2/V3/R1） | `MLAAttentionSpec`（模型自定义 get_kv_cache_spec） | **压缩潜变量**（latent），解耦的 RoPE 部分单独存 | 每块字节按 latent 维度算而非头×head_dim；有对齐填充与 compress_ratio |
+| 滑动窗口 SWA | `SlidingWindowSpec`、`SinkFullAttentionSpec` | 只保留窗口内的块 | 窗口外旧块可驱逐，KV 占用有**上界**；前缀复用范围也限于窗口 |
+| Full + SWA 混合（如新版 DeepSeek） | `SlidingWindowMLASpec` + 多个 KV group | 一层 full、一层滑窗，块规格不同 | 一个模型多个 group，按组各算块数（与[篇 5](/blog/vllm-调度5-相同前缀为什么不用重算/)的多 group 收敛呼应） |
+| Mamba / SSM、线性注意力 | `MambaSpec` | **固定大小的循环状态**（state shapes + dtype），不是逐 token KV | decode 不读全部历史、成本不随上下文线性增长；"块"装的是状态快照 |
+| Encoder-only / pooling | `EncoderOnlyAttentionSpec` | 不做生成式 KV | `max_memory_usage_bytes` 返回 0，不分配生成缓存 |
+| Encoder-decoder（Whisper/T5） | `CrossAttentionSpec` | 编码器输出一次性缓存 | 编码器 KV 独立管理（encoder cache manager） |
+
+## 3. 三个最值得记住的结论
+
+**① GQA 不是新缓存机制，只是头数变小。** MHA、GQA、MQA 用的是同一个 `FullAttentionSpec`，区别仅是 `num_kv_heads` 字段。所以 GQA 省 KV 是"每 token 字节变少"，分页、调度、前缀缓存一行都不用改——这也是[《注意力机制演进》](/blog/注意力机制演进-从mha到gqa与mla/)讲过的 512KB→128KB→更小的由来。
+
+**② Mamba 没有"逐 token 增长的 KV"。** `MambaSpec` 的 page size 由若干固定 shape 的状态张量决定（conv state + ssm state），而不是 token 数。无论序列多长，循环状态大小不变；它的前缀缓存是在块边界存**状态快照**（cache mode：all 每块存、align 只在调度步末且对齐时存，见[篇 8](/blog/vllm-调度8-前缀缓存从单机到集群/)）。
+
+**③ MoE 不改变 KV Cache——这是高频误解。** MoE 改的是 FFN/专家层的**权重读取**（每个 token 只激活 top-k 专家），注意力层不变，所以模型**没有为 MoE 定义特殊的 KVCacheSpec**，KV 字节与同构 dense 注意力模型一致。MoE 影响的是屋顶图（[《旅程》§4](/blog/一次推理的旅程-prefill与decode/)）和专家并行通信，不在缓存形状。
+
+## 4. 与本系列其他篇的关系
+
+- 每块字节随 spec 变化，直接进入[篇 1](/blog/vllm-调度1-启动时块从哪来/)的 `num_blocks = 字节 ÷ page_size ÷ 层数`；
+- 不同 spec 的命中/驱逐规则差异，进入[篇 5](/blog/vllm-调度5-相同前缀为什么不用重算/)的 manager 分派（Full/Sliding/Mamba 各有 SingleTypeKVCacheManager 子类）；
+- 注意力 kernel 如何按这些 spec 读块，属于未来的「注意力后端」专题，本篇不展开。
+
+## 自测（答案点击展开）
+
+**1.** 从 Llama 的 MHA 换成 Qwen 的 GQA，vLLM 需要换一套分页调度逻辑吗？变的是什么？
+
+**2.** 为什么 Mamba 长上下文的 decode 成本不像 attention 那样随历史线性增长？它的前缀缓存存的是什么？
+
+**3.** "DeepSeek-R1 是 MoE，所以它的 KV Cache 比 dense 小"这句话错在哪？
+
+**4.** 滑动窗口模型的 KV 占用为什么有上界？这对前缀复用意味着什么？
+
+<Expand title="参考答案">
+
+1. 不需要。三者同为 FullAttentionSpec，调度与块布局不变；只有 num_kv_heads 变小导致每 token KV 字节减少（每块能放的有效内容不变、总块数变多）。
+2. MambaSpec 缓存的是固定大小的循环状态（conv+ssm state），decode 只更新这个状态、不重读全部历史 K/V，所以成本与序列长度基本无关。前缀缓存存的是块边界的状态快照（all/align 两种模式），而不是历史 token 的 K/V。
+3. MoE 只改 FFN 专家层的权重激活（读 top-k 专家），注意力层和 KVCacheSpec 不变；决定 KV 字节的是注意力结构（R1 用 MLA，那才是 KV 小的原因），与 MoE 无关。
+4. 只有窗口内的块需要保留，窗口外的会被驱逐，总占用约为窗口长度对应的块数（有上界）。前缀复用也只在窗口内有效，更早的共享前缀无法跨窗口直接命中。
+
+</Expand>
+
+## 参考资料
+
+1. vLLM 0.21.0 源码：`vllm/v1/kv_cache_interface.py`（KVCacheSpec / FullAttentionSpec / MLAAttentionSpec / SlidingWindowSpec / MambaSpec / CrossAttentionSpec）、`vllm/model_executor/models/deepseek_v2.py`（MLA 自定义 spec）——[GitHub v0.21.0 tag](https://github.com/vllm-project/vllm/tree/v0.21.0)
+2. 更细的源码注解：[调度与 KV Cache（02）](/inference/view/?src=core/02_scheduler_kv_cache.md)
+3. 前置科普：[注意力机制演进](/blog/注意力机制演进-从mha到gqa与mla/)、[一次推理的旅程](/blog/一次推理的旅程-prefill与decode/)

@@ -1,0 +1,72 @@
+---
+// 图3：TP 列切/行切 + 合稿；强调合稿后人人手拿完整答案
+---
+
+<figure>
+  <svg viewBox="0 0 640 360" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="22" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">Y = X·W 切两半各算一半，再合稿：合完人人手拿完整答案</text>
+
+      {/* 上半：列切 */}
+      <text x="24" y="52" font-size="11.5" font-weight="bold" fill="#006377">列切：W = [W₁ W₂]，各算各的部分</text>
+
+      {/* X */}
+      <rect x="40" y="66" width="60" height="60" rx="6" fill="#f4f6f8" stroke="#cbd5e1"/>
+      <text x="70" y="101" font-size="12" fill="#334155" text-anchor="middle">X</text>
+      <path d="M102 96 h20 m-5 -5 l5 5 l-5 5" stroke="#94a3b8" fill="none"/>
+
+      {/* 两卡 */}
+      <rect x="128" y="62" width="120" height="72" rx="8" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="188" y="82" font-size="10.5" fill="#006377" text-anchor="middle">卡 0 持有 W₁</text>
+      <text x="188" y="102" font-size="11" font-weight="bold" fill="#0c5f74" text-anchor="middle">Y₁ = X·W₁</text>
+      <text x="188" y="120" font-size="9.5" fill="#64748b" text-anchor="middle">只含一半列</text>
+
+      <rect x="128" y="142" width="120" height="72" rx="8" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="188" y="162" font-size="10.5" fill="#006377" text-anchor="middle">卡 1 持有 W₂</text>
+      <text x="188" y="182" font-size="11" font-weight="bold" fill="#0c5f74" text-anchor="middle">Y₂ = X·W₂</text>
+      <text x="188" y="200" font-size="9.5" fill="#64748b" text-anchor="middle">只含另一半列</text>
+
+      <path d="M250 100 h36" stroke="#64748b" stroke-width="1.5" marker-end="url(#arTp)"/>
+      <path d="M250 178 h36" stroke="#64748b" stroke-width="1.5" marker-end="url(#arTp)"/>
+
+      {/* 拼接 */}
+      <rect x="292" y="104" width="120" height="72" rx="8" fill="#f2f8fa" stroke="#0085a1" stroke-dasharray="5,3"/>
+      <text x="352" y="134" font-size="11" fill="#0c5f74" text-anchor="middle">列拼接</text>
+      <text x="352" y="154" font-size="11" font-weight="bold" fill="#0c5f74" text-anchor="middle">Y = [Y₁ Y₂]</text>
+
+      <text x="440" y="142" font-size="10" fill="#64748b">列切无需合稿</text>
+
+      {/* 下半：行切+合稿 */}
+      <line x1="24" y1="232" x2="616" y2="232" stroke="#e2e8f0" stroke-dasharray="4,3"/>
+      <text x="24" y="256" font-size="11.5" font-weight="bold" fill="#006377">行切：各算一半行，必须求和——一次合稿（all-reduce）</text>
+
+      <rect x="40" y="270" width="60" height="60" rx="6" fill="#f4f6f8" stroke="#cbd5e1"/>
+      <text x="70" y="305" font-size="12" fill="#334155" text-anchor="middle">X</text>
+      <path d="M102 300 h20 m-5 -5 l5 5 l-5 5" stroke="#94a3b8" fill="none"/>
+
+      <rect x="128" y="266" width="120" height="30" rx="8" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="188" y="286" font-size="10.5" fill="#0c5f74" text-anchor="middle">卡 0：部分和 Z₀</text>
+      <rect x="128" y="304" width="120" height="30" rx="8" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="188" y="324" font-size="10.5" fill="#0c5f74" text-anchor="middle">卡 1：部分和 Z₁</text>
+
+      {/* 合稿双向弧 */}
+      <path d="M252 281 C 286 258, 286 271, 312 281" fill="none" stroke="#e6a23c" stroke-width="1.6" marker-end="url(#arO)"/>
+      <path d="M312 319 C 278 342, 278 329, 252 319" fill="none" stroke="#e6a23c" stroke-width="1.6" marker-end="url(#arO)"/>
+      <text x="282" y="262" font-size="9.5" fill="#b97a1f" text-anchor="middle">全员交换部分和</text>
+
+      <rect x="320" y="266" width="296" height="68" rx="8" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="468" y="292" font-size="11" font-weight="bold" fill="#0a7a50" text-anchor="middle">Z₀ + Z₁ = 完整 Y</text>
+      <text x="468" y="312" font-size="10" fill="#0a7a50" text-anchor="middle">合稿后两张卡手里各有一份完整 Y</text>
+      <text x="468" y="327" font-size="9.5" fill="#64748b" text-anchor="middle">（不是交给一个总编辑，下一层人人都要用）</text>
+
+      <defs>
+        <marker id="arTp" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 z" fill="#64748b"/>
+        </marker>
+        <marker id="arO" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 z" fill="#e6a23c"/>
+        </marker>
+      </defs>
+    </g>
+  </svg>
+</figure>

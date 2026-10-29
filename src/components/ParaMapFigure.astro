@@ -1,0 +1,62 @@
+---
+// 图2：两堵墙 × 五把刀总览；顶部一条三级网络带宽梯度带
+---
+
+<figure>
+  <svg viewBox="0 0 640 352" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="22" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">两堵墙：容量（放不放得下）与延迟（等多久），五把刀各治一处</text>
+
+      {/* 带宽梯度带 */}
+      <text x="24" y="50" font-size="10.5" fill="#475569">卡间地形</text>
+      <rect x="96" y="38" width="170" height="20" rx="4" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="181" y="52" font-size="10" fill="#006377" text-anchor="middle">NVLink 域 ≈900GB/s</text>
+      <rect x="272" y="38" width="140" height="20" rx="4" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="342" y="52" font-size="10" fill="#b97a1f" text-anchor="middle">PCIe ≈64GB/s</text>
+      <rect x="418" y="38" width="198" height="20" rx="4" fill="#f4f6f8" stroke="#cbd5e1"/>
+      <text x="517" y="52" font-size="10" fill="#475569" text-anchor="middle">InfiniBand ≈50GB/s/rail（跨机）</text>
+      <path d="M266 48 l6 0 m-3 -4 l4 4 l-4 4 m-7 -8 l6 0" stroke="#94a3b8" fill="none"/>
+      <path d="M412 48 l6 0 m-3 -4 l4 4 l-4 4 m-7 -8 l6 0" stroke="#94a3b8" fill="none"/>
+
+      {/* 表头 */}
+      {[
+        { x: 24,  w: 52, t: "策略" },
+        { x: 80,  w: 150, t: "物理动作" },
+        { x: 234, w: 132, t: "切什么" },
+        { x: 370, w: 176, t: "通信" },
+        { x: 550, w: 66,  t: "主治" },
+      ].map((c) => (
+        <g>
+          <rect x={c.x} y="72" width={c.w} height="26" rx="4" fill="#eef2f5" stroke="#cbd5e1"/>
+          <text x={c.x + c.w / 2} y="89" font-size="10.5" font-weight="bold" fill="#334155" text-anchor="middle">{c.t}</text>
+        </g>
+      ))}
+
+      {/* 五行 */}
+      {[
+        { name: "TP", color: "#d9eef3", sc: "#0085a1", tc: "#006377", act: "拆半算，每层合稿", cut: "层内矩阵", comm: "同组全员，每层 2 次合稿", net: "NVLink 域", cure: "容量+延迟" },
+        { name: "PP", color: "#d9eef3", sc: "#0085a1", tc: "#006377", act: "工件过工位", cut: "整层", comm: "相邻工位，边界传一次", net: "可跨 IB", cure: "容量（跨机）" },
+        { name: "DP", color: "#e4f5ec", sc: "#0f9d68", tc: "#0a7a50", act: "开 N 个相同窗口", cut: "不切，整份复制", comm: "推理时窗口间不说话", net: "普通网络", cure: "吞吐" },
+        { name: "EP", color: "#fdf0e0", sc: "#e6a23c", tc: "#b97a1f", act: "拿路由小票找专科", cut: "MoE 专家", comm: "每 MoE 层两次全员换组", net: "吃带宽", cure: "MoE 容量" },
+        { name: "CP", color: "#f4f6f8", sc: "#94a3b8", tc: "#475569", act: "分工读长文传笔记", cut: "序列（token）", comm: "逐块传阅 / 换组", net: "越高越好", cure: "长上下文" },
+      ].map((r, i) => {
+        const y = 104 + i * 46;
+        return (
+          <g>
+            <rect x="24" y={y} width="52" height="40" rx="6" fill={r.color} stroke={r.sc}/>
+            <text x="50" y={y + 25} font-size="13" font-weight="bold" fill={r.tc} text-anchor="middle">{r.name}</text>
+            <text x="155" y={y + 25} font-size="10.5" fill="#334155" text-anchor="middle">{r.act}</text>
+            <text x="300" y={y + 25} font-size="10.5" fill="#334155" text-anchor="middle">{r.cut}</text>
+            <text x="458" y={y + 19} font-size="10" fill="#475569" text-anchor="middle">{r.comm}</text>
+            <text x="458" y={y + 33} font-size="9" fill="#94a3b8" text-anchor="middle">{r.net}</text>
+            <text x="583" y={y + 25} font-size="10" fill="#334155" text-anchor="middle">{r.cure}</text>
+          </g>
+        );
+      })}
+
+      <text x="320" y="342" font-size="10.5" fill="#334155" text-anchor="middle">
+        五把刀可组合，但共用同一组卡、组合有约束：8 卡 = 1×TP8，也可以 = 4 个 TP2 副本（DP4）
+      </text>
+    </g>
+  </svg>
+</figure>

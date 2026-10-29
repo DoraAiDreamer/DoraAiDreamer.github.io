@@ -1,0 +1,53 @@
+---
+// 图3：PD 交接物——n 行 KV + 首 token（仅接法 B）+ 握手参数；非 MLA 按 rank i→i 分片；权重不传
+---
+
+<figure>
+  <svg viewBox="0 0 640 296" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="pd2h-kv" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#e6a23c"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">交接的是什么：搬状态，不搬模型</text>
+
+      {/* 8 条 rank 映射线（画在最底层，被中间清单块压住中段） */}
+      {Array.from({length:8},(_,i)=>{
+        const y=84+i*22;
+        return <line x1="130" y1={y} x2="506" y2={y} stroke="#e6a23c" stroke-width={i%2?1:1.6} stroke-opacity={i%2?0.45:0.8} marker-end="url(#pd2h-kv)"/>;
+      })}
+
+      {/* P 节点：单列 8 卡 */}
+      <rect x="20" y="46" width="110" height="212" rx="11" fill="#f2f8fa" stroke="#0085a1" stroke-width="1.5"/>
+      <text x="75" y="66" font-size="10.5" font-weight="bold" fill="#006377" text-anchor="middle">P 实例（TP=8）</text>
+      {Array.from({length:8},(_,i)=>(
+        <g>
+          <rect x="36" y={76+i*22} width="78" height="16" rx="4" fill="#d9eef3" stroke="#0085a1"/>
+          <text x="75" y={88+i*22} font-size="9" fill="#006377" text-anchor="middle">rank {i}</text>
+        </g>
+      ))}
+
+      {/* D 节点 */}
+      <rect x="510" y="46" width="110" height="212" rx="11" fill="#fffaf2" stroke="#e6a23c" stroke-width="1.5"/>
+      <text x="565" y="66" font-size="10.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">D 实例（TP=8）</text>
+      {Array.from({length:8},(_,i)=>(
+        <g>
+          <rect x="526" y={76+i*22} width="78" height="16" rx="4" fill="#fdf0e0" stroke="#e6a23c"/>
+          <text x="565" y={88+i*22} font-size="9" fill="#b97a1f" text-anchor="middle">rank {i}</text>
+        </g>
+      ))}
+
+      {/* 中间交接物清单 */}
+      <rect x="180" y="86" width="280" height="132" rx="10" fill="#ffffff" stroke="#e6a23c" stroke-width="1.8"/>
+      <text x="320" y="108" font-size="11.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">交接物</text>
+      <text x="198" y="132" font-size="9.5" fill="#334155">• n 行 KV 状态（prompt 全部 K/V）</text>
+      <text x="198" y="154" font-size="9.5" fill="#334155">• 第 1 个输出 token（仅 Tokens-IN/OUT 接法）</text>
+      <text x="198" y="176" font-size="9.5" fill="#334155">• 握手参数：块在哪台机、怎么连上</text>
+      <line x1="196" y1="188" x2="444" y2="188" stroke="#f0d2c2"/>
+      <text x="198" y="206" font-size="9.5" font-weight="bold" fill="#b14a4a">✕ 模型权重：两池开机时各自常驻一份</text>
+
+      {/* MLA 角标 */}
+      <rect x="118" y="266" width="404" height="22" rx="8" fill="#f4f6f8" stroke="#cbd5e1"/>
+      <text x="320" y="281" font-size="9" fill="#475569" text-anchor="middle">MLA 模型例外：KV 在 8 个 rank 间是复制的 → 只发一份，冗余 rank 跳过（vLLM 0.21 兼容矩阵）</text>
+    </g>
+  </svg>
+</figure>

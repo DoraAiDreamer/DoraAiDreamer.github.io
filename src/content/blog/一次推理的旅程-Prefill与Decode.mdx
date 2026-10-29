@@ -17,6 +17,7 @@ import PdWaitFigure from "../../components/PdWaitFigure.astro";
 import PdJourneyFigure from "../../components/PdJourneyFigure.astro";
 import PdTriangleFigure from "../../components/PdTriangleFigure.astro";
 import PdRooflineFigure from "../../components/PdRooflineFigure.astro";
+import PdRooflineChartFigure from "../../components/PdRooflineChartFigure.astro";
 import PdHandoverFigure from "../../components/PdHandoverFigure.astro";
 import PdDeployFigure from "../../components/PdDeployFigure.astro";
 
@@ -31,7 +32,7 @@ import PdDeployFigure from "../../components/PdDeployFigure.astro";
 - **logits**：模型对下一个词的原始打分（入门篇第 8 节讲过的「原始分数」）。
 - **HBM**：显卡上的高带宽显存（如 H100 的 80GB），离计算单元近、带宽高但容量小。
 - **算术强度**：每从显存搬进芯片 1 字节数据，计算单元能拿它做多少次乘加。
-- **TTFT / ITL**：Time To First Token（首 token 延迟）/ Inter-Token Latency（词间延迟，也叫 TPOT/TBT）。
+- **TTFT / ITL**：Time To First Token（首 token 延迟）/ Inter-Token Latency（词间延迟，也叫 TBT；另有按整段平均的口径 TPOT，见第 8 节）。
 
 </Expand>
 
@@ -137,11 +138,11 @@ $$
 - Llama-3-8B（GQA，8 个 KV 头）：约 **128 KiB/token**；
 - Llama-2-70B 级 GQA 模型：约 **320 KiB/token**——一条 8K 上下文约 2.6GB、32K 约 10GB。
 
-KV 头数（GQA/MLA）直接决定这个数，这也是后面「治病地图」里 GQA/MLA 的位置。
+KV 头数（GQA/MLA）直接决定这个数，这也是第 7 节优化全景里 GQA/MLA 归在"减少搬运"的原因。
 
 </Expand>
 
-## 4. 同一次前向，两本不同的账
+## 4. 时间到底花在哪：等计算，还是等数据
 
 现在可以给前两节命名了。先用一个生活类比建立直觉——**开卷考试**：
 
@@ -159,28 +160,47 @@ KV 头数（GQA/MLA）直接决定这个数，这也是后面「治病地图」�
 
 <Expand title="折叠：屋顶图（roofline）与六个「结论翻转」的例外">
 
-把算术强度画在横轴、可达性能画在纵轴，是一条折线：左边是带宽墙（性能=带宽×算术强度），右边是算力墙（峰值 FLOPs），折点在 H100（BF16 dense）约 **295 FLOP/byte**、A100 约 156（FP8 折点翻倍）。
+**先认识这张图**。屋顶图（Roofline Model）是伯克利 2009 年提出的经典性能模型 [10]，用一张图说清两件事：一个计算任务在给定硬件上**理论最快能跑多快**、以及**卡在算力还是卡在搬运**。
 
-「Prefill 算力受限、Decode 带宽受限」是**典型稠密模型、中等 batch 的一阶近似**，边界条件要知道：
+- **横轴**：算术强度 $I$（每搬进芯片 1 字节能做的乘加数，FLOP/byte）；**纵轴**：实际可达性能 $P$（FLOP/s），两轴都是对数刻度。
+- **折线就是"屋顶"**，取两堵墙的较小值 $P=\min(\text{带宽}\times I,\ \text{峰值算力})$：左坡是**带宽墙**——数据搬多快就只能算多快，强度翻一倍、性能翻一倍；右顶是**算力墙**——喂得再饱也被峰值 FLOPs 封死。
+- **折点**（ridge point）= 峰值算力 ÷ 带宽，H100 BF16 dense 约 **295 FLOP/byte**、A100 约 156（FP8 算力翻倍，折点也翻倍）。
+- **读法**：在横轴上找到强度、竖直向上先碰到哪段屋顶，就撞哪堵墙。点**贴着斜线段**（$I<295$）= 带宽受限，优化方向是少搬字节、提高复用（让点**向右移**）或换高带宽卡（把坡**修得更陡**）；点**贴着平顶段**（$I>295$）= 算力受限，只能加算力或减少浮点。屋顶线是性能上限，线以上达不到，实测点通常还略低于线。
 
-1. **很短的 Prefill**：单次前向总 token 数太少（小 prompt、小 chunk），大矩阵乘喂不饱，加上 kernel 启动开销，也可能卡在带宽——杠杆是总 token 数 $n\cdot B$，不是 batch 本身；
-2. **很大的 Decode batch**：权重搬运被 $B$ 个请求摊薄，算术强度随 $B$ 升高，理论上可以越过折点转为算力受限——这正是 continuous batching 有效的原理（注意反向刹车：每步 KV 读取随 $B\cdot(n+t)$ 线性增长，会给算术强度设一个渐近天花板，70B 级模型通常先被 KV 容量卡住）；
-3. **MoE 模型**（DeepSeek-V3/R1 类）：每个 token 只激活 top-k 个专家，单步并不读全部专家权重（42ms 锚点不适用），但专家并行的 all-to-all 通信让 Decode 往往更受带宽/通信约束；
-4. **超长上下文**：单步 KV 读取可能超过权重字节——稠密 70B 单条请求要约 44 万 token 才越线，但 7B MHA（约 512KB/token）约 2.8 万 token 就到；batch=64、均长 4K 时聚合 KV 已约 80GB，与权重同量级；
-5. **注意力算子自身**：朴素实现要把 $n\times n$ 的分数矩阵物化到 HBM，Prefill 阶段的注意力层本身反而是 IO 受限的——FlashAttention 用分块融合治这个；"Prefill 算力受限"是投影/FFN 主导下的整阶段结论；
-6. **多模态**：图像/视频 token（数百到上万）让 Prefill 更重，强化而非推翻结论。
+Decode 的算术强度只有 1–2，贴在斜坡脚下，性能被带宽按比例锁死；Prefill 强度高，贴在水平天花板上。
+
+<PdRooflineChartFigure />
+
+*图 5：屋顶图。读法：在横轴找到算术强度，竖直向上先碰到哪段屋顶就撞哪堵墙——贴橙色斜坡 = "等数据"的带宽受限（性能 = 带宽 × 强度），越过折点贴蓝色平顶 = "算不过来"的算力受限；屋顶线以上是理论达不到的区域。注意：决定点位置的是算术强度、不是阶段名——凑大批让 Decode 沿坡右移（虚线箭头），很短的 Prefill（空心点）反而滑到坡上。*
+
+**再说"六个例外"是什么意思**。前文"Prefill 算力受限、Decode 带宽受限"是**典型稠密模型、中等 batch 的一阶快照**——它假设两个点乖乖待在图上画的位置。六条例外说的都是"点会动、甚至图本身会失效"，按在图上的动作分成三类：
+
+| 类别 | 图上发生了什么 | 对应条目 |
+| --- | --- | --- |
+| **点横移**（屋顶不变） | 负载的算术强度变了，点沿坡左右滑动 | 1、2、4、6 |
+| **屋顶不够用** | 折线要重画，或一次前向要拆成多个 kernel 各画一张小图 | 3、5 |
+| **图外的第三维** | HBM **容量**（不是带宽）先到顶，点还没爬到折点就掉下来 | 藏在 2、4 里 |
+
+逐条看（每条开头标注它的图上动作）：
+
+1. **很短的 Prefill**（点向左滑）：单次前向总 token 数太少（小 prompt、小 chunk），大矩阵乘喂不饱，加上 kernel 启动开销，点从平顶滑到坡上——图 5 的空心点。杠杆是总 token 数 $n\cdot B$，不是 batch 本身；
+2. **很大的 Decode batch**（点向右爬，但有容量刹车）：权重搬运被 $B$ 个请求摊薄，算术强度随 $B$ 升高，理论上可越过折点转为算力受限——这正是 continuous batching 有效的原理，即图上那条虚线箭头。两个反向刹车：每步 KV 读取随 $B\cdot(n+t)$ 线性增长，给算术强度设了渐近天花板；70B 级模型通常先被 KV **容量**卡住（第三维），到不了折点；
+3. **MoE 模型**（屋顶要重画）：DeepSeek-V3/R1 类模型每个 token 只激活 top-k 个专家，单步并不读全部专家权重，屋顶的斜率和高度都要按"实际读取的激活参数"重算（42ms 锚点不适用）；此外专家并行的 all-to-all 通信是这张图里没有的**第三堵"通信墙"**，Decode 往往更受带宽/通信约束；
+4. **超长上下文**（点向左滑，同时撞容量）：单步 KV 读取字节随 $n+t$ 变大、计算量几乎不变，算术强度被摊薄，点被推向左；稠密 70B 单条请求要约 44 万 token，读 KV 的流量才超过权重，但 7B MHA（约 512KB/token）约 2.8 万 token 就到；batch=64、均长 4K 时聚合 KV 已约 80GB，与权重同量级——这时第三维（容量）也同时告急；
+5. **注意力算子自身**（一次前向要拆成多张图）：朴素实现要把 $n\times n$ 的分数矩阵物化到 HBM，Prefill 阶段里**注意力 kernel 自己的点其实在坡上**（IO 受限），在顶上的是投影/FFN 的大矩阵乘；"Prefill 算力受限"是各 kernel 按耗时加权后的整阶段结论。FlashAttention 用分块融合把注意力的点**向右推**——减少 IO 字节、不减少 FLOPs；
+6. **多模态**（点向右滑，强化而非翻转）：图像/视频 token（数百到上万）把 $n$ 撑大，Prefill 点更靠右、Prefill 更重——六条里唯一巩固原结论的一条。
 
 这套两段结构与显卡型号无关，手机、Mac、H100 都成立，只是折点数字不同。
 
 </Expand>
 
-## 5. 收束：两阶段对照表
+## 5. 一张表看懂两个阶段
 
-把第 1 节那张表的问号填上：
+讲到这里，第 1 节那张表里留空的问题就都有答案了——Prefill 和 Decode 在每个维度上的对比如下：
 
 | 维度 | Prefill | Decode |
 | --- | --- | --- |
-| 输入形状 | $[n,d]$：整段 prompt | $[B,1,d]$：每请求 1 个新词 |
+| 输入形状 | 单请求 $[n,d]$；多请求为 $[B,n,d]$，长度不一时展平打包、以 cu_seqlens 标界 | $[B,1,d]$：每请求 1 个新词 |
 | 请求内并行性 | $n$ 个已知位置并行 | 严格串行（下一步依赖上一步采样） |
 | 算术强度 | 高，$\propto n\cdot B$ | 低，$\propto B$ |
 | 典型瓶颈 | 计算受限（注意力层自身 IO 受限） | 带宽受限（搬权重 + 读 KV） |
@@ -190,7 +210,7 @@ KV 头数（GQA/MLA）直接决定这个数，这也是后面「治病地图」�
 | 延迟指标 | TTFT（首 token 延迟） | ITL/TPOT（词间延迟） |
 | 变长的影响 | prompt 越长越贵 | 输出越长，步数越多 |
 
-## 6. KV Cache：两阶段之间唯一的接力棒
+## 6. KV Cache：Prefill 写完、Decode 反复读的「记忆」
 
 Prefill 和 Decode 不是两个独立程序，它们靠 KV Cache 交接：Prefill 一次写出 $n$ 行，Decode 每一步读完全部历史、再追加 1 行。
 
@@ -201,52 +221,56 @@ Prefill 和 Decode 不是两个独立程序，它们靠 KV Cache 交接：Prefil
 
 <PdHandoverFigure />
 
-*图 5：Prefill 写、Decode 读+追加、前缀复用与跨机传输，都是在传递同一根棒子。*
+*图 6：Prefill 写、Decode 读+追加、前缀复用与跨机传输，都是在传递同一根棒子。*
 
 KV 在显存里怎么分页、怎么共享、怎么回收，本文不展开——那是 PagedAttention 的主场。
 
-## 7. 工程后果地图：每种优化在治哪一段
+## 7. 推理加速技术全景：各自优化哪个环节
 
-按"治 Prefill / 治 Decode / 治 KV 状态"分三组，比记一堆名词清楚。
+按"减少搬运 / 摊薄固定开销 / 改变计算组织"分三组，比记一堆名词清楚。
 
 ### ① 让搬运变少
 
 - **GQA / MLA / MQA**（[注意力机制演进](/blog/注意力机制演进-从mha到gqa与mla/)）：减少 KV 头数，直接砍掉每个 token 的 KV 字节——主要减轻 Decode 的 KV 读取，也让 PD 传输更便宜；
 - **权重量化**（FP8/INT8，[量化文章](/blog/大模型量化-用更少的显存跑更大的模型/)）：砍的是权重字节，直接缩短 Decode 的搬权重时间（42ms 减半）；
 - **KV 量化**：另一条独立路线，砍的是 KV 字节。三类优化砍的不是同一种东西，别混为一谈。
+- **前缀缓存**（vLLM APC、SGLang [RadixAttention](https://arxiv.org/abs/2312.07104)）：把算过的公共前缀 KV 保留复用——系统提示词、多轮历史、同模板请求命中后跳过对应 Prefill，直接省掉重算的算力与搬运，主要降 TTFT；V1 默认开启，只缓存满块、末 token 必重算，完全唯一的 prompt 没有收益。细节见 [PagedAttention](/blog/pagedattention-给kv-cache装上虚拟内存/)。
 
 ### ② 把固定搬运摊薄
 
-- **连续批处理（continuous batching）**：出自 [Orca](https://www.usenix.org/conference/osdi22/presentation/yu)（OSDI 2022，论文叫 iteration-level scheduling，"continuous batching"是后来叫开的名字）。单个请求的 Decode 在等显存，但一张卡同时服务几十个请求时，权重搬一遍可以同时喂 $B$ 个请求——第 4 节说的"大 batch 把算术强度抬过折点"就是它的原理。实现上调度器在**每个 token 步**插入新请求、送走已完成的（Orca 称之为 selective batching），而不是等一整批跑完。完整机制、经济账与 Prefill 侧的边界（含 Chunked Prefill）见[《连续批处理：每个迭代步重新组批》](/blog/连续批处理-每个迭代步重新组批/)。
-- **Chunked Prefill**：长 prompt 的 Prefill 又长又重，如果让它一口气跑完，同卡所有 Decode 请求当步都被堵住、ITL 出现尖峰。做法是把 Prefill 切成固定预算的小块，逐块插进 Decode 流里（[本站专文：为什么切块结果不变、块该多大、V1 怎么调参](/blog/ChunkedPrefill-把长Prompt切成节拍器能消化的小块/)；[Sarathi](https://arxiv.org/abs/2308.16369) 预印本提出，[Sarathi-Serve](https://arxiv.org/abs/2403.02310) 与 DeepSpeed 的 [SplitFuse](https://arxiv.org/abs/2401.08671) 独立发展了同构思想）。它是一个 **TTFT↔ITL 的双向旋钮**：块预算小则 Decode 平稳但 Prefill 被切更多步、TTFT 变长，反之亦然。切块不增加注意力总算力（忽略 padding，跨块 dense + 块内三角严格等于 $n^2/2$ 个格子），效率损失只有小矩阵乘规模与 padding 带来的数个百分点量级。vLLM V1 默认开启且 Decode 优先（剩余预算才喂 Prefill）；每步 token 预算随硬件/场景分档（v0.21：H100 级在线服务约 8192、A100 约 2048，离线 16384/8192，2048 只是配置兜底值且会漂移，以官方调优文档为准）。
+- **连续批处理（continuous batching）**：出自 [Orca](https://www.usenix.org/conference/osdi22/presentation/yu)（OSDI 2022，论文叫 iteration-level scheduling，"continuous batching"是后来叫开的名字）。单个请求的 Decode 在等显存，但一张卡同时服务几十个请求时，权重搬一遍可以同时喂 $B$ 个请求——第 4 节说的"大 batch 把算术强度抬过折点"就是它的原理。实现上调度器在**每个 token 步**插入新请求、送走已完成的，而不是等一整批跑完——进出场机制在 Orca 术语里就是 iteration-level scheduling（selective batching 是另一项执行层技术，别混为一谈）。完整机制、经济账与代价见[《连续批处理》](/blog/连续批处理-每个迭代步重新组批/)。
+- **Chunked Prefill**：长 prompt 的 Prefill 又长又重，如果让它一口气跑完，同卡所有 Decode 请求当步都被堵住、ITL 出现尖峰。做法是把 Prefill 切成固定预算的小块，逐块插进 Decode 流里（[本站专文：为什么切块结果不变、块该多大、V1 怎么调参](/blog/chunkedprefill-把长prompt切成节拍器能消化的小块/)；[Sarathi](https://arxiv.org/abs/2308.16369) 预印本提出，[Sarathi-Serve](https://arxiv.org/abs/2403.02310) 与 DeepSpeed 的 [SplitFuse](https://arxiv.org/abs/2401.08671) 独立发展了同构思想）。它是一个 **TTFT↔ITL 的双向旋钮**：块预算小则 Decode 平稳但 Prefill 被切更多步、TTFT 变长，反之亦然。切块不增加注意力总算力（忽略 padding，跨块 dense + 块内三角严格等于 $n^2/2$ 个格子），效率损失只有小矩阵乘规模与 padding 带来的数个百分点量级。vLLM V1 默认开启且 Decode 优先（剩余预算才喂 Prefill）；每步 token 预算随硬件/场景分档（0.21：H100 级在线约 8192、离线 16384；A100 在线约 2048、离线 8192），以官方调优文档为准。
 
 ### ③ 改变计算的组织方式
 
-- **Prefill/Decode 分离（PD 分离）**：为什么要分家？因果链有四步——
+- **Prefill/Decode 分离（PD 分离）**（[本站专文](/blog/pd分离-把prefill和decode拆开部署/)）：为什么要分家？因果链有四步——
   1. **干扰**：一次重 Prefill 混在 Decode 池里会拖慢同池所有人的当步，打爆 ITL 尾延迟；
   2. **配置耦合**：两阶段的最优部署正好相反——Prefill 要大张量并行、小 batch 压 TTFT，Decode 要较低并行（省通信）、大 batch 摊薄权重、大显存装 KV；混在一个池里只能取折中；
   3. **SLO 独立配给**：分开后 TTFT 池和 ITL 池按各自到达率独立扩缩容，优化目标是**同时满足两个延迟 SLO 的有效吞吐（goodput）**——vLLM 文档明确指出分离本身**不提升裸吞吐**；
   4. **硬件分化**：[SplitWise](https://arxiv.org/abs/2311.18677)（ISCA 2024）用 H100 跑 Prefill、A100 跑 Decode（论文口径：H100 算力约为 A100 的 3 倍——规格 989/312≈3.17×，HBM 带宽约 1.6 倍；而 Decode 保留了约七成的逐 token 表现），实测约 1.4× 吞吐、约 20% 成本下降（注意这是论文的特定搭配，不宜外推到其他卡型）。
-- **代价与门槛**：70B 级 GQA 模型的 KV 约 320KB/token，8K prompt 就是约 2.6GB、32K 约 10GB，必须靠 400Gb IB（约 50GB/s）配合逐层异步传输，把搬运藏在 Prefill 计算背后；两套实例意味着**权重双份常驻**，低负载时同卡混跑靠统计复用反而更省——PD 分离值得做的前提是高 QPS、大机队、紧 SL* 加上高速网络。vLLM 0.21 中该特性仍标 **experimental**，生产连接器依赖 Mooncake/LMCache/NIXL 等三方生态，KV 加载失败触发的补算还会引入抖动。
+- **代价与门槛**：70B 级 GQA 模型的 KV 约 320KB/token，8K prompt 就是约 2.6GB、32K 约 10GB，必须靠 400Gb IB（约 50GB/s）配合逐层异步传输，把搬运藏在 Prefill 计算背后；两套实例意味着**权重双份常驻**，低负载时同卡混跑靠统计复用反而更省——PD 分离值得做的前提是高 QPS、大机队、紧 SLO 加上高速网络。vLLM 0.21 中该特性仍标 **experimental**，生产连接器依赖 Mooncake/LMCache/NIXL 等三方生态，KV 加载失败触发的补算还会引入抖动。
 - **投机解码 / MTP**（[本站专文](/blog/投机解码-小模型打草稿大模型一次批改/)）：利用 Decode 单步的闲置算力，让小模型一次打多个草稿、大模型并行批改。注意它不是免费午餐：草稿模型自己要跑一次前向，目标模型的验证步形状变成 $[B,1+k]$（一次 Prefill 式前向）；它**改善 ITL 与吞吐、不改善 TTFT**，净收益取决于草稿接受率，低接受率反而伤尾延迟、增功耗。
 - **PagedAttention**（[本站专文](/blog/pagedattention-给kv-cache装上虚拟内存/)）：管的是接力棒本身——让 KV 放得下、共享得了、抢占时可重算。
 
 <PdDeployFigure />
 
-*图 6：同卡混跑（小规模、统计复用）→ Chunked 混批（今天默认）→ PD 分离（大规模、专用池）。没有默认最优，只有规模与 SLO 的匹配。*
+*图 7：同卡混跑（小规模、统计复用）→ Chunked 混批（今天默认）→ PD 分离（大规模、专用池）。没有默认最优，只有规模与 SLO 的匹配。*
 
 最后放一股**反向拉力**：[思维链](/blog/思维链-大模型为什么要先想再答/)把 Decode 步数 $m$ 从几百推到上万，长输出让 Decode 阶段在整次请求里占绝对主导（生产集群 Prefill:Decode 的资源比例可达 1:10 量级），也让 KV 容量和长上下文 O(n²) 成为越来越大的负担。优化与需求就是这样互相推着走。
 
-## 8. 指标与容量：别用一个数字骗自己
+## 8. 怎么衡量快慢：首字延迟、字间延迟和有效吞吐
 
-服务端口径（vLLM）：
+每个指标记三件事：测的是哪段时间、对应哪个阶段、谁能把它拉高。口径以 vLLM 服务端为准：
 
-- **TTFT** = 请求到达 → 首 token 发出，**包含排队时间**（队列等待往往是体感"卡顿"的大头——你等的未必是硬件，可能是在等别人）、Prefill 计算，还包含被抢占后重算的时间；
-- **TPOT/ITL** = 相邻输出 token 的间隔；vLLM 的 TPOT 是整条回复的均值（decode 总时长 ÷（输出数−1)），把 chunked prefill 插队、抢占重算都摊了进去；生产 SLO 实际看的是 **ITL/TBT 的 P90/P99 分位**——均值和分位在混批场景差异很大；
-- 客户端体感还要再加网络往返、增量分词和 SSE 缓冲，"服务端 30ms、用户还觉得卡"经常卡在这一层；
-- **goodput** 不是 token/s，而是"同时满足 TTFT 和 ITL 两个 SLO 的请求速率"——裸吞吐高但人人超时，goodput 是零。
+- **TTFT**（Time To First Token，首 token 延迟）：请求到达 → 第一个 token 发出的耗时，对应 Prefill 阶段。它**包含排队等待**——队列往往是体感"转圈"的大头：你等的未必是硬件，可能是在等别人；Prefill 计算之外，被抢占后重算的时间也计入。
+- **ITL**（Inter-Token Latency，词间延迟，也叫 TBT）：相邻两个输出 token 之间的间隔，对应单个 Decode 步的耗时，决定蹦字跟不跟手。混批时每一步都可能被 chunked prefill 插队，波动天然很大。
+- **TPOT**（Time Per Output Token）：vLLM 的汇总口径，整条回复的均值 = decode 总时长 ÷（输出数 − 1），把 chunked prefill 插队、抢占重算全摊了进去；它是均值，不能替代 ITL 的分位。
+- **P50 / P90 / P99 分位延迟**（xx-th percentile latency）：这不是独立指标，而是 TTFT、ITL 等延迟的**统计口径**，写法是"P99 TTFT""P90 ITL"这样挂在具体指标上；含义是 xx% 的请求快于该值（P50 即中位数）。生产 SLO 盯的是 TTFT/ITL 的 **P90/P99** 而不是均值——均值和高分位在混批场景差异很大，prompt 长度重尾时 P99 TTFT 与 P50 TTFT 能差出数量级。
+- **throughput**（裸吞吐，token/s 或请求/s）：单位时间总共处理了多少，不管每个请求快不快。
+- **goodput**（有效吞吐）：单位时间里**同时满足 TTFT 和 ITL 两个 SLO** 的请求速率，超 SLO 的请求不算数。例如峰值能接 100 请求/s，但只有 30 个的首字和字间延迟都达标，则裸吞吐 ≈100、goodput = 30；裸吞吐高但人人超时，goodput 是零。PD 分离优化的就是 goodput 而非裸吞吐。
+- **端到端体感延迟**（End-to-End Latency，E2E Latency）：以上都是服务端口径，用户端还要再加网络往返、增量分词（detokenize）和 SSE 缓冲——"服务端 30ms、用户还觉得卡"经常卡在这一层。
 
-容量规划上两件事最难：prompt 长度重尾导致 **P99 TTFT 与 P50 差出数量级**；输出长度不可预测（推理模型动辄上万）决定请求驻留时长和 KV 占用，显存不足时被抢占的请求要回队首重算，成为尾部延迟的隐藏来源。所以"首字快"和"生成快"必须分开测、分开优化——产品宣传只给其中一个数字时，另一个往往不好看。
+容量规划上两件事最难：prompt 长度重尾导致 **P99 TTFT 与 P50 TTFT 差出数量级**；输出长度不可预测（推理模型动辄上万）决定请求驻留时长和 KV 占用，显存不足时被抢占的请求要回队首重算，成为尾部延迟的隐藏来源。所以"首字快"和"生成快"必须分开测、分开优化——产品宣传只给其中一个数字时，另一个往往不好看。
 
 ## 9. 常见误解
 
@@ -259,7 +283,7 @@ KV 在显存里怎么分页、怎么共享、怎么回收，本文不展开—�
 
 <Expand title="折叠：生产现场的四个坑">
 
-1. **Prefill 尾延迟**：长文档/多模态 prompt 叠加排队，P99 TTFT 可能是 P50 的几十倍，容量规划不能只看均值；
+1. **Prefill 尾延迟**：长文档/多模态 prompt 叠加排队，P99 TTFT 可能是 P50 TTFT 的几十倍，容量规划不能只看均值；
 2. **输出长度方差**：reasoning 模型的超长思考让驻留时间长尾，KV 不足触发重算抢占，是 TTFT/ITL 双尾的隐藏来源；
 3. **多 LoRA / 多模型混部**：前缀缓存按 adapter 隔离（不同 LoRA 不共享），`max_loras` 直接限制可调度集合；
 4. **流式管道**：增量分词器、SSE flush、网关缓冲都可能让"服务端很快"的首字在用户端迟到。
@@ -276,8 +300,8 @@ Prefill 处理的 n 个位置是请求开始时就全部已知的输入，组成
 长 prompt 主要拉长 Prefill → TTFT 变差（注意力约 $n^2$、KV 写 $n$ 行）；长回答意味着上万次 Decode 步 → ITL 累积成的总时长和 KV 容量爆炸，单步 ITL 还随历史变长而缓慢上升。
 </Expand>
 
-<Expand title="Q3：GQA/MLA 和权重量化，主要在治哪一段的什么病？">
-GQA/MLA 减少 KV 头数→砍每 token 的 KV 字节，治 Decode 的 KV 读取与 PD 传输；权重量化砍权重字节，直接缩短 Decode 每步搬权重的时间（也降 Prefill 的搬运）。两者作用对象不同，可叠加。
+<Expand title="Q3：GQA/MLA 和权重量化，分别优化哪个阶段的什么开销？">
+GQA/MLA 减少 KV 头数→砍每 token 的 KV 字节，减轻 Decode 的 KV 读取与 PD 分离时的跨网络传输；权重量化砍权重字节，直接缩短 Decode 每步搬权重的时间（也降低 Prefill 的搬运）。两者作用对象不同，可叠加。
 </Expand>
 
 <Expand title="Q4：continuous batching 把很多用户凑成一批，单个用户的模型没变快，系统到底省了什么？">
@@ -303,5 +327,6 @@ KV 是模型对本次对话具体上下文（prompt + 已生成 token）跑前�
 7. Zhong et al., [DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving](https://arxiv.org/abs/2401.09670)（OSDI 2024）
 8. Patel et al., [SplitWise: Efficient Generative LLM Inference Using Phase Splitting](https://arxiv.org/abs/2311.18677)（ISCA 2024；注意 arXiv:2404.10641 是无关论文）
 9. vLLM 0.21 中文教程：调度与 KV Cache、优化配置、Disaggregated Prefill 章节（本地一手实现文档）
+10. Williams, Waterman, Patterson, [Roofline: An Insightful Visual Performance Model for Multicore Architectures](https://dl.acm.org/doi/10.1145/1498765.1498785)（Communications of the ACM, 2009）
 
-**站内延伸**：底层结构见[图解大模型（入门篇）](/blog/图解大模型-一口气搞懂大模型的骨架/)；KV 管理见[PagedAttention](/blog/pagedattention-给kv-cache装上虚拟内存/)；省 Decode 步数见[投机解码](/blog/投机解码-小模型打草稿大模型一次批改/)；长 Decode 的成本见[思维链](/blog/思维链-大模型为什么要先想再答/)；少搬 KV 的模型设计见[注意力机制演进](/blog/注意力机制演进-从mha到gqa与mla/)；工程实战见[推理加速专栏](/inference/)。
+**站内延伸**：脚下的硬件（H100 规格、HBM 带宽、NVLink、万卡集群与电力）见[《算力是什么：从一张 H100 到万卡集群》](/blog/算力是什么-从一张h100到万卡集群/)；底层结构见[图解大模型（入门篇）](/blog/图解大模型-一口气搞懂大模型的骨架/)；KV 管理见[PagedAttention](/blog/pagedattention-给kv-cache装上虚拟内存/)；省 Decode 步数见[投机解码](/blog/投机解码-小模型打草稿大模型一次批改/)；长 Decode 的成本见[思维链](/blog/思维链-大模型为什么要先想再答/)；少搬 KV 的模型设计见[注意力机制演进](/blog/注意力机制演进-从mha到gqa与mla/)；工程实战见[推理加速专栏](/inference/)。想看这些机制在 vLLM 0.21 里逐行怎么实现，读[《vLLM 调度与 KV Cache 源码解读》专题](/scheduler/)（9 篇）。

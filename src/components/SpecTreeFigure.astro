@@ -1,0 +1,51 @@
+---
+// 图：链式草稿 vs 树状候选——一次验证一条线 vs 一次验证多条分叉路径
+---
+
+<figure>
+  <svg viewBox="0 0 640 220" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="spt-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">草稿的两种形状：一条链，还是一棵树</text>
+
+      {/* 链式 */}
+      <text x="150" y="58" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">链式（k=3）</text>
+      <rect x="50" y="74" width="50" height="30" rx="7" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="75" y="94" font-size="10" fill="#334155" text-anchor="middle">前缀</text>
+      {['d1','d2','d3'].map((t,i)=>(
+        <g>
+          <rect x={114+i*56} y="74" width="50" height="30" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+          <text x={139+i*56} y="94" font-size="10.5" fill="#b97a1f" text-anchor="middle">{t}</text>
+          {i<3 && <line x1={102+i*56} y1="89" x2={112+i*56} y2="89" stroke="#94a3b8" marker-end="url(#spt-arw)"/>}
+        </g>
+      ))}
+      <text x="150" y="138" font-size="10.5" fill="#64748b" text-anchor="middle">一条路走到黑：d2 错了，d3 再对也作废</text>
+      <text x="150" y="158" font-size="10.5" fill="#64748b" text-anchor="middle">一次验证 4 个位置</text>
+
+      {/* 分隔 */}
+      <line x1="316" y1="50" x2="316" y2="180" stroke="#e2e8f0"/>
+
+      {/* 树状 */}
+      <text x="470" y="58" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">树状（tree）</text>
+      <rect x="356" y="74" width="50" height="30" rx="7" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="381" y="94" font-size="10" fill="#334155" text-anchor="middle">前缀</text>
+      <line x1="406" y1="89" x2="424" y2="89" stroke="#94a3b8" marker-end="url(#spt-arw)"/>
+      {/* 分叉节点 */}
+      <rect x="428" y="74" width="44" height="30" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="450" y="94" font-size="10" fill="#b97a1f" text-anchor="middle">d1</text>
+      <path d="M472,82 C492,60 500,60 512,66" fill="none" stroke="#94a3b8" marker-end="url(#spt-arw)"/>
+      <path d="M472,96 C492,116 500,116 512,110" fill="none" stroke="#94a3b8" marker-end="url(#spt-arw)"/>
+      <rect x="512" y="52" width="46" height="28" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="535" y="71" font-size="9.5" fill="#b97a1f" text-anchor="middle">d2a</text>
+      <rect x="512" y="96" width="46" height="28" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="535" y="115" font-size="9.5" fill="#b97a1f" text-anchor="middle">d2b</text>
+      <rect x="566" y="52" width="46" height="28" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="589" y="71" font-size="9.5" fill="#b97a1f" text-anchor="middle">d3a</text>
+      <rect x="566" y="96" width="46" height="28" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="589" y="115" font-size="9.5" fill="#b97a1f" text-anchor="middle">d3b</text>
+
+      <text x="480" y="158" font-size="10.5" fill="#64748b" text-anchor="middle">多个候选同时算：树状掩码让分叉互不偷看</text>
+      <text x="480" y="176" font-size="10.5" fill="#0a7a50" text-anchor="middle">同样一次前向，哪条路径对就接哪条</text>
+    </g>
+  </svg>
+</figure>

@@ -1,17 +1,19 @@
 ---
 title: "vLLM 调度 6：线上出问题，看哪几个数、怎么对应到调度器动作"
-date: 2026-09-25
-author: DoraAiDreamer
-category: 大模型
-tags: ["vLLM","KV Cache","调度"]
+subtitle: "Prometheus 指标实名、时钟口径，与一张症状→代码路径→动作决策表"
+date: 2026-10-22
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "vLLM"
+  - "源码解读"
+  - "可观测"
+  - "运维"
 ---
 
 import Expand from "../../components/Expand.astro";
 
-
-Prometheus 指标实名、时钟口径，与一张症状→代码路径→动作决策表
-
-源码版本：**vLLM 0.21.0**（2026-05）。本系列锁定该版本，指标名以 0.21 的 v1/metrics/loggers.py 为准。
+<p class="version-note">源码版本：<b>vLLM 0.21.0</b>（2026-05）。本系列锁定该版本，指标名以 0.21 的 v1/metrics/loggers.py 为准。</p>
 
 前五篇讲了调度器内部。这一篇带着这些知识读监控面板——线上出问题时，看哪几个数、它们分别对应哪段代码、该采取什么动作。
 
@@ -33,7 +35,7 @@ Prometheus 指标实名、时钟口径，与一张症状→代码路径→动作
 
 前缀命中率要自己除（token 口径）：
 
-```
+```text
 rate(vllm:prefix_cache_hits_total[5m])
 / rate(vllm:prefix_cache_queries_total[5m])
 ```
@@ -48,12 +50,12 @@ rate(vllm:prefix_cache_hits_total[5m])
 
 | 症状（指标现象） | 对应调度器代码（前五篇） | 动作 |
 | --- | --- | --- |
-| 启动即 OOM、服务没起来 | 显存探测：请求额度 < 非 KV 开销（[篇 1](/blog/vllm-调度1-启动时块从哪来)） | 降 gpu_memory_utilization、减 TP 之外的常驻占用；区分”启动 OOM”不是运行时问题 |
+| 启动即 OOM、服务没起来 | 显存探测：请求额度 < 非 KV 开销（[篇 1](/blog/vllm-调度1-启动时块从哪来/)） | 降 gpu_memory_utilization、减 TP 之外的常驻占用；区分"启动 OOM"不是运行时问题 |
 | 运行中偶发 CUDA OOM | 实际激活/cudagraph 超 profile 估算 | 查 cudagraph 设置、降 max_num_batched_tokens |
-| `num_preemptions` 持续上涨、P99 TTFT 尖刺 | 抢占循环 + recompute（[篇 4](/blog/vllm-调度4-块不够怎么办)） | 容量不足：减 max_num_seqs、上 KV 量化/更多显存、扩实例；这是 thrashing 信号 |
-| waiting 高、running 长期到顶、请求不进场 | 准入闸门 full_isl 拦截（篇 4） | 同上扩容；检查是否被超长 prompt 队头阻塞（[篇 2](/blog/vllm-调度2-一个step里让谁推进)） |
+| `num_preemptions` 持续上涨、P99 TTFT 尖刺 | 抢占循环 + recompute（[篇 4](/blog/vllm-调度4-块不够怎么办/)） | 容量不足：减 max_num_seqs、上 KV 量化/更多显存、扩实例；这是 thrashing 信号 |
+| waiting 高、running 长期到顶、请求不进场 | 准入闸门 full_isl 拦截（篇 4） | 同上扩容；检查是否被超长 prompt 队头阻塞（[篇 2](/blog/vllm-调度2-一个step里让谁推进/)） |
 | `waiting_by_reason=deferred` 高 | skipped 队列：等远程 KV/语法/流式输入 | 查 connector 与外部依赖，不是容量问题 |
-| 命中率意外为 0 | get_computed_blocks 跳过查询（[篇 5](/blog/vllm-调度5-相同前缀为什么不用重算)） | 查 prompt_logprobs、pooling 模型、LoRA/salt/多模态 extra_keys、模板是否一致 |
+| 命中率意外为 0 | get_computed_blocks 跳过查询（[篇 5](/blog/vllm-调度5-相同前缀为什么不用重算/)） | 查 prompt_logprobs、pooling 模型、LoRA/salt/多模态 extra_keys、模板是否一致 |
 | 命中率高但 TTFT 没改善 | 命中只省 prefill；远端命中要付网络代价（篇 8） | 联测 goodput 而非单看命中率；慢网时本地重算可能更快 |
 | `corrupted_requests` 非零 | logits 出现 NaN | 查权重加载、量化、KV 损坏；不是调度问题 |
 
@@ -61,15 +63,15 @@ rate(vllm:prefix_cache_hits_total[5m])
 
 除了上述常驻指标，还有一个**默认关闭**的块级采样器 `KVCacheMetricsCollector`：开启后（config 里 `kv_cache_metrics=True`），对块分配做 1% 伯努利抽样，跟踪每块的存活时间、驱逐前空闲、复用间隔，输出 `kv_block_lifetime_seconds` 等三张 histogram。
 
-它是诊断”缓存为什么留不住”的线索，不是精确账本——不开就零开销，按需临时打开。
+它是诊断"缓存为什么留不住"的线索，不是精确账本——不开就零开销，按需临时打开。
 
 ## 5. 与后续专题的接口
 
-当单机扩容到头、抢占仍频繁、命中率受多实例稀释时，问题进入集群层：前缀感知路由、全局 KV 池、PD 分离——这些系统手段见[篇 8](/blog/vllm-调度8-前缀缓存从单机到集群)。v0.21 的 PD 连接器仍标 experimental、只有传输层没有内置控制面，落地前以官方文档为准。
+当单机扩容到头、抢占仍频繁、命中率受多实例稀释时，问题进入集群层：前缀感知路由、全局 KV 池、PD 分离——这些系统手段见[篇 8](/blog/vllm-调度8-前缀缓存从单机到集群/)。v0.21 的 PD 连接器仍标 experimental、只有传输层没有内置控制面，落地前以官方文档为准。
 
 ## 自测（答案点击展开）
 
-**1.** 为什么不能直接拿一个”vLLM 命中率”数字和论文里的命中率比？要先确认哪三件事？
+**1.** 为什么不能直接拿一个"vLLM 命中率"数字和论文里的命中率比？要先确认哪三件事？
 
 **2.** `num_preemptions` 持续上涨时，问题在调度器 bug 还是容量？先看哪两个指标区分？
 
@@ -77,16 +79,16 @@ rate(vllm:prefix_cache_hits_total[5m])
 
 **4.** `corrupted_requests` 非零应该去查调度策略吗？为什么？
 
-<Expand title="▸参考答案">
+<Expand title="参考答案">
 
 1. 口径不同：vLLM 是 token 口径（命中 token/查询 token），且分本地 APC、外部 connector、多模态三组；论文常是请求口径或特定系统定义。先确认分子分母、是否本地口径、是否含外部命中。
 2. 首先是容量 thrashing 而非 bug——抢占是分不到块时的正常路径。结合 kv_cache_usage_perc（是否长期贴 1）和 waiting/num_requests_waiting_by_reason 判断：水位满 + waiting 高 = 容量不足，扩容或降并发；deferred 高则是外部依赖。
-3. 没有预置分位。延迟是 histogram，要用 histogram_quantile(0.99, rate(…_bucket[窗口])) 现算 P99。
+3. 没有预置分位。延迟是 histogram，要用 histogram_quantile(0.99, rate(..._bucket[窗口])) 现算 P99。
 4. 不该。它表示 logits 出现 NaN（开关 VLLM_COMPUTE_NANS_IN_LOGITS 控制），指向权重加载、量化或 KV 数据损坏，与调度决策无关。
 
 </Expand>
 
 ## 参考资料
 
-- vLLM 0.21.0 源码：`vllm/v1/metrics/loggers.py`（全部实名指标）、`vllm/v1/metrics/stats.py`（时间戳与分段延迟）、`vllm/core/kv_cache_metrics.py`（1% 采样）、`vllm/config/observability.py`（默认关闭）——[GitHub v0.21.0 tag](https://github.com/vllm-project/vllm/tree/v0.21.0)
-- 姊妹篇：[调度 4 块不够怎么办](/blog/vllm-调度4-块不够怎么办)、[调度 5 相同前缀为什么不用重算](/blog/vllm-调度5-相同前缀为什么不用重算)、[调度 8 集群命中率](/blog/vllm-调度8-前缀缓存从单机到集群)
+1. vLLM 0.21.0 源码：`vllm/v1/metrics/loggers.py`（全部实名指标）、`vllm/v1/metrics/stats.py`（时间戳与分段延迟）、`vllm/core/kv_cache_metrics.py`（1% 采样）、`vllm/config/observability.py`（默认关闭）——[GitHub v0.21.0 tag](https://github.com/vllm-project/vllm/tree/v0.21.0)
+2. 姊妹篇：[调度 4 块不够怎么办](/blog/vllm-调度4-块不够怎么办/)、[调度 5 相同前缀为什么不用重算](/blog/vllm-调度5-相同前缀为什么不用重算/)、[调度 8 集群命中率](/blog/vllm-调度8-前缀缓存从单机到集群/)

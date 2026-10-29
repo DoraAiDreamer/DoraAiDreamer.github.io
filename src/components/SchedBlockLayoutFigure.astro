@@ -1,0 +1,41 @@
+---
+// 篇1 图2：物理块张量布局——一块 KV 在每层张量里的位置
+// KV 区按层保留：每层持有 [num_blocks, num_kv_heads, head_size] 的 K/V 两块连续区域
+---
+
+<figure>
+  <svg viewBox="0 0 640 276" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="13.5" font-weight="bold" fill="#0c5f74" text-anchor="middle">「一个块」是每层 KV 张量里的一个定长切片</text>
+      <text x="320" y="44" font-size="9.5" fill="#94a3b8" text-anchor="middle">物理块张量在 initialize_from_config 时一次性分配；形状由 KVCacheSpec 决定（详见篇 3、篇 7）</text>
+
+      {/* 三层示意 */}
+      {[
+        { y: 62, label: "第 1 层" },
+        { y: 126, label: "第 2 层" },
+        { y: 190, label: "…" },
+      ].map((L) => (
+        <g>
+          <text x="58" y={L.y + 32} font-size="10.5" fill="#475569" text-anchor="end">{L.label}</text>
+          {/* K 区 */}
+          <rect x="70" y={L.y} width="252" height="52" rx="6" fill="#f2f8fa" stroke="#0085a1"/>
+          <text x="82" y={L.y + 14} font-size="8.5" fill="#006377">K</text>
+          {[0,1,2,3,4,5].map((i) => (
+            <rect x={86 + i * 38} y={L.y + 18} width="34" height="28" rx="3" fill={i === 2 ? "#7ec3d8" : "#cfe6ee"} stroke="#0085a1" stroke-width={i===2 ? 1.4 : 0.6}/>
+          ))}
+          {/* V 区 */}
+          <rect x="330" y={L.y} width="252" height="52" rx="6" fill="#fdf7ef" stroke="#e6a23c"/>
+          <text x="342" y={L.y + 14} font-size="8.5" fill="#b97a1f">V</text>
+          {[0,1,2,3,4,5].map((i) => (
+            <rect x={346 + i * 38} y={L.y + 18} width="34" height="28" rx="3" fill={i === 2 ? "#f3c87f" : "#fbe7c6"} stroke="#e6a23c" stroke-width={i===2 ? 1.4 : 0.6}/>
+          ))}
+        </g>
+      ))}
+
+      {/* 高亮说明：选中的块跨 K/V、跨层 */}
+      <text x="162" y="258" font-size="9" fill="#006377" text-anchor="middle">↑ 第 b 块的 K 切片</text>
+      <text x="422" y="258" font-size="9" fill="#b97a1f" text-anchor="middle">↑ 同一块的 V 切片</text>
+      <text x="580" y="258" font-size="8.5" fill="#64748b">每层位置对齐</text>
+    </g>
+  </svg>
+</figure>

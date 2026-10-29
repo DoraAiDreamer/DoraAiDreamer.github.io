@@ -1,0 +1,75 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+const posts = [
+  { n: 1, href: "/blog/vllm-调度1-启动时块从哪来/", title: "启动时，KV Cache 的块从哪来", desc: "显存探测、profile run、num_gpu_blocks、null_block 与多卡取最小" },
+  { n: 2, href: "/blog/vllm-调度2-一个step里让谁推进/", title: "一个 step 里，让谁推进", desc: "四计数器、schedule() 三阶段、配置分档表与队头阻塞" },
+  { n: 3, href: "/blog/vllm-调度3-要n个token怎么摆进物理块/", title: "N 个 token 怎么摆进物理块", desc: "allocate_slots 五段布局、四层调用、引用计数与 V1 为何没有 COW" },
+  { n: 4, href: "/blog/vllm-调度4-块不够怎么办/", title: "块不够时怎么办（题眼）", desc: "准入闸门、LIFO 抢占、只重算不换出、抢占步不接纳新请求" },
+  { n: 5, href: "/blog/vllm-调度5-相同前缀为什么不用重算/", title: "相同前缀为什么不用重算", desc: "哈希链、get_computed_blocks、惰性 LRU 与重放命中" },
+  { n: 6, href: "/blog/vllm-调度6-线上看哪几个数/", title: "线上出问题看哪几个数", desc: "Prometheus 指标实名、时钟口径、症状→代码路径→动作决策表" },
+  { n: 7, href: "/blog/vllm-调度7-模型结构对kvcache的影响/", title: "模型结构对 KV Cache 的影响", desc: "KVCacheSpec 家族：GQA/MLA/滑动窗口/Mamba，以及 MoE 为何不缩小 KV" },
+  { n: 8, href: "/blog/vllm-调度8-前缀缓存从单机到集群/", title: "前缀缓存：从单机命中到集群命中率", desc: "两种索引、随机路由稀释、前缀感知路由、全局 KV 池与缓存工程" },
+  { n: 9, href: "/blog/vllm-调度9-昂腾上的前缀缓存/", title: "昇腾上的前缀缓存", desc: "block_size 128、MLA 头数硬约束、additional-config 与 AscendStore" },
+];
+---
+
+<BaseLayout title="vLLM 调度与 KV Cache 源码解读" description="基于 vLLM 0.21.0 的调度器与 KV Cache 源码系列：显存、调度循环、块分配、抢占、前缀缓存、观测、模型结构与昇腾" toc={false}>
+<article class="post sch-hub">
+  <div class="sch-hero">
+    <h1>vLLM 调度与 KV Cache 源码解读</h1>
+    <p class="sub">跟着「一个请求占块、还块」的旅程，读懂调度器与 KV 子系统</p>
+    <p class="ver">软件版本：<b>vLLM v0.21.0</b>（2026-05）· 全系列锁定该版本，源码链接指向 v0.21.0 tag</p>
+  </div>
+
+  <section>
+    <h2>这条主线讲什么</h2>
+    <p>启动时怎么知道有多少块 → 每一步调度器怎么点名 → 块怎么分、账怎么记 → 不够时踢谁、怎么重算 → 前缀怎么复用、怎么被驱逐 → 线上看哪些指标 → 换模型结构哪里变 → 集群与昇腾有何不同。</p>
+    <p>前置科普（先建立直觉）：<a href="/blog/一次推理的旅程-prefill与decode/">一次推理的旅程</a> · <a href="/blog/pagedattention-给kv-cache装上虚拟内存/">PagedAttention</a> · <a href="/blog/连续批处理-每个迭代步重新组批/">连续批处理</a>。逐行源码注解见<a href="/inference/">推理加速实战</a>（随上游 master 更新）。</p>
+  </section>
+
+  <section>
+    <h2>建议阅读路径</h2>
+    <ul class="sch-paths">
+      <li><b>全程</b>：1 → 9，顺着请求旅程读</li>
+      <li><b>速成 / 运维</b>：1 → 2 → 4 → 6（块从哪来、怎么调度、抢占、看监控）</li>
+      <li><b>前缀缓存</b>：1 → 5 → 8（单机机制 → 集群命中率）；昇腾加读 9</li>
+      <li><b>架构对比</b>：1 → 7（不同模型结构怎么影响 KV）</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>全部篇目</h2>
+    <div class="sch-grid">
+      {posts.map(p => (
+        <a class="sch-card" href={p.href}>
+          <span class="sch-num">{p.n}</span>
+          <span class="sch-body">
+            <span class="sch-title">{p.title}</span>
+            <span class="sch-desc">{p.desc}</span>
+          </span>
+          <span class="sch-go">读 →</span>
+        </a>
+      ))}
+    </div>
+  </section>
+</article>
+</BaseLayout>
+
+<style>
+.sch-hero { background: linear-gradient(135deg,#f2f8fa 0%,#e8f3f6 100%); border:1px solid #d6e8ee; border-radius:8px; padding:22px 26px; margin-bottom:20px; }
+.sch-hero h1 { margin:0 0 8px; color:#006377; border:none; padding:0; }
+.sch-hero .sub { color:#4a6b73; margin:0 0 10px; }
+.sch-hero .ver { font-size:13px; color:#7a929a; margin:0; }
+.sch-hub h2 { font-size:19px; border-bottom:2px solid #eee; padding-bottom:8px; }
+.sch-paths li { margin:6px 0; line-height:1.7; }
+.sch-grid { display:grid; grid-template-columns:1fr; gap:12px; margin-top:8px; }
+.sch-card { display:flex; align-items:flex-start; gap:14px; border:1px solid #e2e8f0; border-radius:8px; padding:14px 16px; text-decoration:none !important; background:#fff; transition:border-color .15s, box-shadow .15s; }
+.sch-card:hover { border-color:#0085a1; box-shadow:0 2px 10px rgba(0,133,161,.08); }
+.sch-num { flex:0 0 30px; height:30px; border-radius:50%; background:#d9eef3; color:#006377; font-weight:700; display:flex; align-items:center; justify-content:center; font-size:14px; }
+.sch-body { flex:1; display:flex; flex-direction:column; gap:4px; }
+.sch-title { font-size:15px; font-weight:600; color:#1f2d33; }
+.sch-desc { font-size:13px; color:#788b93; line-height:1.5; }
+.sch-go { flex:0 0 auto; color:#9db6bd; font-size:13px; align-self:center; }
+@media (min-width:760px){ .sch-grid { grid-template-columns:1fr 1fr; } }
+</style>

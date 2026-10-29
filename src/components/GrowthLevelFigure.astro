@@ -1,0 +1,56 @@
+---
+// 图5：级别阶梯——初/中/高/资深，三道分水岭各配一个可证伪动作
+// 级别=合取轮廓不是平均分；责任半径：实例 → 服务群 → 组织
+---
+
+<figure>
+  <svg viewBox="0 0 640 308" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="gl-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+        <path d="M0,0 L8,4 L0,8 Z" fill="#e6a23c"/>
+      </marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">级别阶梯：分水岭是三道动作，不是工龄钟</text>
+
+      {/* 基线 */}
+      <line x1="44" y1="234" x2="600" y2="234" stroke="#cbd5e1"/>
+
+      {/* 四根柱：中心 x 110/250/390/530，宽 104 */}
+      {[
+        { x: 58, h: 56, label: "初级", act: "会装", ev: "按手册部署与重启", fill: "#e8f4f7" },
+        { x: 198, h: 96, label: "中级", act: "会算", ev: "预估与实测同量级", fill: "#cde8f0" },
+        { x: 338, h: 136, label: "高级", act: "会权衡", ev: "权衡三问答得全", fill: "#b2dce8" },
+        { x: 478, h: 176, label: "资深", act: "会建", ev: "机制被 ≥2 人复用", fill: "#97cfe0" },
+      ].map((b) => (
+        <g>
+          <rect x={b.x} y={234 - b.h} width="104" height={b.h} rx="8" fill={b.fill} stroke="#0085a1"/>
+          <text x={b.x + 52} y={234 - b.h + 22} font-size="12.5" font-weight="bold" fill="#0c5f74" text-anchor="middle">{b.act}</text>
+          <text x={b.x + 52} y={234 - b.h + 38} font-size="9.5" fill="#0c5f74" text-anchor="middle">{b.ev}</text>
+          <text x={b.x + 52} y="254" font-size="11.5" font-weight="bold" fill="#334155" text-anchor="middle">{b.label}</text>
+        </g>
+      ))}
+
+      {/* 三道分水岭箭头（跨柱顶） */}
+      {[
+        { x1: 162, y1: 178, x2: 198, y2: 138, t: "分水岭 1", ly: 128 },
+        { x1: 302, y1: 138, x2: 338, y2: 98, t: "分水岭 2", ly: 88 },
+        { x1: 442, y1: 98, x2: 478, y2: 58, t: "分水岭 3", ly: 48 },
+      ].map((w) => (
+        <g>
+          <line x1={w.x1} y1={w.y1} x2={w.x2} y2={w.y2} stroke="#e6a23c" stroke-width="2" marker-end="url(#gl-arrow)"/>
+          <text x={(w.x1 + w.x2) / 2} y={w.ly} font-size="9.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">{w.t}</text>
+        </g>
+      ))}
+
+      {/* 责任半径 */}
+      <line x1="250" y1="276" x2="530" y2="276" stroke="#94a3b8" stroke-dasharray="4,3"/>
+      <text x="250" y="291" font-size="10" fill="#64748b" text-anchor="middle">一个实例</text>
+      <text x="390" y="291" font-size="10" fill="#64748b" text-anchor="middle">一组服务</text>
+      <text x="530" y="291" font-size="10" fill="#64748b" text-anchor="middle">整个组织</text>
+      <text x="110" y="291" font-size="9.5" fill="#94a3b8" text-anchor="middle">责任半径</text>
+
+      <text x="320" y="305" font-size="9" fill="#94a3b8" text-anchor="middle">纵轴＝下探深度 × 权衡半径（示意）；级别是合取轮廓，不是平均分</text>
+    </g>
+  </svg>
+</figure>

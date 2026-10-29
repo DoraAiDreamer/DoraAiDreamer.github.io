@@ -1,0 +1,72 @@
+---
+// 图6：EP 分诊——dispatch 按路由小票换组、combine 送回；热专家排队
+---
+
+<figure>
+  <svg viewBox="0 0 640 340" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="22" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">专家并行：token 拿路由小票找专科，去程换组、回程再换组</text>
+
+      {/* 左：出发前，按所在卡 */}
+      <text x="96" y="52" font-size="11.5" font-weight="bold" fill="#475569" text-anchor="middle">换组前：token 待在所在卡</text>
+      {[0, 1, 2, 3].map((i) => {
+        const gy = 66 + i * 50;
+        return (
+          <g>
+            <rect x="34" y={gy} width="124" height="40" rx="7" fill="#f2f8fa" stroke="#0085a1"/>
+            <text x="46" y={gy + 25} font-size="10" fill="#006377">卡 {i}</text>
+            {["t", "t"].map((_, j) => (
+              <circle cx={86 + j * 30} cy={gy + 20} r="9" fill="#d9eef3" stroke="#0085a1"/>
+            ))}
+            <text x="86" y={gy + 24} font-size="9" fill="#006377" text-anchor="middle">t{i}a</text>
+            <text x="116" y={gy + 24} font-size="9" fill="#006377" text-anchor="middle">t{i}b</text>
+          </g>
+        );
+      })}
+
+      {/* 中间：双向换组 */}
+      <path d="M170 100 C 250 60, 330 60, 410 100" fill="none" stroke="#e6a23c" stroke-width="1.8" marker-end="url(#arEp)"/>
+      <path d="M410 260 C 330 300, 250 300, 170 260" fill="none" stroke="#e6a23c" stroke-width="1.8" marker-end="url(#arEp)"/>
+      <rect x="236" y="150" width="108" height="44" rx="8" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="290" y="169" font-size="10.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">两次全员换组</text>
+      <text x="290" y="185" font-size="9.5" fill="#b97a1f" text-anchor="middle">all-to-all</text>
+      <text x="290" y="120" font-size="10" fill="#b97a1f" text-anchor="middle">dispatch（去程）</text>
+      <text x="290" y="272" font-size="10" fill="#b97a1f" text-anchor="middle">combine（回程）</text>
+
+      {/* 右：按专家重新分组，专家 1 是热专家 */}
+      <text x="528" y="52" font-size="11.5" font-weight="bold" fill="#475569" text-anchor="middle">换组后：按目标专家排队</text>
+      {[
+        { i: 0, hot: false },
+        { i: 1, hot: true },
+        { i: 2, hot: false },
+        { i: 3, hot: false },
+      ].map((e) => {
+        const gy = 66 + e.i * 50;
+        return (
+          <g>
+            <rect x="424" y={gy} width="196" height="40" rx="7" fill={e.hot ? "#fbe3e3" : "#fdf0e0"} stroke={e.hot ? "#b14a4a" : "#e6a23c"}/>
+            <text x="438" y={gy + 25} font-size="10" fill={e.hot ? "#b14a4a" : "#b97a1f"}>专家 {e.i}</text>
+            {[0, 1, 2, 3, 4].map((k) => (
+              <circle cx={480 + k * 22} cy={gy + 20} r="8.5" fill={e.hot ? "#f4f6f8" : "#fff"} stroke={e.hot ? "#b14a4a" : "#e6a23c"}/>
+            ))}
+            {e.hot && <text x="596" y={gy + 24} font-size="9.5" font-weight="bold" fill="#b14a4a">排队</text>}
+            {!e.hot && e.i === 2 && <text x="596" y={gy + 24} font-size="9.5" fill="#94a3b8">空闲</text>}
+          </g>
+        );
+      })}
+
+      <text x="320" y="316" font-size="10" fill="#475569" text-anchor="middle">
+        消息大小随路由分布变化：热专家一列排队，全线都要等——冗余热专家（EPLB）用来均负载
+      </text>
+      <text x="320" y="332" font-size="9.5" fill="#94a3b8" text-anchor="middle">
+        所有专家全天空岗占诊室：权重常驻显存，每 token 只被路由到其中 8 个（以 DeepSeek-V3 为例）
+      </text>
+
+      <defs>
+        <marker id="arEp" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 z" fill="#e6a23c"/>
+        </marker>
+      </defs>
+    </g>
+  </svg>
+</figure>

@@ -1,25 +1,28 @@
 ---
 title: "vLLM 调度 3：要 N 个 token，KV 怎么摆进物理块、worker 怎么知道摆在哪"
-date: 2026-09-24
-author: DoraAiDreamer
-category: 大模型
-tags: ["vLLM","KV Cache","调度"]
+subtitle: "打开 allocate_slots 黑盒：五段布局、四层调用、引用计数，以及 V1 为什么没有写时复制"
+date: 2026-10-21
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "vLLM"
+  - "源码解读"
+  - "PagedAttention"
+  - "KV Cache"
 ---
 
 import Expand from "../../components/Expand.astro";
-import Vllm3RecFig1 from "../../components/Vllm3RecFig1.astro";
+import SchedSlotLayoutFigure from "../../components/SchedSlotLayoutFigure.astro";
 
-打开 allocate_slots 黑盒：五段布局、四层调用、引用计数，以及 V1 为什么没有写时复制
+<p class="version-note">源码版本：<b>vLLM 0.21.0</b>（2026-05）。本系列锁定该版本，源码链接指向 v0.21.0 tag。</p>
 
-源码版本：**vLLM 0.21.0**（2026-05）。本系列锁定该版本，源码链接指向 v0.21.0 tag。
-
-[篇 2](/blog/vllm-调度2-一个step里让谁推进)里，调度器对每个请求都调用 `allocate_slots(request, num_new_tokens)`：成功就把块记账、继续调度；失败（返回 None）才进入抢占。本篇**只打开成功路径**——这个函数内部怎么把”要算 N 个 token”翻译成”给你哪些物理块”。失败处理与准入闸门留给[篇 4](/blog/vllm-调度4-块不够怎么办)。
+[篇 2](/blog/vllm-调度2-一个step里让谁推进/)里，调度器对每个请求都调用 `allocate_slots(request, num_new_tokens)`：成功就把块记账、继续调度；失败（返回 None）才进入抢占。本篇**只打开成功路径**——这个函数内部怎么把"要算 N 个 token"翻译成"给你哪些物理块"。失败处理与准入闸门留给[篇 4](/blog/vllm-调度4-块不够怎么办/)。
 
 ## 1. 一个请求这一步的 token 分五段
 
 `allocate_slots` 先把请求的 token 切成五段，源码注释里画得很清楚：
 
-<Vllm3RecFig1 />
+<SchedSlotLayoutFigure />
 
 *图 1：comp/new_comp/ext_comp 是已有或命中的 KV，new/lookahead 才需要新块。*
 
@@ -33,7 +36,7 @@ import Vllm3RecFig1 from "../../components/Vllm3RecFig1.astro";
 
 关键细节在 `new` 段：草稿 token 也会先占块，但**缓存时只写已确认的部分**——
 
-```
+```python
 # 只缓存"定稿"token，可能被拒绝的草稿不写缓存
 num_tokens_to_cache = min(
     total_computed_tokens + num_new_tokens,
@@ -46,7 +49,7 @@ self.coordinator.cache_blocks(request, num_tokens_to_cache)
 
 函数主体按顺序做三件事（kv_cache_manager.py）：
 
-```
+```python
 # ① 估算这一步总共需要多少块；不够直接返回 None（篇 4 的入口）
 num_blocks_to_allocate = self.coordinator.get_num_blocks_to_allocate(...)
 if num_blocks_to_allocate > self.block_pool.get_num_free_blocks():
@@ -61,26 +64,26 @@ new_blocks = self.coordinator.allocate_new_blocks(...)
 
 第一件事之前还会 `remove_skipped_blocks`：对滑动窗口模型，注意力窗口之外的旧块可以先释放——**先还旧块、再算缺口**，能少驱逐一些缓存。
 
-注意第 ① 步与[篇 4](/blog/vllm-调度4-块不够怎么办) 准入闸门的区别：`full_sequence_must_fit` 只在 waiting 接纳新请求时传入；普通 running 分配只检查当前这一步，不要求”整条序列装得下”。
+注意第 ① 步与[篇 4](/blog/vllm-调度4-块不够怎么办/) 准入闸门的区别：`full_sequence_must_fit` 只在 waiting 接纳新请求时传入；普通 running 分配只检查当前这一步，不要求"整条序列装得下"。
 
 ## 3. 四层对象、三次转发
 
 `allocate_slots` 本身不碰物理块，它只是个门面（facade）。真正的调用链是：
 
-```
+```text
 KVCacheManager（每个调度器一个，面向请求）
    └─ KVCacheCoordinator（协调多个 KV group）
         └─ SingleTypeKVCacheManager[]（每种 attention 一个：full / SWA / MLA…）
              └─ BlockPool（物理块的唯一所有者）
 ```
 
-为什么要这么多层？一个模型可能同时含多种层（比如 DeepSeek 新架构的 full attention + sliding window 混合），每种层的块规格不同；门面让调度器只说”给这个请求 N 个 token 的位置”，由协调器把需求拆给各类型的管理器，最后都落到同一个 BlockPool 取物理块。
+为什么要这么多层？一个模型可能同时含多种层（比如 DeepSeek 新架构的 full attention + sliding window 混合），每种层的块规格不同；门面让调度器只说"给这个请求 N 个 token 的位置"，由协调器把需求拆给各类型的管理器，最后都落到同一个 BlockPool 取物理块。
 
 ## 4. 引用计数：两版都有，V1 没有 COW
 
 物理块被多个请求共享时靠引用计数管理，两个动作（block_pool.py）：
 
-```
+```python
 def touch(self, blocks):
     """命中别人的前缀：引用 +1，块从空闲队列摘出，不会被驱逐。"""
 
@@ -91,11 +94,11 @@ def free_blocks(self, ordered_blocks):
 **这里有个容易讲错的历史点，要分版本说：**
 
 - **PagedAttention 论文 / vLLM V0 时代**：共享块用引用计数 **+ 写时复制（Copy-on-Write）**。请求想追加写一个共享块时，先复制一份再写，避免改坏别人的副本；
-- **V1 时代**：**满块不可变 + 新 token 永远追加到新块**。块哈希只允许从 `None` 设为非 None（kv_cache_utils.py:137-142），已缓存的块内容永不修改——既然没有”改写共享块”这件事，COW 在结构上就不再需要了。
+- **V1 时代**：**满块不可变 + 新 token 永远追加到新块**。块哈希只允许从 `None` 设为非 None（kv_cache_utils.py:137-142），已缓存的块内容永不修改——既然没有"改写共享块"这件事，COW 在结构上就不再需要了。
 
-引用计数两版都存在，但在 V1 它只负责”共享块的生命周期”（touch 增、free 减），不再承担”写时分叉”。
+引用计数两版都存在，但在 V1 它只负责"共享块的生命周期"（touch 增、free 减），不再承担"写时分叉"。
 
-## 5. worker 怎么知道块摆在哪：两张”块表”
+## 5. worker 怎么知道块摆在哪：两张"块表"
 
 调度器侧记账的对象是 `KVCacheBlock`（带哈希、引用计数、状态的元数据）；但 GPU 上跑注意力 kernel 只需要一个**整数物理号数组**。于是每个 worker 维护一张 GPU 张量 `BlockTable`（vllm/v1/worker/block_table.py）：
 
@@ -105,13 +108,13 @@ def free_blocks(self, ordered_blocks):
 
 一句话分清主次：**调度器的元数据块表是唯一真相，worker 的整数表是下发给 kernel 的副本。** 绕过调度器直接改副本，kernel 会读到别的请求的数据——不是崩溃，是静默的数据损坏。
 
-> 小框：kernel 实际使用的页大小（kernel_block_size）可以与物理 block_size 不同（如某些后端只支持特定大小），BlockTable 内部负责拆分映射；NHD（Native/HND 布局）是 K/V 在显存里的排列方式差异，属于注意力后端的实现，本篇只需要知道”块号 → 每层定长切片”这层映射。
+> 小框：kernel 实际使用的页大小（kernel_block_size）可以与物理 block_size 不同（如某些后端只支持特定大小），BlockTable 内部负责拆分映射；NHD（Native/HND 布局）是 K/V 在显存里的排列方式差异，属于注意力后端的实现，本篇只需要知道"块号 → 每层定长切片"这层映射。
 
 ## 6. 小结
 
-要 N 个 token 时，KV 子系统先按”已算 / 本地命中 / 外部命中 / 待算 / 投机预占”五段切开，估算缺口、挂接命中块、分配新块、只缓存定稿 token；请求经四层门面到达唯一的物理块池，共享靠引用计数、V1 用不可变+追加消除了 COW；最后调度器把整数块表副本下发给 worker，kernel 据此间接寻址。
+要 N 个 token 时，KV 子系统先按"已算 / 本地命中 / 外部命中 / 待算 / 投机预占"五段切开，估算缺口、挂接命中块、分配新块、只缓存定稿 token；请求经四层门面到达唯一的物理块池，共享靠引用计数、V1 用不可变+追加消除了 COW；最后调度器把整数块表副本下发给 worker，kernel 据此间接寻址。
 
-块不够时会发生什么——准入、抢占、踢谁、怎么回来——是[篇 4](/blog/vllm-调度4-块不够怎么办)。
+块不够时会发生什么——准入、抢占、踢谁、怎么回来——是[篇 4](/blog/vllm-调度4-块不够怎么办/)。
 
 ## 自测（答案点击展开）
 
@@ -123,10 +126,10 @@ def free_blocks(self, ordered_blocks):
 
 **4.** 调度器的 `KVCacheBlock` 和 worker 的 `BlockTable` 是什么关系？绕过调度器直接改 worker 那张表会怎样？
 
-<Expand title="▸参考答案">
+<Expand title="参考答案">
 
 1. 3 个满块 = new_comp（touch 别人的块、不要新块）；20 个待算 = new、8 个预占 = lookahead，这两段要新块；comp 是更早之前已算的。
-2. 草稿 token 可能在大模型验证时被拒绝、对应位置重算，缓存它们会让后续请求读到错误 KV；截断到 num_tokens 保证只有”定稿”位置入缓存。
+2. 草稿 token 可能在大模型验证时被拒绝、对应位置重算，缓存它们会让后续请求读到错误 KV；截断到 num_tokens 保证只有"定稿"位置入缓存。
 3. V1 满块不可变（哈希只允许 None→非 None）、新 token 永远追加新块，不存在改写共享块的动作，COW 结构性消失。引用计数仍负责共享块生命周期：命中 touch +1、free −1，归零才可驱逐。
 4. 调度器元数据表是唯一真相，worker 的 int32 表是给 kernel 间接寻址的物理号副本（追加/整表替换）。绕过调度器直改会让 kernel 读到错误物理块，造成跨请求的静默数据损坏而非报错。
 
@@ -134,6 +137,6 @@ def free_blocks(self, ordered_blocks):
 
 ## 参考资料
 
-- vLLM 0.21.0 源码：`vllm/v1/core/kv_cache_manager.py`（allocate_slots 五段与三阶段）、`kv_cache_coordinator.py`、`block_pool.py`（touch/free_blocks）、`vllm/v1/worker/block_table.py`、`kv_cache_utils.py:137-142`——[GitHub v0.21.0 tag](https://github.com/vllm-project/vllm/tree/v0.21.0)
-- 更细的源码注解：[调度与 KV Cache（02）](/inference/view/?src=core/02_scheduler_kv_cache.md)、[Worker 与 ModelRunner（04）](/inference/view/?src=core/04_worker_model_runner.md)
-- 前置科普：[PagedAttention：给 KV Cache 装上「虚拟内存」](/blog/PagedAttention-给KV-Cache装上虚拟内存)
+1. vLLM 0.21.0 源码：`vllm/v1/core/kv_cache_manager.py`（allocate_slots 五段与三阶段）、`kv_cache_coordinator.py`、`block_pool.py`（touch/free_blocks）、`vllm/v1/worker/block_table.py`、`kv_cache_utils.py:137-142`——[GitHub v0.21.0 tag](https://github.com/vllm-project/vllm/tree/v0.21.0)
+2. 更细的源码注解：[调度与 KV Cache（02）](/inference/view/?src=core/02_scheduler_kv_cache.md)、[Worker 与 ModelRunner（04）](/inference/view/?src=core/04_worker_model_runner.md)
+3. 前置科普：[PagedAttention：给 KV Cache 装上「虚拟内存」](/blog/pagedattention-给kv-cache装上虚拟内存/)

@@ -1,0 +1,48 @@
+---
+// 钩子图：50% 权重置零前后，矩阵与耗时对照——稀疏率变了，墙钟没变
+---
+
+<figure>
+  <svg viewBox="0 0 640 262" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="prh-arw" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto"><path d="M0,0 L8,3.5 L0,7 Z" fill="#94a3b8"/></marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">把权重矩阵一半元素置零，matmul 耗时几乎不变</text>
+
+      {/* 左：稠密矩阵 */}
+      <text x="150" y="56" font-size="11.5" font-weight="bold" fill="#006377" text-anchor="middle">稠密权重 W（100% 参与）</text>
+      {Array.from({length:64}).map((_,i)=>{
+        const r=Math.floor(i/8), c=i%8;
+        return <rect x={88+c*15} y={68+r*15} width="13" height="13" rx="2" fill="#7fc3d8" stroke="#0085a1" stroke-width="0.6"/>;
+      })}
+      <text x="150" y="198" font-size="10" fill="#475569" text-anchor="middle">1024×1024 矩阵 · FP16</text>
+
+      <line x1="240" y1="130" x2="278" y2="130" stroke="#94a3b8" stroke-width="2" marker-end="url(#prh-arw)"/>
+      <text x="259" y="118" font-size="9" fill="#94a3b8" text-anchor="middle">mask 置零 50%</text>
+
+      {/* 右：置零矩阵 */}
+      <text x="386" y="56" font-size="11.5" font-weight="bold" fill="#b97a1f" text-anchor="middle">W 中 50% 元素变成 0</text>
+      {Array.from({length:64}).map((_,i)=>{
+        const r=Math.floor(i/8), c=i%8;
+        const zero = (r*7+c*3+r*c)%2===0;
+        return <rect x={324+c*15} y={68+r*15} width="13" height="13" rx="2"
+          fill={zero?"#fff":"#fde2b8"} stroke={zero?"#cbd5e1":"#e6a23c"} stroke-width="0.6"
+          stroke-dasharray={zero?"2,2":undefined}/>;
+      })}
+      <text x="386" y="198" font-size="10" fill="#475569" text-anchor="middle">形状不变 · 字节数不变</text>
+
+      <line x1="480" y1="130" x2="518" y2="130" stroke="#94a3b8" stroke-width="2" marker-end="url(#prh-arw)"/>
+
+      {/* 计时卡 */}
+      <rect x="522" y="82" width="98" height="96" rx="10" fill="#f4f6f8" stroke="#cbd5e1"/>
+      <text x="571" y="108" font-size="10" fill="#64748b" text-anchor="middle">matmul 耗时</text>
+      <text x="571" y="134" font-size="12" font-weight="bold" fill="#006377" text-anchor="middle">18.2 ms</text>
+      <text x="571" y="154" font-size="12" font-weight="bold" fill="#b97a1f" text-anchor="middle">18.3 ms</text>
+      <text x="571" y="172" font-size="9" fill="#94a3b8" text-anchor="middle">示意，实测随机器</text>
+
+      <text x="320" y="234" font-size="10.5" fill="#b14a4a" text-anchor="middle">0 照样占显存、照样被搬进寄存器——dense GEMM 不会为零分支；稀疏率是算法指标，不是延迟</text>
+      <text x="320" y="252" font-size="9.5" fill="#94a3b8" text-anchor="middle">计时方法：预热后多轮取中位数、固定线程数；详见正文演示 1</text>
+    </g>
+  </svg>
+</figure>

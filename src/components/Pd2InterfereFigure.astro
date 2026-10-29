@@ -1,0 +1,54 @@
+---
+// 图1：混跑痛点——一个重 prefill 切块插进同一 iteration，当步所有 decode 请求 ITL 鼓包；下：PD 分离后节拍均匀
+---
+
+<figure>
+  <svg viewBox="0 0 640 268" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">混跑的代价：所有人共用一个节拍器</text>
+
+      {/* ===== 上：同卡混跑 ===== */}
+      <text x="20" y="48" font-size="11.5" font-weight="bold" fill="#b14a4a">同卡混跑（chunked prefill）</text>
+
+      {/* 红色 prefill 切块竖带（粉色填充贯穿 4 行，内部不再画每行边框） */}
+      <rect x="270" y="56" width="92" height="92" rx="6" fill="#fbe3e3" stroke="#b14a4a" stroke-width="1.8"/>
+      <text x="316" y="102" font-size="9.5" font-weight="bold" fill="#b14a4a" text-anchor="middle">别人的 Prefill 切块</text>
+      <text x="316" y="117" font-size="8.5" fill="#b14a4a" text-anchor="middle">（一步顶几十拍）</text>
+
+      {[0,1,2,3].map((r)=>{
+        const y=60+r*22;
+        return (
+          <g>
+            <text x="48" y={y+11} font-size="8.5" fill="#94a3b8" text-anchor="end">请求{r+1}</text>
+            {[0,1,2,3,4,5,6].map((i)=>(
+              <rect x={56+i*30} y={y} width="21" height="14" rx="3" fill="#fdf0e0" stroke="#e6a23c"/>
+            ))}
+            {/* 被拉长的那一步：不画行内边框，由贯穿的红色带统一表达 */}
+            {[0,1,2,3].map((i)=>(
+              <rect x={378+i*30} y={y} width="21" height="14" rx="3" fill="#fdf0e0" stroke="#e6a23c"/>
+            ))}
+          </g>
+        );
+      })}
+      <text x="316" y="170" font-size="12" fill="#b14a4a" text-anchor="middle">▲ ITL 毛刺 ×4</text>
+      <text x="316" y="184" font-size="9" fill="#b14a4a" text-anchor="middle">这一拍所有人的词间延迟同时鼓包</text>
+      <text x="600" y="184" font-size="9" fill="#94a3b8" text-anchor="end">时间 →</text>
+
+      <line x1="20" y1="196" x2="620" y2="196" stroke="#e2e8f0" stroke-dasharray="4,4"/>
+
+      {/* ===== 下：PD 分离 ===== */}
+      <text x="20" y="216" font-size="11.5" font-weight="bold" fill="#0a7a50">PD 分离：深呼吸和心跳各用各的节拍器</text>
+
+      {/* P 轨 */}
+      <text x="48" y="241" font-size="8.5" fill="#94a3b8" text-anchor="end">P 池</text>
+      <rect x="56" y="230" width="160" height="16" rx="4" fill="#d9eef3" stroke="#0085a1" stroke-width="1.5"/>
+      <text x="136" y="242" font-size="9" fill="#006377" text-anchor="middle">长 Prefill 在专用池里跑</text>
+
+      {/* D 轨：均匀小格 */}
+      <text x="48" y="261" font-size="8.5" fill="#94a3b8" text-anchor="end">D 池</text>
+      {Array.from({length:22},(_,i)=>(
+        <rect x={56+i*25} y="250" width="18" height="12" rx="3" fill="#fdf0e0" stroke="#e6a23c"/>
+      ))}
+    </g>
+  </svg>
+</figure>

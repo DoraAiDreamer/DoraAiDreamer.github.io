@@ -1,25 +1,28 @@
 ---
 title: "vLLM 调度 9：昇腾上的前缀缓存，与 GPU 有什么不同"
-date: 2026-09-30
-author: DoraAiDreamer
-category: 大模型
-tags: ["vLLM","KV Cache","调度"]
+subtitle: "block_size 128、MLA 头数硬约束、additional-config 与 AscendStore"
+date: 2026-10-22
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "vLLM"
+  - "昇腾"
+  - "NPU"
+  - "前缀缓存"
+  - "国产硬件"
 ---
 
 import Expand from "../../components/Expand.astro";
 
-
-block_size 128、MLA 头数硬约束、additional-config 与 AscendStore
-
-软件版本：**vLLM 0.21.0 + vLLM-Ascend**；本文依据 vllm-project/vllm-ascend 官方文档 2026-09 快照，硬件口径以官方最新文档为准。
+<p class="version-note">软件版本：<b>vLLM 0.21.0 + vLLM-Ascend</b>；本文依据 vllm-project/vllm-ascend 官方文档 2026-09 快照，硬件口径以官方最新文档为准。</p>
 
 前八篇都以 NVIDIA GPU 为背景。这一篇讲同一套前缀缓存搬到华为昇腾 NPU 后哪里变了——它也是未来「国产硬件适配」内容的入口，只聚焦与前缀缓存、块大小相关的差异。
 
 ## 1. 块大小：GPU 16，昇腾常用 128
 
-最直观的差异是物理块粒度。GPU 上 vLLM 的 `block_size` 默认 16；vLLM-Ascend 的文档与默认配置以 **block_size=128** 为口径（NPU 侧在 `check_and_update_config` 阶段设定块大小，platform 插件注释明确写着 “NPU still sets block_size in check_and_update_config”）。官方调度文档里负载均衡阈值 `long_req_block_threshold=700` 也按 128 解释为”约 89,600 token”（700×128）。
+最直观的差异是物理块粒度。GPU 上 vLLM 的 `block_size` 默认 16；vLLM-Ascend 的文档与默认配置以 **block_size=128** 为口径（NPU 侧在 `check_and_update_config` 阶段设定块大小，platform 插件注释明确写着 "NPU still sets block_size in check_and_update_config"）。官方调度文档里负载均衡阈值 `long_req_block_threshold=700` 也按 128 解释为"约 89,600 token"（700×128）。
 
-这带来的直接后果（串起[篇 8](/blog/vllm-调度8-前缀缓存从单机到集群)的命中粒度）：
+这带来的直接后果（串起[篇 8](/blog/vllm-调度8-前缀缓存从单机到集群/)的命中粒度）：
 
 - **最小命中粒度更粗**：一个块要凑满 128 token 才缓存，短共享前缀更容易整块不命中；
 - **尾块浪费更大**：未写满的部分不缓存，平均浪费上限从约 15 token 升到约 127 token；
@@ -27,13 +30,13 @@ block_size 128、MLA 头数硬约束、additional-config 与 AscendStore
 
 ## 2. MLA 的头数硬约束
 
-昇腾对 MLA（DeepSeek 类）模型的注意力形状有严格的 tiling 要求。官方 FAQ 原文：启用图模式时，张量并行切分后的 **`num_heads / num_kv_heads` 必须是 128 之一**；DeepSeek-V2-Lite 只有 16 个注意力头，切分后落在集合外，会直接报 `incre_flash_attention_tiling_check` 错误，图模式暂不支持。
+昇腾对 MLA（DeepSeek 类）模型的注意力形状有严格的 tiling 要求。官方 FAQ 原文：启用图模式时，张量并行切分后的 **`num_heads / num_kv_heads` 必须是 {32, 64, 128} 之一**；DeepSeek-V2-Lite 只有 16 个注意力头，切分后落在集合外，会直接报 `incre_flash_attention_tiling_check` 错误，图模式暂不支持。
 
-这不是前缀缓存本身的限制，但它决定了一个 MLA 模型**能不能在昇腾上按预期跑起来、进而产生可缓存的 KV**。部署 R1/V3 时要先按 TP 度核算切分后的头数（官方还给出 R1 切分后头数须为 128 的约束）。
+这不是前缀缓存本身的限制，但它决定了一个 MLA 模型**能不能在昇腾上按预期跑起来、进而产生可缓存的 KV**。部署 R1/V3 时要先按 TP 度核算切分后的头数（官方还给出 R1 切分后头数须为 {32,64,128} 的约束）。
 
 ## 3. 配置入口：additional-config
 
-vLLM-Ascend 的调度相关参数走 `--additional-config`（JSON）传入，而不是 GPU 侧常见的命令行参数；历史环境变量正在迁移淘汰中（官方 Migration Guide 标注 env “will be removed in a future release”）。例如调度器扩展（balance scheduling、short request first 等）都放在 `scheduler_config` 键下。新部署应使用 additional-config，老脚本的 env 写法只在过渡期兼容。
+vLLM-Ascend 的调度相关参数走 `--additional-config`（JSON）传入，而不是 GPU 侧常见的命令行参数；历史环境变量正在迁移淘汰中（官方 Migration Guide 标注 env "will be removed in a future release"）。例如调度器扩展（balance scheduling、short request first 等）都放在 `scheduler_config` 键下。新部署应使用 additional-config，老脚本的 env 写法只在过渡期兼容。
 
 ## 4. 跨节点复用：AscendStore 生态
 
@@ -51,7 +54,7 @@ PD 场景下 P 节点算完写入共享池、D 节点读取，跨请求的公共
 | --- | --- | --- |
 | 常用 block_size | 16 | 128（NPU 侧设定） |
 | 最小缓存/命中粒度 | 细（16 token，尾浪费小） | 粗（128 token，尾浪费大） |
-| MLA 形状约束 | 由后端 kernel 决定 | TP 后头数须 ∈ 128，否则图模式报错 |
+| MLA 形状约束 | 由后端 kernel 决定 | TP 后头数须 ∈ {32,64,128}，否则图模式报错 |
 | 配置方式 | CLI 参数为主 | `--additional-config`（env 迁移中） |
 | 跨节点 KV | Mooncake/LMCache/NIXL | AscendStoreConnector + Mooncake/Memcache/云辇 |
 | 软件栈 | vLLM 主线 | 需 CANN ≥ 9.1、vllm-ascend 插件 |
@@ -66,15 +69,15 @@ PD 场景下 P 节点算完写入共享池、D 节点读取，跨请求的公共
 
 **3.** 昇腾上新部署为什么推荐 `--additional-config` 而不是旧的环境变量？
 
-<Expand title="▸参考答案">
+<Expand title="参考答案">
 
 1. GPU：200÷16=12 个满块（192 token 可命中）；昇腾：200÷128=1 个满块（128 token 可命中）。块越大最小命中粒度越粗，短共享前缀在昇腾上更容易整块不命中、尾浪费也更大。
-2. 它只有 16 个注意力头，TP 切分后头数不在昇腾 tiling 要求的 128 集合内，图模式直接报错。它是”模型能否在 NPU 上跑出 KV”的前置约束，不是缓存逻辑问题；官方称后续版本支持。
+2. 它只有 16 个注意力头，TP 切分后头数不在昇腾 tiling 要求的 {32,64,128} 集合内，图模式直接报错。它是"模型能否在 NPU 上跑出 KV"的前置约束，不是缓存逻辑问题；官方称后续版本支持。
 3. vLLM-Ascend 正把环境变量迁到 additional-config，并声明 env 将在未来版本移除；新部署用 JSON 配置可避免后续失效，调度器扩展也统一在 scheduler_config 键下。
 
 </Expand>
 
 ## 参考资料
 
-- vLLM-Ascend 官方文档（2026-09 快照，以官方最新为准）：[kv_pool（Ascend Store）](https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/feature_guide/kv_pool.md)、[additional_config](https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/configuration/additional_config.md)、[FAQ（MLA 头数约束）](https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/faqs.md)
-- 前置姊妹篇：[调度 8：前缀缓存从单机到集群](/blog/vllm-调度8-前缀缓存从单机到集群)、[调度 5：哈希链与命中](/blog/vllm-调度5-相同前缀为什么不用重算)
+1. vLLM-Ascend 官方文档（2026-09 快照，以官方最新为准）：[kv_pool（Ascend Store）](https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/feature_guide/kv_pool.md)、[additional_config](https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/configuration/additional_config.md)、[FAQ（MLA 头数约束）](https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/faqs.md)
+2. 前置姊妹篇：[调度 8：前缀缓存从单机到集群](/blog/vllm-调度8-前缀缓存从单机到集群/)、[调度 5：哈希链与命中](/blog/vllm-调度5-相同前缀为什么不用重算/)

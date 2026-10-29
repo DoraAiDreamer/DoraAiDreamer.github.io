@@ -1,0 +1,61 @@
+---
+// 图3：传统 SRE 能力迁移图
+// 左侧工具箱整体平移；右侧底部直接迁移，中部三条假设改写，顶部新长出 L1/L2
+---
+
+<figure>
+  <svg viewBox="0 0 640 268" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="tf-arrow" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto">
+        <path d="M0,0 L9,4.5 L0,9 Z" fill="#64748b"/>
+      </marker>
+    </defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="26" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">从传统 SRE 到 AI Ops：旧本事七成还在，新东西长在上层</text>
+
+      {/* 左：传统 SRE 工具箱 */}
+      <rect x="24" y="48" width="210" height="204" rx="10" fill="#f4f6f8" stroke="#94a3b8"/>
+      <text x="129" y="72" font-size="12" font-weight="bold" fill="#475569" text-anchor="middle">传统 SRE 工具箱</text>
+      {[
+        { y: 84, t: "Linux 排障" },
+        { y: 112, t: "TCP / HTTP / DNS" },
+        { y: 140, t: "容器与镜像" },
+        { y: 168, t: "Kubernetes" },
+        { y: 196, t: "CI/CD · 监控三件套" },
+        { y: 224, t: "SLO · 复盘 · 密钥" },
+      ].map((r) => (
+        <g>
+          <rect x="40" y={r.y} width="178" height="22" rx="5" fill="#ffffff" stroke="#cbd5e1"/>
+          <text x="129" y={r.y + 15} font-size="10.5" fill="#475569" text-anchor="middle">{r.t}</text>
+        </g>
+      ))}
+
+      {/* 中间大箭头 */}
+      <line x1="246" y1="143" x2="292" y2="143" stroke="#64748b" stroke-width="2" marker-end="url(#tf-arrow)"/>
+      <text x="269" y="130" font-size="9.5" fill="#64748b" text-anchor="middle">平移</text>
+
+      {/* 右：堆叠 */}
+      {/* 新长出两层（蓝） */}
+      <rect x="306" y="48" width="310" height="30" rx="7" fill="#d9eef3" stroke="#0085a1"/>
+      <text x="322" y="68" font-size="11" font-weight="bold" fill="#0c5f74">新长出</text>
+      <text x="461" y="68" font-size="10.5" fill="#0c5f74" text-anchor="middle">L1 GPU 硬件读法 · L2 推理引擎机制</text>
+
+      {/* 三条假设改写（橙） */}
+      {[
+        { y: 86, t: "「实例无状态」 → 显存里带着会话" },
+        { y: 118, t: "「看 CPU/内存」 → GPU 利用率是一组指标" },
+        { y: 150, t: "「短时 RPC」 → 持续数秒的流式生命" },
+      ].map((r) => (
+        <g>
+          <rect x="306" y={r.y} width="310" height="28" rx="7" fill="#fdf0e0" stroke="#e6a23c"/>
+          <text x="461" y={r.y + 18} font-size="10" fill="#b97a1f" text-anchor="middle">{r.t}</text>
+        </g>
+      ))}
+
+      {/* 直接迁移（灰） */}
+      <rect x="306" y="190" width="310" height="48" rx="7" fill="#eef2f5" stroke="#94a3b8"/>
+      <text x="461" y="212" font-size="11.5" font-weight="bold" fill="#475569" text-anchor="middle">直接迁移</text>
+      <text x="461" y="230" font-size="10" fill="#64748b" text-anchor="middle">经验估计约七成——底座、方法、纪律全部作数</text>
+    </g>
+  </svg>
+</figure>

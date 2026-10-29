@@ -195,7 +195,7 @@ TP 部署下注意一个事实：**块表和块号是中心化的、所有 worke
 - **论文/V0 有两条路**：`swap`——把整组 KV 经 PCIe 换出到 CPU 内存（每卡默认预留 4 GiB CPU 空间）；`recompute`——丢弃 KV，之后把 prompt 和已生成文本拼成一次 prefill 批量重建。V0 的默认选择就是 **recompute**（配置注释：开销更低），仅当序列组含多条序列（beam 等）不支持重算时才回退 swap。论文消融还给出一个反直觉结论：块很小时 swap 因大量小传输吃不满 PCIe 而更慢，而 recompute 的开销在各块尺寸下从不超过 swap 的 20%。
 - **V1 只剩 recompute**：抢占 = 释放该请求的全部块、把已计算进度清零、请求退回队首重放（FCFS 策略下踢最晚加入的 LIFO，priority 策略下踢优先级最低的；执行抢占的那一步不接收新请求）。GPU↔CPU swap 在 V1 中已移除；今天的 CPU/远端分层存放由显式开启的 **KV connector** 子系统（LMCache、Mooncake、NIXL 等）承担，它有外部前缀命中语义、失败可按策略重算，不是透明换页。
 
-另一条与分页互相成就的主线是**连续批处理（continuous batching）**：它出自 **Orca**（[Yu et al., OSDI 2022](https://www.usenix.org/conference/osdi22/presentation/yu)，无 arXiv 预印本；注意与微软的 Orca *模型*论文同名但无关），Orca 称之为 iteration-level scheduling——每生成一个 token 就能让完成的请求离场、新请求入场，像一部每一层都能进人的电梯，而不是等全员到齐才走的班车。Orca 在没有分页时已经能这么调度，但仍需按最大长度预留；分页让请求动态进出时不必再整块预留，二者组合才真正释放并发。
+另一条与分页互相成就的主线是**连续批处理（continuous batching）**：它出自 **Orca**（[Yu et al., OSDI 2022](https://www.usenix.org/conference/osdi22/presentation/yu)，无 arXiv 预印本；注意与微软的 Orca *模型*论文同名但无关），Orca 称之为 iteration-level scheduling——每生成一个 token 就能让完成的请求离场、新请求入场，像一部每一层都能进人的电梯，而不是等全员到齐才走的班车。Orca 在没有分页时已经能这么调度，但仍需按最大长度预留；分页让请求动态进出时不必再整块预留，二者组合才真正释放并发。完整机制与代价见[《连续批处理》](/blog/连续批处理-每个迭代步重新组批/)。
 
 **Chunked prefill**（学术源头是 [Sarathi](https://arxiv.org/abs/2308.16369)，[Sarathi-Serve](https://arxiv.org/abs/2403.02310) 与 DeepSpeed-FastGen 的 [Dynamic SplitFuse](https://arxiv.org/abs/2401.08671) 是独立同期的同构思想）：长 prompt 的 prefill 被切成小块，与 decode 请求混在同一步执行，不让一个长 prefill 堵死全队。V1 默认开启；每步 token 预算（`max_num_batched_tokens`）配置层默认 2048、可调，官方对大显存卡/离线场景给 8192、16384 的推荐档位，CUDA graph 也按若干预算档（如 2048/4096/8192/13824）预捕获——别理解成随硬件自动切换。
 
@@ -274,11 +274,11 @@ V1 只有 recompute：整块释放、进度清零、回队首，之后用 prompt
 3. Dao et al., [FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness](https://arxiv.org/abs/2205.14135)（NeurIPS 2022）
 4. Milakov & Gimelshein, [Online normalizer calculation for softmax](https://arxiv.org/abs/1805.02867)（2018）
 5. Agrawal et al., [SARATHI: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills](https://arxiv.org/abs/2308.16369)
-6. Agrawal et al., [Sarathi-Serve: Piggybacking Decodes for Disaggregated LLM Inference](https://arxiv.org/abs/2403.02310)（OSDI 2024）
+6. Agrawal et al., [Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve](https://arxiv.org/abs/2403.02310)（OSDI 2024）
 7. Holmes et al., [DeepSpeed-FastGen: High-Throughput Text Generation for LLMs via MII and DeepSpeed-Inference](https://arxiv.org/abs/2401.08671)（Dynamic SplitFuse）
 8. Zhong et al., [DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving](https://arxiv.org/abs/2401.09670)（OSDI 2024）
 9. Qin et al., [Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving](https://arxiv.org/abs/2407.00079)
 10. Zheng et al., [SGLang: Efficient Execution of Structured Language Model Programs](https://arxiv.org/abs/2312.07104)（RadixAttention 为其中的核心机制，MLSys 2024）
 11. 一手实现细节：vLLM 0.21 中文教程《调度与 KV Cache》《注意力后端》《分布式》章节与 `vllm/config/cache.py`、`vllm/v1/core/` 源码
 
-**站内延伸**：[图解大模型（入门篇）](/blog/图解大模型-一口气搞懂大模型的骨架/)（KV Cache 基础）、[注意力机制演进：从 MHA 到 GQA 与 MLA](/blog/注意力机制演进-从mha到gqa与mla/)（少算路线）、[投机解码](/blog/投机解码-小模型打草稿大模型一次批改/)（让一次搬运多产出 token）、[思维链](/blog/思维链-大模型为什么要先想再答/)（长 decode 的容量账）、[推理加速实战专栏](/inference/)。
+**站内延伸**：[图解大模型（入门篇）](/blog/图解大模型-一口气搞懂大模型的骨架/)（KV Cache 基础）、[注意力机制演进：从 MHA 到 GQA 与 MLA](/blog/注意力机制演进-从mha到gqa与mla/)（少算路线）、[投机解码](/blog/投机解码-小模型打草稿大模型一次批改/)（让一次搬运多产出 token）、[思维链](/blog/思维链-大模型为什么要先想再答/)（长 decode 的容量账）、[推理加速实战专栏](/inference/)。块池、调度与抢占的逐行源码见[《vLLM 调度与 KV Cache 源码解读》专题](/scheduler/)（9 篇，锁定 0.21）。

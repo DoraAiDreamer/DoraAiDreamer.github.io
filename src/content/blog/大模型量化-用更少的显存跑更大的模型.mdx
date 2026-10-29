@@ -140,7 +140,18 @@ $$
 
 # 3. 主流量化方法详解
 
-## 3.1 GPTQ：基于 Hessian 的逐层量化
+这一章名字叫「方法」，但出现的名字其实分属四个不同维度——混在一起比较是最常见的困惑来源。先给一张维度地图，后面每节标题会标注它属于哪一维：
+
+| 维度 | 回答的问题 | 本章成员 | 由谁决定 |
+| --- | --- | --- | --- |
+| **① 量化算法（软件方法）** | 用什么规则把高精度数映射成低精度数、怎么把误差摊平 | **GPTQ、AWQ、SmoothQuant、RTN**（PTQ）；QAT/STE（训练时） | 纯软件：校准时算 scale/zero-point 与分组，产物是量化参数，不挑硬件 |
+| **② 数值与存储格式** | 量化后的数用什么二进制格式存 | **INT8/INT4 定点**（通用）、**FP8（E4M3/E5M2）**、NVFP4/MXFP4、**GGUF 的 k-quants** | 硬件相关：有没有专用低精度 GEMM，决定的是「省显存」还是「又省又快」 |
+| **③ 部署位宽配置** | 一次前向里，权重/激活/KV 各用几位 | **W4A16、W8A8、W8A16、FP8 KV Cache** | 与①②正交的组合记号：同一个 AWQ 算法可以产出 W4A16，同一个 FP8 格式可以组成 W8A8 |
+| **④ 硬件平台** | 低精度数在哪种计算单元上跑 | NVIDIA Tensor Core、昇腾 Cube、Apple GPU/ANE、CPU | 决定②中哪些格式有原生算力（详见第 4 章工具链） |
+
+举例把四个维度串起来：「H100 上用 AWQ 量化的 W4A16 模型」= ①AWQ 算法 + ②INT4 定点存储（推理时反量化到 FP16 计算）+ ③只压权重的 W4A16 配置 + ④Hopper GPU；「H100 上的 FP8 W8A8」则是 ①（可无需特殊算法，直接 per-tensor/per-block scale）+ ②FP8 硬件格式 + ③权重激活都 8 位 + ④Tensor Core 原生 FP8 算力，所以后者能拿到约 2 倍吞吐，前者主要省显存。下面按「算法 → 格式 → 配置 → 硬件视角」的顺序讲。
+
+## 3.1 GPTQ：基于 Hessian 的逐层量化【① 软件算法 · PTQ】
 
 GPTQ（2022）是第一个让 **INT4 大模型真正实用**的方法。核心思路：
 
@@ -174,7 +185,7 @@ model.quantize(calib)
 model.save("Qwen2.5-7B-Instruct-GPTQ-Int4")
 ```
 
-## 3.2 AWQ：激活感知的权重量化
+## 3.2 AWQ：激活感知的权重量化【① 软件算法 · PTQ】
 
 AWQ（2023，MLSys 2024 最佳论文）思路更优雅，是**当前生产环境 INT4 推理的事实标准**。
 
@@ -190,7 +201,7 @@ AWQ（2023，MLSys 2024 最佳论文）思路更优雅，是**当前生产环境
 
 **工具链**：AutoAWQ 已归档，官方推荐 [vllm-project/llm-compressor](https://github.com/vllm-project/llm-compressor)（vLLM 团队统一量化工具，支持 AWQ/GPTQ/FP8/INT8）；GPTQModel 也支持 AWQ。vLLM / SGLang / TensorRT-LLM 都内置了优化的 AWQ kernel。
 
-## 3.3 GGUF：llama.cpp 生态，面向 CPU / 本地
+## 3.3 GGUF：llama.cpp 生态，面向 CPU / 本地【② 存储格式 · 生态】
 
 GGUF 走完全不同的路线：**面向 CPU 和 CPU+GPU 混合推理**（llama.cpp / Ollama），不依赖 CUDA kernel。
 
@@ -220,7 +231,7 @@ llama-quantize qwen2.5-7b-f16.gguf qwen2.5-7b-q4_k_m.gguf Q4_K_M
 # 之后可直接用 llama-cli 或 Ollama 加载
 ```
 
-## 3.4 FP8：Hopper 硬件原生格式
+## 3.4 FP8：Hopper 硬件原生格式【② 数值格式 · 需④硬件】
 
 FP8 不是软件近似，而是 **H100/H200/Blackwell（B200）Tensor Core 硬件原生支持的 8-bit 浮点**。两种变体：**E4M3**（4 指数+3 尾数，精度优先，常用于存权重）和 E5M2（范围优先）。
 
@@ -239,7 +250,7 @@ vllm serve neuralmagic/Qwen2-7B-Instruct-FP8 \
 
 有 H100 集群、追求精度/速度平衡 → FP8 首选；还是 A100 → 走 AWQ INT4。
 
-## 3.5 W4A16 / W8A8：权重和激活分别量到多少位
+## 3.5 W4A16 / W8A8：权重和激活分别量到多少位【③ 部署位宽配置】
 
 前面 GPTQ/AWQ/FP8 常带一串「W?A?」记号——**W 是权重（Weight）、A 是激活（Activation）**，数字是各自的位宽。它描述的是「一次前向里，权重存多少位、激活算多少位」，和用哪种算法是**正交**的两个维度：
 
@@ -263,7 +274,7 @@ vllm serve neuralmagic/Qwen2-7B-Instruct-FP8 \
 
 这也把前面的方法串起来了：**GPTQ/AWQ 主要做 W4A16**（专注把权重压到 INT4），**SmoothQuant/FP8 走 W8A8**（权重激活都 8 位、追求速度）。
 
-## 3.6 国产硬件视角：华为昇腾 NPU 的量化
+## 3.6 国产硬件视角：华为昇腾 NPU 的量化【④ 硬件平台】（工具链见第 4 章）
 
 量化用哪种格式，很大程度**取决于硬件擅长什么**。英伟达 H100 靠原生 FP8 拿翻倍吞吐，华为昇腾（Ascend）NPU 走的是另一条路：
 
@@ -280,15 +291,16 @@ vllm serve neuralmagic/Qwen2-7B-Instruct-FP8 \
 
 一句话：**量化选型跟着硬件走——英伟达新卡用 FP8、昇腾 NPU 用 INT8 W8A8（配 AMCT，思路同 SmoothQuant）、CPU/本地用 GGUF INT4**。目标一致：用低精度高吞吐的 GEMM 跑更大更快的模型。
 
-## 3.7 其它常听到的名字
+## 3.7 其它常听到的名字（① 算法 / 工具，分属不同维度）
 
-- **bitsandbytes**：HuggingFace 原生的开箱即用量化（`load_in_4bit=True` 一行启用，NF4/FP4），**加载时即时量化**，是 QLoRA 的配套库。适合快速实验/微调，缺点是不生成可分发的量化文件、推理不如 AWQ kernel 快。
-- **SmoothQuant**：针对 INT8 中**激活离群值**（outlier）撑爆量化范围的问题，量化前把激活的尺度按 channel「平滑」转移到权重上（W8A8 = 权重激活都 8-bit）。已被吸收进 llm-compressor，是 Hopper 之前 INT8 推理的常用方案。
+- **bitsandbytes（软件工具，不是格式）**：HuggingFace 原生的开箱即用量化（`load_in_4bit=True` 一行启用，NF4/FP4），**加载时即时量化**，是 QLoRA 的配套库。适合快速实验/微调，缺点是不生成可分发的量化文件、推理不如 AWQ kernel 快——它用的 NF4 属于②存储格式，bnb 本身属于①/工具。
+- **SmoothQuant（① 软件算法）**：针对 INT8 中**激活离群值**（outlier）撑爆量化范围的问题，量化前把激活的尺度按 channel「平滑」转移到权重上（W8A8 = 权重激活都 8-bit）。已被吸收进 llm-compressor，是 Hopper 之前 INT8 推理的常用方案。
 
-## 3.8 方法对比与选型
+## 3.8 对比与选型（跨①②③④）
 
 | 维度 | GPTQ | AWQ | GGUF | FP8 |
 | --- | --- | --- | --- | --- |
+| 维度归属 | ① PTQ 软件算法 | ① PTQ 软件算法 | ② 存储格式/生态（含 k-quant 量化规则） | ② 硬件原生数值格式（需④Hopper+） |
 | 推理设备 | GPU | GPU | CPU / CPU+GPU | GPU（H100+） |
 | 典型精度 | INT4/INT8 | INT4 | Q2~Q8 多档 | FP8 (E4M3) |
 | 量化速度（7B） | 慢（1–4h） | 快（20–40min） | 几分钟 | 10–30min |
@@ -308,11 +320,11 @@ vllm serve neuralmagic/Qwen2-7B-Instruct-FP8 \
 
 # 4. 量化工具链：GPU、国产算力与苹果芯片
 
-前面讲的是算法（GPTQ/AWQ/SmoothQuant）与精度格式（INT4/INT8/FP8）；这一章回答工程问题：**在具体硬件上，用什么工具把模型量化出来、再跑起来**。同一个 W4A16，在 NVIDIA 卡、昇腾 NPU、苹果芯片上是三条完全不同的工具链。版本为 2026-10 前后核实，API 变化很快，落地前以官方文档为准。
+前面讲的是算法（GPTQ/AWQ/SmoothQuant）与精度格式（INT4/INT8/FP8）；这一章回答工程问题：**在具体硬件上，用什么工具把模型量化出来、再跑起来**。同一个 W4A16，在 NVIDIA 卡、昇腾 NPU、苹果芯片上是三条完全不同的工具链——量化选型最终要落到这些工具的版本和型号支持矩阵上。以下工具版本为 2026-10-27 核实，API 变化很快，落地前以官方文档为准。
 
 ## 4.1 NVIDIA GPU：ModelOpt 是校准入口，推理引擎决定 kernel
 
-**官方校准工具：NVIDIA ModelOpt。** 它是原来 TensorRT Model Optimizer 在 2025 年底更名后的产品（pip 包仍叫 `nvidia-modelopt`，2026-10 约 0.47），也是旧库 pytorch-quantization（2023 年后停更）事实上的继任者。覆盖 PTQ/QAT，预设配置直接对应各种精度：
+**官方校准工具：NVIDIA ModelOpt。** 它是原来 TensorRT Model Optimizer 在 2025 年底更名后的产品（pip 包仍叫 `nvidia-modelopt`，2026-10 版本 0.47），也是旧库 pytorch-quantization（2023 年后停更）事实上的继任者。它覆盖 PTQ/QAT，预设配置直接对应各种精度：
 
 ```python
 import modelopt.torch.quantization as mtq
@@ -321,23 +333,23 @@ mtq.quantize(model, mtq.NVFP4_DEFAULT_CFG, forward_loop)   # config 换成 mtq.F
 modelopt.torch.export.export_hf_checkpoint(model, ...)      # 导出统一 HF checkpoint
 ```
 
-导出的 checkpoint 可被 **TensorRT-LLM**（2026-10 约 1.2.x，FP8/FP4 推理最完整）、**vLLM**（约 0.32）、**SGLang**（约 0.5.22）直接加载；HuggingFace 上也有 NVIDIA 官方预量化模型（如 `nvidia/Llama-3.1-8B-Instruct-FP8`）。精度与硬件的对应：FP8 需要 Ada/Hopper 及以上，**NVFP4（4 位浮点）需要 Blackwell** 且推理引擎要新版本。注意 ModelOpt 本身不提供 GPTQ recipe——GPTQ 格式由社区的 GPTQModel 等工具产出。
+导出的 checkpoint 可被 **TensorRT-LLM**（2026-10 约 1.2.x，FP8/FP4 推理最完整）、**vLLM**（约 0.32）、**SGLang**（约 0.5.22）直接加载；HuggingFace 上也有 NVIDIA 官方预量化模型（如 `nvidia/Llama-3.1-8B-Instruct-FP8`）。精度与硬件的对应：FP8 需要 Ada/Hopper 及以上，**NVFP4（4 位浮点）需要 Blackwell** 且推理引擎要新版本。注意 ModelOpt 本身**不提供 GPTQ recipe**——GPTQ 格式的权重量化由社区的 GPTQModel 等工具产出。
 
 **社区工具按用途分四类：**
 
 - **bitsandbytes（约 0.50）**：`load_in_4bit` 一行加载即量化（NF4/FP4），QLoRA 微调的标配；只在加载时量化、不产出可分发文件，推理 kernel 也不如专用 AWQ/GPTQ 快——实验用，不用于发布。
 - **GPTQ 格式**：旧的 AutoGPTQ 已停止维护，官方 README 指路社区继任者 **GPTQModel**（2026-10 约 7.7，一个工具产出 GPTQ/AWQ/GGUF/FP8 等多种格式）。
-- **AWQ 格式**：AutoAWQ（0.2.9，2025 年中已标 deprecated）不再更新，新工作流转向 vLLM 生态的 llm-compressor / GPTQModel；已有 AWQ 模型仍被各推理引擎广泛支持。
+- **AWQ 格式**：AutoAWQ（0.2.9，2025 年中已标 deprecated）不再更新，新工作流转向 vLLM 生态的 llm-compressor / GPTQModel；已有的 AWQ 模型仍被各推理引擎广泛支持。
 - **EXL2/EXL3**：exllamav2 的 EXL2 支持 2–8 bit 间任意平均位宽、按层混精度；exllamav2 仓库已归档，继任是 exllamav3 与新格式 EXL3。
 - **llama.cpp（CUDA 后端）**：自研 kernel，吃 GGUF 格式，与上面 HuggingFace 生态的量化文件不互通。
 
-vLLM/SGLang 内部靠 **Marlin** 系列 kernel 跑 GPTQ/AWQ/FP8/FP4 权重；MTP（多 token 预测）是投机解码技术，不是量化格式，别混在一起。
+vLLM/SGLang 内部则靠 **Marlin** 系列 kernel 跑 GPTQ/AWQ/FP8/FP4 权重；MTP（多 token 预测）是投机解码技术，不是量化格式，别混在一起。
 
 ## 4.2 昇腾与其他国产平台：AMCT 管小模型，大模型走 msModelSlim
 
 华为昇腾的工具链按「传统模型 / 大模型」分成两条，**不要把 AMCT 当成大模型量化工具**：
 
-- **AMCT（CANN 9.0 时代）**：面向 Caffe/TensorFlow/PyTorch/ONNX 的经典 CV/小模型链路——PTQ 校准后 `save_model` 产出内嵌 AscendQuant/Dequant 的 deploy 模型，再经 **ATC 转成 OM** 运行（型号由 `--soc_version` 指定，ATC 没有单独的 `--quantize` 开关，量化信息已内嵌）；当前放开的是 **INT8**，配置里的 INT4 字段尚未启用，另有 4 选 2 稀疏与逐层蒸馏。
+- **AMCT（CANN 9.0 时代）**：面向 Caffe/TensorFlow/PyTorch/ONNX 的经典 CV/小模型链路——PTQ 校准后 `save_model` 产出内嵌 AscendQuant/Dequant 的 deploy 模型，再经 **ATC 转成 OM** 运行（型号由 `--soc_version` 指定，ATC **没有**单独的 `--quantize` 开关，量化信息已内嵌在 deploy 模型里）；当前放开的是 **INT8**，配置里的 INT4 字段尚未启用，另有 4 选 2 稀疏与逐层蒸馏。
 - **msModelSlim（大模型主力，MindStudio 26.1 / CANN 8.0.RC2 起）**：流程是「原始模型 + 校准数据 →（可选 AntiOutlier 抑离群）→ `Calibrator(...).run().save()`」，直接产出 **safetensors 权重 + quant_model_description.json，MindIE-LLM 直接加载、不过 ATC**。命令行形态：
 
 ```bash
@@ -354,7 +366,7 @@ msmodelslim quant --model_path ./Qwen2-7B --save_path ./qwen2-7b-w8a8 \
 
 M 系列芯片没有 INT8/FP8 专用张量核，量化的主要收益是**省统一内存容量与带宽**（间接提升解码速度），而不是 matmul 峰值翻倍；好处是内存就是显存，大模型只要装得进统一内存就能跑。
 
-- **MLX / mlx-lm（Apple 官方，2026-10 约 0.32）**：基于 Metal 与共享内存的数组框架和模型库，量化默认是 **4 bit、每 63 个权重一组（group_size=64）的 affine 分组量化**，也支持 MXFP4/NVFP4/MXFP8 等新模式；HuggingFace 的 `mlx-community` 有大量现成 4bit 模型：
+- **MLX / mlx-lm（Apple 官方，2026-10 约 0.32）**：基于 Metal 与共享内存的数组框架和模型库，量化默认是 **4 bit、每 63 个权重一组（group_size=64）的 affine 分组量化**，也支持 MXFP4/NVFP4/MXF P8 等新模式；HuggingFace 的 `mlx-community` 有大量现成 4bit 模型：
 
 ```bash
 pip install mlx-lm
