@@ -98,6 +98,11 @@ a:hover { color: var(--accent-2); }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .banner { background: linear-gradient(135deg, #0d6b82, #0a4a5c); }
 }
+.banner-models { background: linear-gradient(135deg, #7a5fc0, #5b4499); }
+:root[data-theme="dark"] .banner-models { background: linear-gradient(135deg, #57408f, #3e2f6b); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .banner-models { background: linear-gradient(135deg, #57408f, #3e2f6b); }
+}
 .banner:hover { transform: translateY(-2px); box-shadow: var(--shadow-hover); color: #fff; }
 .banner .ico { font-size: 32px; }
 .banner b { display: block; font-size: 16.5px; }

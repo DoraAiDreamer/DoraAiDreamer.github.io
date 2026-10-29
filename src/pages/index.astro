@@ -33,6 +33,15 @@ const fmt = (d: Date) => d.toISOString().slice(0, 10);
     <div class="arrow">→</div>
   </a>
 
+  <a class="banner banner-models" href="/models/">
+    <div class="ico">🧬</div>
+    <div>
+      <b>新模型的结构变在哪？· 最新模型结构图鉴</b>
+      <span>Qwen3.8 / DeepSeek-V4 / GLM-5.2 / Kimi-K3 · 逐层排布可交互，悬停看每一层</span>
+    </div>
+    <div class="arrow">→</div>
+  </a>
+
   {cats.map(({ key, icon, anchor, desc }) => {
     const items = posts.filter((p) => p.data.category === key);
     if (items.length === 0) return null;

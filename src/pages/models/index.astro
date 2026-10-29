@@ -1,0 +1,134 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+// 新增模型时：把交互 HTML 放入 public/models/，在此数组追加一项即可（按录入时间倒序也可）
+const models = [
+  {
+    href: "/models/kimi-k3.html",
+    name: "Kimi-K3",
+    vendor: "月之暗面",
+    added: "2026-08 录入",
+    tags: ["MoE", "KDA 线性注意力", "Full MLA", "多模态"],
+    desc: "93 层：69 层 KDA 线性注意力与 23 层 Full MLA 交替（每 4 层一个全注意力），第 0 层为 Dense；896 路由专家 top-16 + 2 共享专家；27 层 ViT 视觉塔；无 MTP。",
+  },
+  {
+    href: "/models/glm-5.2.html",
+    name: "GLM-5.2",
+    vendor: "智谱 AI",
+    added: "2026-08 录入",
+    tags: ["MoE", "MLA + DSA", "Indexer", "纯文本"],
+    desc: "78 层（前 3 层 Dense MLP + 75 层 MoE）：注意力统一为带 DSA Indexer 的 MLA，按 Full / Shared 两种 Indexer 模式分层；256 路由专家 top-8 + 1 共享专家；1 层 MTP。",
+  },
+  {
+    href: "/models/deepseek-v4-flash.html",
+    name: "DeepSeek-V4-Flash",
+    vendor: "深度求索",
+    added: "2026-08 录入",
+    tags: ["MoE", "MLA", "稀疏/压缩注意力", "纯文本"],
+    desc: "43 层 MLA 按压缩比分三种形态：2 层 SWA 滑窗 + 21 层 C4 稀疏（Indexer 选 top-512）+ 20 层 C128 高压缩；256 路由专家 top-6 + 1 共享专家；前 3 层 hash 路由；1 层 MTP。",
+  },
+  {
+    href: "/models/qwen3.8-2.4t-a95b.html",
+    name: "Qwen3.8-2.4T-A95B",
+    vendor: "阿里通义",
+    added: "2026-08 录入",
+    tags: ["MoE", "GDN 线性注意力", "Full Attention", "纯文本"],
+    desc: "92 层：69 层 GatedDeltaNet 线性注意力 + 23 层 Full Attention，按「3 线性 + 1 全局」四层周期排布（23 组）；512 路由专家 top-10 + 共享专家；1 层 MTP。",
+  },
+  {
+    href: "/models/qwen3.8-27b.html",
+    name: "Qwen3.8-27B",
+    vendor: "阿里通义",
+    added: "2026-08 录入",
+    tags: ["稠密", "GDN 线性注意力", "Full Attention", "多模态"],
+    desc: "64 层稠密主干：48 层 GDN 线性注意力 + 16 层 Full Attention（16 个四层周期）；27 层 ViT 视觉塔经投影进入共享主干；1 层 MTP；文本/图像/视频 token 混合输入。",
+  },
+];
+---
+
+<BaseLayout title="最新模型结构图鉴" description="持续跟踪最新大模型的结构可视化：层排布、线性/全注意力混合、MoE 专家配置、MLA 压缩与多模态分支，可交互悬停查看" toc={false}>
+<article class="post md-hub">
+  <div class="md-hero">
+    <h1>🧬 最新模型结构图鉴</h1>
+    <p class="sub">新模型的结构又变在哪？一层排布、一张配置表讲清楚</p>
+    <p class="ver">每张图均可交互：<b>悬停/点击任一层</b>查看该层维度与细节，底部附配置参数明细 · 2026-08 起持续录入</p>
+  </div>
+
+  <section>
+    <h2>为什么开这个专栏</h2>
+    <p>
+      2025–2026 的新模型在结构上同时走向「趋同」与「分化」：<b>MoE 成为主流骨架</b>，而注意力层不再只有一种——
+      GatedDeltaNet、KDA 等<b>线性注意力回归</b>，与 Full Attention 按固定周期交替；DeepSeek 的 MLA 继续向稀疏/高压缩演进（C4、C128）；
+      GLM 用 Indexer 动态选择注意力索引；MTP 多 token 预测成为推测解码的标配头。读发布博客不如直接<b>看层是怎么排的</b>。
+    </p>
+    <p>
+      机制铺垫：先读
+      <a href="/blog/注意力机制演进-从mha到gqa与mla/">注意力机制演进：从 MHA 到 GQA 与 MLA</a>、
+      <a href="/blog/线性注意力为何回归-gated-deltanet/">线性注意力为何回归：Gated DeltaNet</a>、
+      <a href="/blog/moe混合专家模型-以deepseek为例/">MoE 混合专家模型</a>，
+      再回来看图，每一类色块都有出处。
+    </p>
+  </section>
+
+  <section>
+    <h2>结构图鉴（{models.length}）</h2>
+    <div class="md-grid">
+      {models.map(m => (
+        <a class="md-card" href={m.href} target="_blank" rel="noopener">
+          <div class="md-card-head">
+            <span class="md-name">{m.name}</span>
+            <span class="md-vendor">{m.vendor}</span>
+          </div>
+          <p class="md-desc">{m.desc}</p>
+          <div class="md-tags">
+            {m.tags.map(t => <span class="md-tag">{t}</span>)}
+          </div>
+          <div class="md-foot">
+            <span class="md-date">{m.added}</span>
+            <span class="md-go">交互图 ↗</span>
+          </div>
+        </a>
+      ))}
+    </div>
+  </section>
+
+  <section>
+    <h2>怎么读这些图</h2>
+    <ul class="md-howto">
+      <li><b>整体前向流水线</b>：从 Token Embedding、逐层 DecoderBlock 到 FinalNorm / LM Head，多模态模型在左侧画出视觉塔如何汇入文本主干。</li>
+      <li><b>层排布色带</b>：每个色块是一层，颜色区分注意力/前馈类型（如线性 vs 全注意力、Dense vs MoE）；<b>鼠标悬停</b>显示该层维度、头数与状态细节。</li>
+      <li><b>子层解剖</b>：各类层（GDN / Full Attention / MLA / KDA / MoE 前馈块）各有一张内部结构图，标注归一化位置、低秩压缩、gate 与专家路由。</li>
+      <li><b>配置参数明细</b>：层数、专家数与 top-k、隐藏维度、词表、上下文长度等关键数字一表汇总，便于横向对比。</li>
+    </ul>
+    <p class="md-note">图中结构依据各模型官方配置与技术资料整理，以发布版本为准；新模型发布后本页持续追加。发现图与官方配置不符欢迎在 GitHub 提 issue。</p>
+  </section>
+</article>
+</BaseLayout>
+
+<style>
+.md-hero { background: linear-gradient(135deg,#f4f2fa 0%,#eae6f6 100%); border:1px solid #ddd6ee; border-radius:8px; padding:22px 26px; margin-bottom:20px; }
+.md-hero h1 { margin:0 0 8px; color:#5b4499; border:none; padding:0; }
+.md-hero .sub { color:#5d5572; margin:0 0 10px; }
+.md-hero .ver { font-size:13px; color:#8a82a0; margin:0; }
+.md-hub h2 { font-size:19px; border-bottom:2px solid #eee; padding-bottom:8px; }
+.md-hub p { line-height:1.8; }
+.md-grid { display:grid; grid-template-columns:1fr; gap:14px; margin-top:10px; }
+.md-card {
+  display:flex; flex-direction:column; gap:10px; border:1px solid #e6e2f0; border-radius:8px;
+  padding:16px 18px; text-decoration:none !important; background:#fff; transition:border-color .15s, box-shadow .15s, transform .15s;
+}
+.md-card:hover { border-color:#7a5fc0; box-shadow:0 4px 14px rgba(122,95,192,.13); transform:translateY(-2px); }
+.md-card-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+.md-name { font-size:17px; font-weight:700; color:#2f2745; }
+.md-vendor { font-size:13px; color:#9a93ad; white-space:nowrap; }
+.md-desc { font-size:13.5px; color:#5f5a6e; line-height:1.7; margin:0; }
+.md-tags { display:flex; flex-wrap:wrap; gap:6px; }
+.md-tag { font-size:12px; color:#6b55a3; background:#f1edfa; border-radius:12px; padding:2px 10px; }
+.md-foot { display:flex; align-items:center; justify-content:space-between; margin-top:2px; }
+.md-date { font-size:12px; color:#aaa3bb; }
+.md-go { font-size:13px; color:#9b86cf; }
+.md-card:hover .md-go { color:#5b4499; }
+.md-howto li { margin:8px 0; line-height:1.75; }
+.md-note { font-size:13px; color:#999; }
+@media (min-width:760px){ .md-grid { grid-template-columns:1fr 1fr; } }
+</style>

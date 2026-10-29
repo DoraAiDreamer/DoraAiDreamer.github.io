@@ -25,6 +25,7 @@ Node 22. No Ruby/Gem toolchain (that was the old Jekyll site).
   - `blog/[slug].astro` — dynamic post page (renders markdown; `toc` enabled).
   - `llm.astro` / `ml.astro` — the 图解大模型 / 图解机器学习 chapter hubs (inline SVG figures + tables).
   - `inference.astro` — 推理加速 column landing (24 cards linking to the viewer).
+  - `models/index.astro` — 最新模型结构图鉴专栏（卡片数据驱动，新增模型时把交互 HTML 放入 `public/models/` 并在数组追加一项）；结构图是自包含静态 HTML（内联 CSS/JS、自带明暗主题），直接以 `/models/<file>.html` 访问，不经过 Astro 渲染。
   - `inference/view.astro` — markdown viewer: client-side JS fetches raw Markdown at runtime from `raw.githubusercontent.com/DoraAiDreamer/vllm-0.21.0-chinese-tutorial/...` and renders with marked + DOMPurify + highlight.js (CDN). Content stays in that repo, not copied.
 - **Layout** (`src/layouts/BaseLayout.astro`) — three-column doc layout: left = topic/category sidebar (hardcoded `sideGroups`), center = content, right = `PageTOC` (rendered only when `toc={true}`). Nav includes the `DoraemonLogo` SVG.
 - **Components** (`src/components/`):
