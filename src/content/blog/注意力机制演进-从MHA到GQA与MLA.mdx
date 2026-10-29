@@ -17,6 +17,7 @@ import Expand from "../../components/Expand.astro";
 import AttnTimelineFigure from "../../components/AttnTimelineFigure.astro";
 import AttnShareFigure from "../../components/AttnShareFigure.astro";
 import MlaFigure from "../../components/MlaFigure.astro";
+import AttnHybridFigure from "../../components/AttnHybridFigure.astro";
 
 注意力（Attention）是 Transformer 的核心，也是这些年大模型架构里**演进最活跃**的部分。回看 2017 年至今的改进，基本围绕三条主线（与图 1 对应）：
 
@@ -64,31 +65,86 @@ $$
 
 ## 3. 主线② 降复杂度：稀疏与线性注意力（长序列，近似）
 
-这类方法**改变了"每个 token 看哪些位置"**，是**近似**（结果不再等于完整 softmax 注意力），用来把长序列成本从 $O(n^2)$ 降下来。
+标准注意力的代价有两块：$n^2$ 个注意力分数（算力）和随 $n$ 增长的 KV Cache（显存）。这两类方法分别从两条路降成本，**都是近似**（结果不再严格等于完整 softmax）。
 
-<Expand title="扩展阅读：稀疏/线性注意力的数学与细节（偏学术）">
+### 3.1 稀疏注意力：少看一些位置
 
-核心是**不去计算全部 $n^2$ 个注意力权重**。
+思路最直观：不是每个 token 都看全部历史，只让它看一部分位置，复杂度从 $O(n^2)$ 降到 $O(n\cdot w)$（$w$ 是每 token 看的位置数）。
 
-**稀疏注意力**（Sparse）：每个 token 只关注一部分位置。
-- **Longformer**（2020）：「滑动窗口（sliding window，只看周围 w 个）+ 少量全局 token（如分类符 CLS，能看到所有位置）」，复杂度降到 $O(n\cdot w)$。
-- **BigBird / Sparse Transformer**：滑窗 + 全局 + 随机/块稀疏，理论可证明保持表达能力，用于长文档/基因序列。
+- **滑动窗口（sliding window）**：每个 token 只看前面最近的 $w$ 个位置。局部依赖够用、长程依赖丢失；Mistral 把它和少量全局注意力结合用于长上下文。
+- **全局 token（global）**：选少量特殊位置（如分类符 CLS）能看到所有位置、也被所有位置看到，补上长程通道。
+- **Longformer**（2020）= 滑窗 + 全局；**BigBird / Sparse Transformer** = 滑窗 + 全局 + 随机/块稀疏（后者在理论上保持了序列模型的表达能力）。
 
-**线性/核注意力**（Linear）：利用矩阵结合律跳过 $n^2$ 中间矩阵。对 Q、K 做核特征映射 $\phi(\cdot)$ 后：
+### 3.2 线性注意力：不存 KV，改存一个固定大小的状态
+
+这是和稀疏完全不同的一条路。标准注意力是「先算 $n\times n$ 的权重矩阵，再加权 V」：
 
 $$
-\mathrm{Attn}\approx \phi(Q)\big(\phi(K)^{\top}V\big),\qquad \text{先算 }\phi(K)^{\top}V\ (\text{固定大小}),\ \text{再乘 }\phi(Q)
+O=\mathrm{softmax}(QK^\top)V
 $$
 
-复杂度从 $O(n^2)$ 降到 $O(n)$。代表：**Linformer**（对 K/V 沿长度维做低秩投影，把 n 压到 k）、**Performer**（FAVOR+）（用随机特征近似 softmax 核）。
+线性注意力先用一个非负特征映射 $\phi(\cdot)$ 替换 softmax（去掉指数归一化的强耦合），再用矩阵乘法结合律改变计算顺序：
 
-**为什么主流推理早期较少直接用？** 它们是近似，在语言建模质量与生态上一度不如精确注意力；但思想（滑窗、块稀疏、低秩）被后来继承——Mistral 的滑动窗口注意力、以及下面的 NSA。
+$$
+O=\phi(Q)\underbrace{\big(\phi(K)^\top V\big)}_{\text{固定大小的状态矩阵}}
+$$
 
-</Expand>
+关键在括号里的 $\phi(K)^\top V$：它的形状是 $d_k\times d_v$，**与序列长度 $n$ 无关**。于是它可以像 RNN 一样**递推维护**——每来一个新 token，只做一次固定大小的矩阵外积累加，既不用算 $n^2$ 权重，也不用逐 token 缓存 K/V，复杂度降到 $O(n)$。代表工作：**Linformer**（沿长度维低秩投影）、**Performer**（用随机特征近似 softmax 核）。
 
-工程结论：**稀疏 = 每个 token 少看一些位置（滑窗/全局/块选择）；线性 = 用矩阵结合律跳过 $n^2$ 中间矩阵**。
+线性注意力早年输给 softmax 的原因也很清楚：特征映射的近似损失语言建模质量，长程检索能力弱。但「固定状态、不存 KV」的性质在 2025 年后被门控/差分规则救活，成为 2026 年混合架构的一块（见 3.4）。
 
-**原生稀疏注意力 NSA**（DeepSeek，2025）：把稀疏路线做成**模型原生训练**（而非外挂近似），由三个分支组成——**压缩（compression，把邻近块压成粗粒度表示）+ 块选择（block selection，按重要性挑相关块）+ 滑动窗口（sliding window，保留局部细节）**，长序列推理近线性且保持效果，是稀疏思想走向生产的代表。
+### 3.3 走向生产：NSA 原生稀疏
+
+**原生稀疏注意力 NSA**（DeepSeek，2025，[arXiv:2502.11089](https://arxiv.org/abs/2502.11089)）把稀疏从「外挂近似」做成**从头原生训练**，三个分支加权：
+
+1. **压缩分支（compression）**：把邻近 KV 块压成粗粒度表示，负责远距离的概览；
+2. **块选择分支（block selection）**：用一个轻量打分器按相关性挑选最重要的若干块，负责精确取回；
+3. **滑动窗口分支（sliding window）**：保留局部细节，保证近程不丢信息。
+
+长序列推理近线性且效果接近稠密注意力。它是 **块级（block-wise）选择**，2025 年底产品化时进一步细化为 token 级的 DSA。
+
+### 3.4 2025–2026：稀疏检索与线性状态的产品化
+
+到 2026 年，降复杂度路线在旗舰模型上落地为三种「读取 KV 的方式」。先钉死一个最容易混的边界——**它们对 KV Cache 的处理根本不同**：
+
+| 路线 | 逐 token 的 KV 还存吗 | 怎么用历史 | 代表 |
+| --- | --- | --- | --- |
+| 精确（GQA/MLA） | 存（MLA 存压缩潜变量） | 全部读取 | LLaMA/Qwen2、DeepSeek-V3 |
+| **稀疏检索** | **存，完整保留** | 用索引器只取 top-k | **DSA、QSA、NSA** |
+| **线性状态** | **不存**，只存固定大小状态矩阵 | $q^\top S$ 读状态 | **GDN、KDA** |
+
+**稀疏检索派（KV 还在，挑着读）：**
+
+- **DSA（DeepSeek Sparse Attention）**：DeepSeek-V3.2（2025-09 实验版、2025-12 正式版，[arXiv:2512.02556](https://arxiv.org/abs/2512.02556)）用 lightning indexer（闪电索引器）给历史条目打分、做**细粒度 token 级 top-k（$k=2048$）**，并实例化在 MLA 的 MQA 模式上——每个压缩潜变量条目被该 query 的所有注意力头共享，选择只做一次。它**不是 NSA 改名**：NSA 是块级三分支研究原型，DSA 是 token 级产品设计。智谱 **GLM-5**（2026-02，[arXiv:2602.15763](https://arxiv.org/abs/2602.15763)）直接采用同一个 DSA（论文明确引用 V3.2，不是同名巧合）。
+- **QSA（Qwen Sparse Attention）**：Qwen3.8-Flash-Next（2026-08，[arXiv:2608.30320](https://arxiv.org/abs/2608.30320)）的稀疏层，micro-block 粒度配轻量压缩索引器（budget 2048、压缩比 4），每 4 层插 1 层。
+- **DeepSeek-V4-Flash**（2026-04，[arXiv:2606.19348](https://arxiv.org/abs/2606.19348)）更激进：**CSA（Compressed Sparse Attention，沿序列维压缩后再稀疏选择）与 HCA（Heavily Compressed Attention，强压缩但保持稠密读取）交错**，再加滑动窗口与 on-disk KV；官方模型卡称 1M 上下文下 KV 约为 V3.2 的 7%。
+
+**线性状态派（不存 KV，存状态）：**
+
+生产级实现是 **Gated DeltaNet（GDN，[arXiv:2412.06464](https://arxiv.org/abs/2412.06464)，ICLR 2025）**。它把线性注意力的固定状态改成门控差分递推：
+
+$$
+S_t=\alpha\,S_{t-1}(I-\beta k_t k_t^\top)+\beta\,v_t k_t^\top
+$$
+
+每层只维护一个与序列长度无关的状态矩阵，decode 时用 $q_t^\top S_t$ 读出；门控 $\alpha$ 控制旧记忆衰减、$\beta$ 控制写入强度，差分项让状态能「擦写」旧值。代价是旧 token 被衰减/覆盖、**无法精确定位任意历史位置**，所以纯线性层必须周期性插入精确或稀疏注意力层兜底检索。**KDA（Kimi Delta Attention）** 是月之暗面 Kimi Linear 技术线同源的线性注意力，用在 GLM-5.3-Flash 里。
+
+于是 2026 年的前沿模型都是**混合栈**（线性状态层便宜且显存恒定 + 稀疏/精确层保证检索），而且权重已开源：
+
+| 模型（开源时间） | 层结构 | KV/状态形态 |
+| --- | --- | --- |
+| Qwen3-Next-80B-A3B（2025-09） | 36 GDN + 12 Gated Attention | 固定状态 + 常规 KV |
+| Qwen3.5-397B-A17B（2026-02） | 45 GDN + 15 全注意力 | 固定状态 + 常规 KV |
+| Qwen3.8-Flash-Next 125B（2026-08） | 3/4 GDN + 1/4 QSA | 固定状态 + 稀疏 KV（官方 **FlashQLA** kernel） |
+| DeepSeek-V3.2（2025-12） | MLA + DSA | 压缩潜变量 + top-k 读取（**FlashMLA** 稀疏 kernel） |
+| GLM-5 744B（2026-02） | MLA + DSA（同 DeepSeek 的 DSA） | 同 V3.2 |
+| GLM-5.3-Flash 320B（2026-08） | 34 层 KDA + 11 层 KPool-DSA | 固定状态 + 稀疏潜变量（FLA / FlashMLA） |
+
+<AttnHybridFigure />
+
+*图（示意）：2026 年前沿模型按层交错三类注意力——线性状态层（显存不随上下文增长）、稀疏检索层（KV 还在但只读 top-k）、精确层（GQA/MLA 兜底）；层数比例各模型不同。*
+
+工程结论一句话：**稀疏 = KV 还在但少读，线性 = KV 不存改存固定状态，两者都用效果换长度/显存，且都依赖专用 kernel（FlashMLA、FlashQLA、FLA），不是换个配置就能跑。**
 
 ## 4. 主线③ 省 KV Cache：MQA → GQA → MLA（推理工程主流）
 
@@ -164,18 +220,23 @@ MLA 通常能在与 GQA 相近甚至更好的效果下把 KV Cache 压得更小�
 | Ring Attention | 2023 | ① 精确高效 | 超长序列跨卡 | **不改变**（精确） | 多卡分块、环形传 K/V | 长上下文服务 |
 | Longformer / BigBird | 2020 | ② 降复杂度 | 长序列 $O(n^2)$ | **改变**（稀疏近似） | 滑窗 + 全局 token | 长文档/基因 |
 | Linformer / Performer | 2020 | ② 降复杂度 | 长序列 $O(n^2)$ | **改变**（低秩/核近似） | 低秩投影 / 核特征重排 | 学术/检索 |
-| NSA 原生稀疏 | 2025 | ② 降复杂度 | 长序列近线性 | **改变**（稀疏近似） | 压缩 + 块选择 + 滑窗，原生训练 | **DeepSeek** |
+| NSA 原生稀疏 | 2025 | ② 降复杂度 | 长序列近线性 | **改变**（稀疏近似） | 压缩 + 块选择 + 滑窗，原生训练 | **DeepSeek（研究原型）** |
+| DSA | 2025 | ② 降复杂度 | 长序列稀疏读 | **改变**（token 级 top-k） | lightning indexer，落在 MLA 的 MQA 模式 | **DeepSeek-V3.2、GLM-5** |
+| QSA | 2026 | ② 降复杂度 | 长序列稀疏读 | **改变**（micro-block top-k） | 轻量压缩索引器，与线性层 1:3 交错 | Qwen3.8-Flash-Next |
+| CSA+HCA | 2026 | ② 降复杂度 | 1M 超长上下文 | **改变**（序列维压缩） | 两种压缩块交错 + on-disk KV | DeepSeek-V4-Flash |
+| GDN/KDA | 2025–26 | ② 降复杂度 | KV 不随长度增长 | **改变**（固定状态替代 KV） | 门控差分递推，混合精确/稀疏层兜底 | Qwen3-Next/3.5/3.8-Flash-Next、GLM-5.3-Flash |
 | MQA | 2019 | ③ 省 KV Cache | KV Cache 太大 | 不改变（结构共享） | 所有 Q 共享 1 组 K/V | PaLM / Falcon |
 | GQA | 2023 | ③ 省 KV Cache | KV Cache 折中 | 不改变（结构共享） | Q 分组共享 K/V | **LLaMA/Qwen/GLM/DeepSeek/Mistral** |
 | MLA | 2024 | ③ 省 KV Cache | KV Cache 压缩最强 | 不改变（低秩等价 + RoPE 解耦） | K/V 压成低秩潜变量缓存 | **DeepSeek-V2/V3/R1** |
 
 **一句话选型/现状**：
 - **底层加速**（任何模型都受益） → FlashAttention；**多卡超长序列** → Ring Attention；
-- **长序列要近线性** → 原生稀疏（NSA）这类近似稀疏；
+- **长序列要近线性** → 2025 年的 NSA 原型已演进为 2026 年产品化的 token 级稀疏（**DSA/QSA**，KV 还在、只读 top-k）；
+- **百万级上下文、固定 KV 预算** → 2026 前沿走**混合栈**：GDN/KDA 线性状态层（显存不随长度增长）打底，DSA/QSA 稀疏层与少量精确层兜底检索（Qwen3.8-Flash-Next、GLM-5.3-Flash、DeepSeek-V4-Flash）；
 - **推理省显存/高吞吐** → GQA 是当前标配，追求极致压缩用 **MLA**（DeepSeek 路线）；
 - ① 精确高效、③ 省 KV 都是**数学等价**优化，可自由叠加；② 是**近似**，用效果换长度。
 
-**国产模型关注**：DeepSeek（MLA、NSA，省 KV 与长序列集大成）、Qwen（GQA + QK-Norm + RoPE，长上下文达百万级 token）、GLM/智谱（GQA、长文本）、Kimi/月之暗面（长上下文注意力工程）、豆包/字节（GQA 类路线）——国产模型在"省 KV Cache + 长上下文"两条工程主线上贡献尤其多。
+**国产模型关注（截至 2026-10）**：DeepSeek 走出 MLA（V2/V3/R1）→ NSA 研究原型 → **DSA token 级稀疏（V3.2）→ CSA/HCA 强压缩（V4-Flash，1M 上下文）** 的完整路线；Qwen 从 GQA（Qwen2/2.5）演进到 **GDN 线性混合（Qwen3-Next、Qwen3.5）与 GDN+QSA（Qwen3.8-Flash-Next）**，并开源 FlashQLA kernel；GLM/智谱从 GQA（GLM-4）到 **MLA+DSA（GLM-5）、KDA 线性混合（GLM-5.3-Flash）**；Kimi 的长上下文工程沉淀为 KDA。国产模型在「省 KV → 稀疏读取 → 固定状态记忆」三代路线上都是主力贡献者。
 
 ---
 
@@ -213,6 +274,15 @@ MLA 通常能在与 GQA 相近甚至更好的效果下把 KV Cache 压得更小�
 
 </Expand>
 
+**Q4（加分）. DSA 和 GDN 都在「省 KV」，它们的 KV 还逐 token 存在吗？为什么 GDN 必须和精确/稀疏层混合？**
+
+<Expand title="查看答案">
+
+- **DSA（DeepSeek Sparse Attention）仍逐 token 缓存 KV**（在 MLA 里是 576 维压缩潜变量），只是读取时用索引器做 token 级 top-k 选择（$k=2048$），从「全读」变成「挑着读」，属于稀疏近似；QSA 同理。
+- **GDN/KDA 不存逐 token 的 K/V**，只维护一个与序列长度无关的固定大小状态矩阵，按门控差分规则递推，decode 时用 $q_t^\top S_t$ 读出。旧 token 会被衰减/覆盖、**无法精确定位任意历史位置**，所以必须周期性插入精确（全注意力/MLA）或稀疏（DSA/QSA）层兜底检索——这就是 2026 年模型普遍采用「线性状态层 + 稀疏/精确层」混合栈的原因。
+
+</Expand>
+
 ---
 
 ## 参考资料
@@ -229,7 +299,12 @@ MLA 通常能在与 GQA 相近甚至更好的效果下把 KV Cache 压得更小�
 10. DeepSeek-AI, *DeepSeek-V2*（MLA）, 2024. [arXiv](https://arxiv.org/abs/2405.04434)
 11. DeepSeek-AI, *DeepSeek-V3 Technical Report*, 2024. [arXiv](https://arxiv.org/abs/2412.19437)
 12. DeepSeek-AI, *Native Sparse Attention*（NSA）, 2025. [arXiv](https://arxiv.org/abs/2502.11089)
-13. Su et al., *RoFormer（RoPE）*, 2021. [arXiv](https://arxiv.org/abs/2104.09864)
-14. 各模型技术文档：LLaMA、Mistral、Qwen2/2.5、ChatGLM/GLM-4、Kimi K2、DeepSeek 官方技术报告。
+13. Yang et al., *Gated Delta Networks: Improving Mamba2 with Delta Rule*（GDN）, ICLR 2025. [arXiv](https://arxiv.org/abs/2412.06464)
+14. DeepSeek-AI, *DeepSeek-V3.2*（DSA）, 2025. [arXiv](https://arxiv.org/abs/2512.02556)
+15. Qwen Team, *Qwen3.8-Flash-Next Technical Report*（GDN+QSA/FlashQLA）, 2026. [arXiv](https://arxiv.org/abs/2608.30320)
+16. DeepSeek-AI, *DeepSeek-V4-Flash*（CSA/HCA）, 2026. [arXiv](https://arxiv.org/abs/2606.19348)
+17. Z.ai, *GLM-5*（MLA+DSA）, 2026. [arXiv](https://arxiv.org/abs/2602.15763)
+18. Su et al., *RoFormer（RoPE）*, 2021. [arXiv](https://arxiv.org/abs/2104.09864)
+19. 各模型技术文档与权重配置：LLaMA、Mistral、Qwen2/2.5/3/3-Next/3.5/3.8、GLM-4/5/5.3、Kimi、DeepSeek V2/V3/V3.2/V4 官方报告与 HuggingFace config。
 
 > 相关阅读：[图解大模型/Transformer](/llm/)（注意力公式与 QKV 直觉）、[大模型量化](/blog/大模型量化-用更少的显存跑更大的模型/)（KV Cache 压缩与 W4A16）、[推理加速实战](/inference/)（PagedAttention、连续批处理）。
