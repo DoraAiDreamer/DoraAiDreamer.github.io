@@ -306,7 +306,82 @@ vllm serve neuralmagic/Qwen2-7B-Instruct-FP8 \
 
 ---
 
-# 4. 几个容易踩的点
+# 4. 量化工具链：GPU、国产算力与苹果芯片
+
+前面讲的是算法（GPTQ/AWQ/SmoothQuant）与精度格式（INT4/INT8/FP8）；这一章回答工程问题：**在具体硬件上，用什么工具把模型量化出来、再跑起来**。同一个 W4A16，在 NVIDIA 卡、昇腾 NPU、苹果芯片上是三条完全不同的工具链。版本为 2026-10 前后核实，API 变化很快，落地前以官方文档为准。
+
+## 4.1 NVIDIA GPU：ModelOpt 是校准入口，推理引擎决定 kernel
+
+**官方校准工具：NVIDIA ModelOpt。** 它是原来 TensorRT Model Optimizer 在 2025 年底更名后的产品（pip 包仍叫 `nvidia-modelopt`，2026-10 约 0.47），也是旧库 pytorch-quantization（2023 年后停更）事实上的继任者。覆盖 PTQ/QAT，预设配置直接对应各种精度：
+
+```python
+import modelopt.torch.quantization as mtq
+# FP8（Hopper）/ INT8 SmoothQuant / W4A16 AWQ / NVFP4（Blackwell）各有现成 config
+mtq.quantize(model, mtq.NVFP4_DEFAULT_CFG, forward_loop)   # config 换成 mtq.FP8_DEFAULT_CFG 等
+modelopt.torch.export.export_hf_checkpoint(model, ...)      # 导出统一 HF checkpoint
+```
+
+导出的 checkpoint 可被 **TensorRT-LLM**（2026-10 约 1.2.x，FP8/FP4 推理最完整）、**vLLM**（约 0.32）、**SGLang**（约 0.5.22）直接加载；HuggingFace 上也有 NVIDIA 官方预量化模型（如 `nvidia/Llama-3.1-8B-Instruct-FP8`）。精度与硬件的对应：FP8 需要 Ada/Hopper 及以上，**NVFP4（4 位浮点）需要 Blackwell** 且推理引擎要新版本。注意 ModelOpt 本身不提供 GPTQ recipe——GPTQ 格式由社区的 GPTQModel 等工具产出。
+
+**社区工具按用途分四类：**
+
+- **bitsandbytes（约 0.50）**：`load_in_4bit` 一行加载即量化（NF4/FP4），QLoRA 微调的标配；只在加载时量化、不产出可分发文件，推理 kernel 也不如专用 AWQ/GPTQ 快——实验用，不用于发布。
+- **GPTQ 格式**：旧的 AutoGPTQ 已停止维护，官方 README 指路社区继任者 **GPTQModel**（2026-10 约 7.7，一个工具产出 GPTQ/AWQ/GGUF/FP8 等多种格式）。
+- **AWQ 格式**：AutoAWQ（0.2.9，2025 年中已标 deprecated）不再更新，新工作流转向 vLLM 生态的 llm-compressor / GPTQModel；已有 AWQ 模型仍被各推理引擎广泛支持。
+- **EXL2/EXL3**：exllamav2 的 EXL2 支持 2–8 bit 间任意平均位宽、按层混精度；exllamav2 仓库已归档，继任是 exllamav3 与新格式 EXL3。
+- **llama.cpp（CUDA 后端）**：自研 kernel，吃 GGUF 格式，与上面 HuggingFace 生态的量化文件不互通。
+
+vLLM/SGLang 内部靠 **Marlin** 系列 kernel 跑 GPTQ/AWQ/FP8/FP4 权重；MTP（多 token 预测）是投机解码技术，不是量化格式，别混在一起。
+
+## 4.2 昇腾与其他国产平台：AMCT 管小模型，大模型走 msModelSlim
+
+华为昇腾的工具链按「传统模型 / 大模型」分成两条，**不要把 AMCT 当成大模型量化工具**：
+
+- **AMCT（CANN 9.0 时代）**：面向 Caffe/TensorFlow/PyTorch/ONNX 的经典 CV/小模型链路——PTQ 校准后 `save_model` 产出内嵌 AscendQuant/Dequant 的 deploy 模型，再经 **ATC 转成 OM** 运行（型号由 `--soc_version` 指定，ATC 没有单独的 `--quantize` 开关，量化信息已内嵌）；当前放开的是 **INT8**，配置里的 INT4 字段尚未启用，另有 4 选 2 稀疏与逐层蒸馏。
+- **msModelSlim（大模型主力，MindStudio 26.1 / CANN 8.0.RC2 起）**：流程是「原始模型 + 校准数据 →（可选 AntiOutlier 抑离群）→ `Calibrator(...).run().save()`」，直接产出 **safetensors 权重 + quant_model_description.json，MindIE-LLM 直接加载、不过 ATC**。命令行形态：
+
+```bash
+# W8A8 一键量化（MindIE 2.3 文档原例；W4A8/KV cache 改 quant 配置）
+msmodelslim quant --model_path ./Qwen2-7B --save_path ./qwen2-7b-w8a8 \
+    --device npu --model_type Qwen2-7B --quant_type w8a8 --trust_remote_code True
+```
+
+型号支持矩阵写得很死，引用时必须连型号一起说（以 MindIE 2.3 文档为准）：**W8A8**（权重/激活 INT8）是通用路径；**W4A8 混合**已用于 DeepSeek R1/V3 的路由专家（动态 per-group INT4），暂不能叠加 KV Cache int8；**W8A16 与 KV Cache int8 仅限 Atlas 800I A2** 且只认证了 70B 级的 LLaMA3.1/Qwen2/Qwen2.5；**W8A8SC（稀疏+量化+压缩）仅限 Atlas 300I Duo**。算法侧，MindSpore Golden Stick 提供 RTN/SmoothQuant/AWQ/GPTQ/A8W4 等 PTQ recipe（硬件标注 800I A2，有 zero-point/per-channel 限制）；torch_npu 只是 PyTorch 的昇腾后端，本身不含量化算法。910/A2 代没有 FP8，Cube 单元以 INT8 为主力；FP8 要等 **950 代的 HiF8/MXFP8/MXFP4**（架构白皮书已公布，950PR 已随 Atlas 150 上市，工具开关以新版 CANN/MindIE 文档为准）。
+
+其他国产平台（公开资料详略不一，以官方文档为准）：**寒武纪**用 MagicMind 编译器内置 INT8 PTQ（产品页列 FP16/INT8，INT4 未见官方文档，待核；EasyDK 是推理服务套件不是量化工具）；**海光 DCU** 基于 ROCm/HIP（DTK），走 hipBLASLt 的 W8A8 与适配版 vLLM，没有专属校准工具；**摩尔线程** KUAE 套件内置 NeuroTrim（GPTQ/AWQ/SmoothQuant，W8A8/W4A8，第四代「平湖」架构原生 FP8）；**昆仑芯**量化能力散在 XTDK/xdnn 与 vLLM-Kunlun 适配里，无独立量化包；**百度 PaddleSlim** 最后稳定版 2.6.0 停在 2024-01，实质停更。
+
+## 4.3 Apple Silicon：统一内存上的三条路径
+
+M 系列芯片没有 INT8/FP8 专用张量核，量化的主要收益是**省统一内存容量与带宽**（间接提升解码速度），而不是 matmul 峰值翻倍；好处是内存就是显存，大模型只要装得进统一内存就能跑。
+
+- **MLX / mlx-lm（Apple 官方，2026-10 约 0.32）**：基于 Metal 与共享内存的数组框架和模型库，量化默认是 **4 bit、每 63 个权重一组（group_size=64）的 affine 分组量化**，也支持 MXFP4/NVFP4/MXFP8 等新模式；HuggingFace 的 `mlx-community` 有大量现成 4bit 模型：
+
+```bash
+pip install mlx-lm
+mlx_lm.convert --model mlx-community/Mistral-7B-Instruct-v0.3 -q --mlx-path mistral-4bit
+mlx_lm.generate --model ./mistral-4bit --prompt "你好"
+```
+
+- **llama.cpp / Ollama / LM Studio**：Metal 是一等公民后端，吃 **GGUF**（Q4_K_M/Q5_K_M 等 k-quants）。7B 的 Q4 约 4–5GB，任何 M 系列都能跑；70B 的 Q4 约 40GB 以上，要 64GB 内存机型。解码受内存带宽约束（M5 Max 约 614GB/s、M5 Ultra 约 1.2TB/s，统一内存最高 512GB，2026-10 现售规格）。
+- **coremltools + ANE（端侧 App 部署）**：把 PyTorch/TF 模型转成 Core ML 格式后，运行时可调度到 CPU/GPU/**Neural Engine（ANE）**；LLM 量化主路径是 **palettization**（LUT 调色板聚类，1/2/3/4/6/8 bit，iOS16/macOS13 起），面向 iOS/macOS App 集成。注意 **ANE 不能跑 GGUF**——llama.cpp 走 GPU+Metal，要上神经引擎必须转 Core ML 格式；MLX/llama.cpp 面向本地研究与推理，coremltools 面向产品端侧，三者定位不同。
+
+## 4.4 一张表选工具
+
+| 平台 | 主流量化格式 | 校准/转换工具 | 推理引擎 |
+| --- | --- | --- | --- |
+| NVIDIA Hopper 及更新 | FP8（W8A8）、W4A16 AWQ/GPTQ | **ModelOpt**（FP8/NVFP4）、GPTQModel、llm-compressor | TensorRT-LLM、vLLM、SGLang（Marlin kernel） |
+| NVIDIA Blackwell | NVFP4、FP8 | ModelOpt（NVFP4 config） | TRT-LLM ≥1.2、vLLM/SGLang modelopt_fp4 |
+| NVIDIA/通用消费卡 | W4A16（AWQ/GPTQ）、GGUF | GPTQModel、llama.cpp 量化 | vLLM、SGLang、llama.cpp(CUDA) |
+| 昇腾 910 / 800I A2 / 300I Duo | W8A8 INT8；W4A8（R1/V3）；型号限定的 W8A16/KV-int8/W8A8SC | 大模型 **msModelSlim**；小模型 **AMCT→OM**；Golden Stick 算法 | MindIE-LLM/ATB、vLLM-Ascend |
+| 寒武纪 / 海光 / 摩尔线程等 | INT8 W8A8 为主，摩尔线程支持 FP8 | MagicMind 内置校准 / DTK 通用 PTQ / NeuroTrim | MagicMind、DTK+vLLM、KUAE |
+| Apple Silicon（M 系列） | 4bit group-64（MLX）、GGUF Q4/Q5、Core ML LUT | mlx-lm、llama.cpp 量化、coremltools | MLX、llama.cpp/Ollama（Metal）、ANE（Core ML） |
+| 纯 CPU / 个人电脑 | GGUF Q4_K_M/Q5_K_M | llama.cpp 量化 | llama.cpp、Ollama、LM Studio |
+
+与本文方法章的对应关系不变：**格式选型看 3.5（W4A16/W8A8）、算法原理看 3.1–3.3（GPTQ/AWQ/GGUF）、昇腾 INT8 的硬件原因看 3.6**；本章只回答「用哪个工具、在哪张卡上跑」。
+
+---
+
+# 5. 几个容易踩的点
 
 <Expand title="扩展：量化的常见误区与实践细节">
 
