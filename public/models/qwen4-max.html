@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Qwen4-Max 模型结构可视化（QSA + GDN 混合 MoE）</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: "SFMono-Regular", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  .viz-root {
+    color-scheme: light;
+    --surface-0: #ffffff;
+    --surface-1: #fcfcfb;
+    --surface-2: #f3f3f0;
+    --surface-3: #e9e8e3;
+    --border: #e0dfd9;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #827f78;
+    --ink-on-accent: #ffffff;
+    --gdn:    #eb6834;  /* orange - GatedDeltaNet linear attention */
+    --qsa:    #2a78d6;  /* blue   - Qwen Sparse Attention */
+    --moe:    #4a3aa7;  /* violet - MoE */
+    --gr:     #0e9488;  /* teal   - Gated Residual */
+    --ngram:  #d08a1e;  /* amber  - N-gram embedding / PLE */
+    --vis:    #e87ba4;  /* magenta- vision */
+    --mtp:    #1baf7a;  /* green  - MTP head */
+    --official:#1b8f5f; /* green  - Max 官方披露口径 */
+    --neutral: #827f78;
+    --good: #1b8f5f;
+    --warn: #b87700;
+    --focus: #256abf;
+    --shadow: 0 1px 2px rgba(11,11,11,.04), 0 4px 16px rgba(11,11,11,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-0: #141413;
+      --surface-1: #1a1a19;
+      --surface-2: #232321;
+      --surface-3: #2e2e2b;
+      --border: #383835;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #9a988f;
+      --ink-on-accent: #ffffff;
+      --gdn: #d95926;
+      --qsa: #3987e5;
+      --moe: #9085e9;
+      --gr: #26b3a4;
+      --ngram: #e0a038;
+      --vis: #d55181;
+      --mtp: #199e70;
+      --official: #2fae7c;
+      --neutral: #9a988f;
+      --good: #2fae7c;
+      --warn: #d9a441;
+      --focus: #6da7ec;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-0: #141413;
+    --surface-1: #1a1a19;
+    --surface-2: #232321;
+    --surface-3: #2e2e2b;
+    --border: #383835;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #9a988f;
+    --ink-on-accent: #ffffff;
+    --gdn: #d95926;
+    --qsa: #3987e5;
+    --moe: #9085e9;
+    --gr: #26b3a4;
+    --ngram: #e0a038;
+    --vis: #d55181;
+    --mtp: #199e70;
+    --official: #2fae7c;
+    --neutral: #9a988f;
+    --good: #2fae7c;
+    --warn: #d9a441;
+    --focus: #6da7ec;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--surface-2); color: var(--text-primary);
+    font-family: var(--font-sans); line-height: 1.55; -webkit-font-smoothing: antialiased;
+  }
+  .viz-root { max-width: 1180px; margin: 0 auto; padding: 32px 28px 56px; background: var(--surface-0); min-height: 100vh; }
+
+  .hdr { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .hdr h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .hdr .sub { color: var(--text-secondary); font-size: 14px; margin: 0; max-width: 88ch; }
+  .hdr .sub code { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-secondary); }
+  .theme-btn {
+    appearance: none; border: 1px solid var(--border); background: var(--surface-1);
+    color: var(--text-secondary); border-radius: 8px; padding: 7px 12px; font-size: 13px;
+    cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .theme-btn:hover { border-color: var(--text-muted); color: var(--text-primary); }
+  .theme-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin: 24px 0 8px; }
+  @media (max-width: 900px) { .stats { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 520px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  .stat { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); }
+  .stat .k { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin-bottom: 6px; }
+  .stat .v { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .stat .u { font-size: 12px; color: var(--text-muted); margin-left: 3px; font-weight: 500; }
+
+  section { margin-top: 30px; }
+  h2 { font-size: 17px; margin: 0 0 6px; letter-spacing: -0.005em; }
+  .sec-desc { color: var(--text-secondary); font-size: 13.5px; margin: 0 0 14px; max-width: 100ch; }
+  .sec-desc code { font-family: var(--font-mono); font-size: 12.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--text-primary); }
+
+  /* sourcing caveat */
+  .caveat {
+    background: var(--surface-1); border: 1px solid var(--border); border-left: 3px solid var(--warn);
+    border-radius: 10px; padding: 14px 16px; font-size: 13px; color: var(--text-secondary); box-shadow: var(--shadow);
+    margin-top: 22px;
+  }
+  .caveat strong { color: var(--text-primary); }
+  .caveat code { font-family: var(--font-mono); font-size: 12px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--text-primary); }
+  .src-badge { display:inline-block; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 9px; margin-right: 6px; color: #fff; vertical-align: 1px; }
+  .src-badge.off { background: var(--official); }
+  .src-badge.prev { background: var(--neutral); }
+
+  /* pipeline */
+  .pipeline { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
+  .pipe-node {
+    flex: 1 1 0; min-width: 130px; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px; box-shadow: var(--shadow);
+  }
+  .pipe-node .tag { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
+  .pipe-node .nm { font-size: 13.5px; font-weight: 600; margin-top: 3px; }
+  .pipe-node .meta { font-size: 11.5px; color: var(--text-secondary); margin-top: 4px; font-family: var(--font-mono); line-height: 1.5; }
+  .pipe-node.vis { border-top: 3px solid var(--vis); }
+  .pipe-node.io  { border-top: 3px solid var(--neutral); }
+  .pipe-node.ngram { border-top: 3px solid var(--ngram); }
+  .pipe-node.stack { border-top: 3px solid var(--qsa); }
+  .pipe-node.mtp { border-top: 3px solid var(--mtp); }
+  .pipe-arrow { display: flex; align-items: center; color: var(--text-muted); font-size: 18px; }
+  .pipe-note { font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
+  .pipe-note code { font-family: var(--font-mono); font-size: 11.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--text-primary); }
+
+  /* layer strip */
+  .strip-wrap { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: var(--shadow); }
+  .strip-legend { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; color: var(--text-secondary); }
+  .legend-item { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 13px; height: 13px; border-radius: 3px; display: inline-block; }
+  .swatch.gdn { background: var(--gdn); }
+  .swatch.qsa { background: var(--qsa); }
+  .groups { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .group { display: flex; gap: 4px; padding: 4px; border: 1px dashed var(--border); border-radius: 8px; }
+  .cell {
+    width: 22px; height: 30px; border-radius: 4px; cursor: pointer; position: relative;
+    transition: transform .12s ease, box-shadow .12s ease;
+    border: 1px solid rgba(0,0,0,.08);
+  }
+  .cell.gdn { background: var(--gdn); }
+  .cell.qsa { background: var(--qsa); }
+  .cell:hover, .cell:focus-visible { transform: translateY(-2px); box-shadow: 0 3px 10px rgba(0,0,0,.18); outline: none; }
+  .cell.active { outline: 2px solid var(--text-primary); outline-offset: 2px; z-index: 2; }
+  .cell .glabel { position: absolute; bottom: -16px; left: 0; right: 0; text-align: center; font-size: 9px; color: var(--text-muted); font-family: var(--font-mono); }
+  .group-cap { font-size: 10.5px; color: var(--text-muted); text-align: center; margin-top: 18px; font-family: var(--font-mono); }
+  .strip-more { display: flex; align-items: center; justify-content: center; width: 34px; height: 30px; border: 1px dashed var(--border); border-radius: 6px; color: var(--text-muted); font-size: 15px; }
+  .layer-detail {
+    margin-top: 22px; border-top: 1px dashed var(--border); padding-top: 12px;
+    display: grid; grid-template-columns: 150px 1fr; gap: 8px 18px; font-size: 13px; align-items: baseline;
+  }
+  .layer-detail .ld-k { color: var(--text-muted); font-size: 12px; }
+  .layer-detail .ld-v { color: var(--text-primary); }
+  .layer-detail .ld-v code { font-family: var(--font-mono); font-size: 12.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; color: var(--ink-on-accent); }
+  .pill.gdn { background: var(--gdn); }
+  .pill.qsa { background: var(--qsa); }
+
+  /* generic cards & flow */
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 820px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: var(--shadow); }
+  .card h3 { margin: 0 0 2px; font-size: 15px; display: flex; align-items: center; gap: 9px; }
+  .card .card-sub { color: var(--text-muted); font-size: 12.5px; margin: 0 0 14px; }
+  .flow { display: flex; flex-direction: column; gap: 6px; }
+  .block {
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px; background: var(--surface-2);
+    font-size: 12.5px; display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  }
+  .block .blk-nm { font-weight: 600; }
+  .block .blk-dim { color: var(--text-secondary); font-family: var(--font-mono); font-size: 11.5px; text-align: right; }
+  .block.gdn-b { border-left: 3px solid var(--gdn); }
+  .block.qsa-b { border-left: 3px solid var(--qsa); }
+  .block.norm-b { border-left: 3px solid var(--gr); }
+  .block.moe-b { border-left: 3px solid var(--moe); }
+  .arrow-d { text-align: center; color: var(--text-muted); font-size: 13px; line-height: 1; }
+  .residual { font-size: 11.5px; color: var(--text-muted); margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); line-height: 1.6; }
+  .residual code { font-family: var(--font-mono); }
+
+  /* QSA mechanism diagram */
+  .dia { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 18px 16px; box-shadow: var(--shadow); }
+  .dia-row { display: flex; gap: 10px; align-items: stretch; justify-content: center; flex-wrap: wrap; margin: 4px 0; }
+  .dia-box {
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--surface-2);
+    font-size: 12.5px; text-align: center; min-width: 120px;
+  }
+  .dia-box .db-nm { font-weight: 700; font-size: 13px; }
+  .dia-box .db-dim { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); margin-top: 3px; line-height: 1.5; }
+  .dia-box.qsa-bx { border-left: 3px solid var(--qsa); }
+  .dia-box.gdn-bx { border-left: 3px solid var(--gdn); }
+  .dia-box.ng-bx { border-left: 3px solid var(--ngram); }
+  .dia-box.gr-bx { border-left: 3px solid var(--gr); }
+  .dia-arrow { display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 16px; }
+  .tok-strip { display: flex; gap: 3px; justify-content: center; flex-wrap: wrap; }
+  .tok {
+    font-family: var(--font-mono); font-size: 10.5px; padding: 5px 6px; border-radius: 4px;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text-secondary);
+  }
+  .mb { display: flex; gap: 3px; padding: 4px; border: 1px solid var(--qsa); border-radius: 7px; background: color-mix(in srgb, var(--qsa) 8%, transparent); }
+  .mb.dimmed { opacity: .35; border-style: dashed; }
+  .mb.picked { border-color: var(--qsa); box-shadow: 0 0 0 2px color-mix(in srgb, var(--qsa) 35%, transparent); }
+  .dia-note { font-size: 12px; color: var(--text-secondary); text-align: center; margin-top: 10px; line-height: 1.7; }
+  .dia-note code { font-family: var(--font-mono); font-size: 11.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--text-primary); }
+  .dia-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 6px; }
+  @media (max-width: 820px) { .dia-grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 520px) { .dia-grid { grid-template-columns: 1fr; } }
+  .mini-fact { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--surface-2); font-size: 12px; }
+  .mini-fact .mf-k { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  .mini-fact .mf-v { font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .mini-fact .mf-d { color: var(--text-secondary); font-size: 11.5px; margin-top: 2px; line-height: 1.5; }
+
+  /* GR diagram */
+  .gr-lanes { display: grid; grid-template-columns: 1fr repeat(4, 1.2fr) 1fr; gap: 8px; align-items: stretch; }
+  @media (max-width: 820px) { .gr-lanes { grid-template-columns: 1fr; } }
+  .gr-end { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--surface-2); display: flex; flex-direction: column; justify-content: center; text-align: center; font-size: 12.5px; gap: 4px; }
+  .gr-lane { border: 1px solid var(--border); border-left: 3px solid var(--gr); border-radius: 10px; padding: 10px 8px; background: var(--surface-2); font-size: 11.5px; display: flex; flex-direction: column; gap: 6px; text-align: center; }
+  .gr-lane.highway { border-left-color: var(--ngram); background: color-mix(in srgb, var(--ngram) 7%, var(--surface-2)); }
+  .gr-chip { border: 1px solid var(--border); border-radius: 6px; padding: 5px 6px; background: var(--surface-1); font-family: var(--font-mono); font-size: 10.5px; color: var(--text-secondary); line-height: 1.4; }
+  .gr-chip b { color: var(--text-primary); }
+
+  /* MoE diagram */
+  .moe-dia { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: var(--shadow); }
+  .moe-row { display: flex; gap: 10px; align-items: stretch; margin: 6px 0; }
+  .moe-box {
+    flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; background: var(--surface-2);
+    font-size: 12.5px; text-align: center;
+  }
+  .moe-box .mb-nm { font-weight: 600; }
+  .moe-box .mb-dim { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+  .moe-box.gate { border-left: 3px solid var(--warn); }
+  .moe-box.shared { border-left: 3px solid var(--good); }
+  .moe-box.expert { border-left: 3px solid var(--moe); }
+  .moe-experts { display: grid; grid-template-columns: repeat(32, 1fr); gap: 3px; margin: 8px 0; }
+  @media (max-width: 700px) { .moe-experts { grid-template-columns: repeat(16, 1fr); } }
+  .exp-chip {
+    background: var(--moe); color: var(--ink-on-accent); border-radius: 3px; padding: 4px 1px;
+    font-size: 8px; text-align: center; font-family: var(--font-mono); opacity: .25;
+  }
+  .exp-chip.on { opacity: 1; box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 3px var(--moe); }
+  .moe-note { font-size: 12px; color: var(--text-secondary); text-align: center; margin-top: 6px; line-height: 1.6; }
+  .moe-note code { font-family: var(--font-mono); font-size: 11.5px; background: var(--surface-2); padding: 1px 4px; border-radius: 4px; color: var(--text-primary); }
+
+  /* two-col + table + callouts */
+  .two-col { display: grid; grid-template-columns: 1.15fr 1fr; gap: 16px; }
+  @media (max-width: 820px) { .two-col { grid-template-columns: 1fr; } }
+  .table-wrap { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--text-muted); padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2);
+  }
+  tbody td { padding: 8px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody td.code { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+  tbody td.val { font-family: var(--font-mono); font-size: 12.5px; text-align: right; white-space: nowrap; color: var(--text-primary); }
+  tbody tr:hover { background: var(--surface-2); }
+  .cat-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: middle; }
+  .callout {
+    background: var(--surface-1); border: 1px solid var(--border); border-left: 3px solid var(--ngram);
+    border-radius: 10px; padding: 14px 16px; font-size: 13px; color: var(--text-secondary); box-shadow: var(--shadow);
+  }
+  .callout + .callout { margin-top: 14px; }
+  .callout strong { color: var(--text-primary); }
+  .callout code { font-family: var(--font-mono); font-size: 12px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--text-primary); }
+  .callout.gr { border-left-color: var(--gr); }
+  .callout.moe { border-left-color: var(--moe); }
+  .callout.vis { border-left-color: var(--vis); }
+  .callout.off { border-left-color: var(--official); }
+
+  footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); line-height: 1.8; }
+  footer code { font-family: var(--font-mono); }
+  footer a { color: var(--focus); }
+</style>
+</head>
+<body>
+<div class="viz-root" data-palette="gdn,qsa,moe,gr,ngram,vis,mtp">
+
+  <header class="hdr">
+    <div>
+      <h1>Qwen4-Max 模型结构（QSA + GDN 混合 MoE）</h1>
+      <p class="sub">
+        Qwen4 系列首发旗舰 · 稀疏 MoE · 四层周期 = 3× GatedDeltaNet 线性注意力 + 1× Qwen Sparse Attention（QSA）·
+        Gated Residual 四分支门控残差 · 第 2 层 N-gram Embedding · 2.4T 总参 / 71B 激活 / 328B N-gram 池 · 原生视觉 · 1M 上下文
+      </p>
+    </div>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="切换明暗主题">
+      <span id="themeIcon">🌙</span><span id="themeLabel">深色</span>
+    </button>
+  </header>
+
+  <div class="caveat">
+    <strong>数据口径（务必先读）：</strong>Qwen4-Max 于 <strong>2026-11-16</strong> 发布，<strong>目前仅提供 API、未开放权重，没有官方 <code>config.json</code></strong>——
+    总层数、专家数、隐藏维度等 Max 专属数值均未披露。本图中
+    <span class="src-badge off">官方</span>标记的是发布稿/百炼文档明确给出的 Max 事实；
+    <span class="src-badge prev">预览</span>标记的机制与具体数字，来自同一套 Qwen4 架构的开放预览模型
+    <code>Qwen3.8-Flash-Next</code>（<code>model_type=qwen4_exp</code>，有 config 与论文 arXiv:2608.30320），
+    <strong>用于说明机制，不等同于 Max 的层数/维度</strong>。待 Max 或同系小权重开源后本页将按真实 config 修订。
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="k">总参数</div><div class="v">2.4<span class="u">T</span></div></div>
+    <div class="stat"><div class="k">激活 / token</div><div class="v">71<span class="u">B · −25%</span></div></div>
+    <div class="stat"><div class="k">N-gram 嵌入池</div><div class="v">328<span class="u">B</span></div></div>
+    <div class="stat"><div class="k">上下文窗口</div><div class="v">1<span class="u">M tokens</span></div></div>
+    <div class="stat"><div class="k">层周期</div><div class="v">3+1<span class="u">GDN/QSA</span></div></div>
+    <div class="stat"><div class="k">模态</div><div class="v">3<span class="u">文/图/视频</span></div></div>
+  </div>
+
+  <!-- ============ Pipeline ============ -->
+  <section>
+    <h2>整体前向流水线</h2>
+    <p class="sec-desc">
+      原生多模态：图像/视频经视觉塔编码为 token，与文本 token 一同进入嵌入层；嵌入之外，第 2 层额外查一次主机内存里的
+      N-gram 大表注入局部模式记忆。主干按「3 层 GDN 线性注意力 + 1 层 QSA 稀疏注意力」四层周期重复，每层注意力后接同一个稀疏 MoE，
+      层间由 Gated Residual 四分支门控残差连接。末端 FinalNorm + LM Head，并挂 1 层 MTP 推测解码头。
+    </p>
+    <div class="pipeline">
+      <div class="pipe-node vis">
+        <div class="tag">视觉</div>
+        <div class="nm">ViT 视觉塔</div>
+        <div class="meta">原生图像/视频<br/><span class="src-badge prev" style="margin:0;">预览</span>27 blocks · 1152 宽 · patch 16</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-node io">
+        <div class="tag">嵌入</div>
+        <div class="nm">Token Embedding</div>
+        <div class="meta"><span class="src-badge prev" style="margin:0;">预览</span>vocab 248,320</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-node ngram">
+        <div class="tag">层 2 注入</div>
+        <div class="nm">N-gram Embedding 查表</div>
+        <div class="meta"><span class="src-badge off" style="margin:0;">官方</span>Max 池 328B · 主机内存卸载</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-node stack">
+        <div class="tag">混合主干</div>
+        <div class="nm">×N 组四层周期</div>
+        <div class="meta">3 GDN + 1 QSA · 每层 MoE · GR 四分支<br/><span class="src-badge off" style="margin:0;">官方</span>周期模式 · 总层数未披露</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-node io">
+        <div class="tag">输出</div>
+        <div class="nm">FinalNorm + LM Head</div>
+        <div class="meta">RMSNorm → vocab</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-node mtp">
+        <div class="tag">推测解码</div>
+        <div class="nm">MTP Head ×1</div>
+        <div class="meta"><span class="src-badge prev" style="margin:0;">预览</span>内部亦用 QSA</div>
+      </div>
+    </div>
+    <p class="pipe-note">
+      <span class="src-badge off" style="margin:0;">官方</span>发布稿确认三大升级方向：<strong>Attention（GDN + QSA）、Residual（Gated Residual）、Embedding（N-gram）</strong>；
+      71B 激活相比同 2.4T 规模的 Qwen3.8-Max 减少约 <strong>25%</strong>，基座 BPB 在知识/代码/问答/STEM 四类内部评测下降约 5%–13%。
+    </p>
+  </section>
+
+  <!-- ============ Layer strip ============ -->
+  <section>
+    <h2>四层周期排布：3 层 GDN 线性注意力 + 1 层 QSA 稀疏注意力</h2>
+    <p class="sec-desc">
+      每个虚线框是一个四层组，组内前 3 层为 GDN（橙）、第 4 层为 QSA（蓝），周期重复贯穿主干。
+      <strong>Max 的总组数官方未披露</strong>，下图只画出周期模式（示意 6 组后省略）；开放预览模型为 48 层 = 12 组。悬停/点击色块查看该类层的机制细节。
+    </p>
+    <div class="strip-wrap">
+      <div class="strip-legend">
+        <span class="legend-item"><span class="swatch gdn"></span> GDN 线性注意力（组内 3/4）</span>
+        <span class="legend-item"><span class="swatch qsa"></span> QSA 稀疏注意力（组内 1/4）</span>
+        <span class="legend-item">虚线框 = 一个四层组</span>
+      </div>
+      <div class="groups" id="groups"></div>
+      <div class="layer-detail">
+        <div class="ld-k">当前层</div>
+        <div class="ld-v" id="ldTitle">将鼠标移到上方色块查看层细节</div>
+        <div class="ld-k">层类型</div><div class="ld-v" id="ldType">—</div>
+        <div class="ld-k">机制要点</div><div class="ld-v" id="ldMech">—</div>
+        <div class="ld-k">状态 / Cache</div><div class="ld-v" id="ldCache">—</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ QSA mechanism ============ -->
+  <section>
+    <h2>QSA 怎样把全注意力变稀疏：indexer 按 microblock 选块</h2>
+    <p class="sec-desc">
+      QSA 是 Qwen4 的招牌改动。它<strong>不逐 token 打分</strong>：轻量 indexer 先把 K 按每 4 个 token 平均池化成一个 microblock，
+      在块粒度打分，每个查询只保留预算内最高的 512 个块（2,048 token），最终 softmax 仍在这些块对应的<strong>原始未压缩 K/V</strong> 上计算。
+      机制数字来自预览模型 config 与架构论文（§3.2）。
+    </p>
+    <div class="dia">
+      <div class="dia-row">
+        <div class="dia-box qsa-bx">
+          <div class="db-nm">① token 序列</div>
+          <div class="db-dim">因果可见的全部历史 token</div>
+          <div class="tok-strip" style="margin-top:8px;">
+            <div class="mb"><span class="tok">t0</span><span class="tok">t1</span><span class="tok">t2</span><span class="tok">t3</span></div>
+            <div class="mb"><span class="tok">t4</span><span class="tok">t5</span><span class="tok">t6</span><span class="tok">t7</span></div>
+            <div class="mb dimmed"><span class="tok">t8</span><span class="tok">t9</span><span class="tok">t10</span><span class="tok">t11</span></div>
+            <div class="mb dimmed"><span class="tok">…</span><span class="tok">…</span><span class="tok">…</span><span class="tok">…</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="dia-arrow">↓ 每 4 个 index key 平均池化为 1 个块 key（compression ratio r=4，池化后 RMSNorm）</div>
+      <div class="dia-row">
+        <div class="dia-box qsa-bx">
+          <div class="db-nm">② Indexer 块级打分</div>
+          <div class="db-dim">MQA：4 个 query 头 + 1 个共享 key 头 · head_dim 128<br/>ReLU(QK) 逐头求和得块分 · 块因果掩码 · 成本 O(n²/4)</div>
+        </div>
+      </div>
+      <div class="dia-arrow">↓ 每查询按预算保留最高分块（尾部不完整块始终保留）</div>
+      <div class="dia-row">
+        <div class="dia-box qsa-bx">
+          <div class="db-nm">③ Top-512 microblock</div>
+          <div class="db-dim">indexer_budget = 2,048 tokens → 512 块 · 每查询最多读 ≤ 2,048+3 token，与上下文总长无关</div>
+          <div class="tok-strip" style="margin-top:8px;">
+            <div class="mb picked"><span class="tok">t0</span><span class="tok">t1</span><span class="tok">t2</span><span class="tok">t3</span></div>
+            <div class="mb picked"><span class="tok">t4</span><span class="tok">t5</span><span class="tok">t6</span><span class="tok">t7</span></div>
+            <div class="mb picked" style="opacity:.55;"><span class="tok">…</span><span class="tok">…</span><span class="tok">…</span><span class="tok">…</span></div>
+            <div class="mb picked"><span class="tok">块 511</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="dia-arrow">↓ 在选中块的原始 K/V 上跑标准注意力（softmax 分母只含选中位置）</div>
+      <div class="dia-row">
+        <div class="dia-box qsa-bx">
+          <div class="db-nm">④ 稀疏 softmax → 注意力输出</div>
+          <div class="db-dim">K/V 不压缩、不跨层共享索引；1M 上下文实测 prefill 最快 7.6×、decode 4.9×（对比 FlashInfer paged GQA）</div>
+        </div>
+      </div>
+      <div class="dia-grid">
+        <div class="mini-fact"><div class="mf-k">Indexer 结构</div><div class="mf-v">MQA 4Q + 1K</div><div class="mf-d">head_dim 128，轻量 RMSNorm 投影</div></div>
+        <div class="mini-fact"><div class="mf-k">压缩率 r</div><div class="mf-v">4</div><div class="mf-d">4 token / microblock，打分量 ÷4</div></div>
+        <div class="mini-fact"><div class="mf-k">Token 预算 K</div><div class="mf-v">2,048</div><div class="mf-d">= 512 个完整块 + 尾部残块</div></div>
+        <div class="mini-fact"><div class="mf-k">滑窗分支</div><div class="mf-v">无</div><div class="mf-d">没有 SWA，唯一无条件保留的是末尾不完整块</div></div>
+      </div>
+      <div class="dia-note">
+        论文两阶段训练：先 1,000 步稠密蒸馏（约 2B token），再 8,000 步稀疏联合训练（约 200B token，KL 只在选中块上算），与稠密模型的 LM-loss 差距仅约 <code>1e-4</code>。
+        QSA 只替换四层组里的全注意力层，<strong>因此只有 QSA 层保留逐 token KV</strong>，GDN 层只有固定大小循环状态。
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Two layer-type internals ============ -->
+  <section>
+    <h2>两类层的内部结构</h2>
+    <p class="sec-desc">
+      GDN 层与 QSA 层都包在 Gated Residual 四分支残差里（替代传统 Pre-Norm），注意力子层之后接同一个稀疏 MoE 前馈块。
+      下列维度为 <span class="src-badge prev" style="margin:0;">预览</span> 模型（48 层、hidden 2560）口径，机制对 Max 同源。
+    </p>
+    <div class="cards">
+      <div class="card">
+        <h3><span class="swatch gdn" style="width:14px;height:14px;border-radius:4px;"></span> GDN 线性注意力层 <span class="pill gdn" style="margin-left:auto;">组内 3 层</span></h3>
+        <p class="card-sub">GatedDeltaNet — 把历史持续压缩进固定大小状态，状态不随序列变长</p>
+        <div class="flow">
+          <div class="block norm-b"><span class="blk-nm">GR 读门控（替代 RMSNorm）</span><span class="blk-dim">4 分支 · 低秩 d/8</span></div>
+          <div class="arrow-d">↓</div>
+          <div class="block gdn-b"><span class="blk-nm">Causal Conv1d</span><span class="blk-dim">depthwise · kernel=4</span></div>
+          <div class="arrow-d">↓</div>
+          <div class="block gdn-b"><span class="blk-nm">Gated DeltaNet</span><span class="blk-dim">V 48 头 · K 16 头 · dim 128</span></div>
+          <div class="arrow-d">↓</div>
+          <div class="block gdn-b"><span class="blk-nm">Output Gate（sigmoid）</span><span class="blk-dim">gate × attn_out</span></div>
+          <div class="arrow-d">↓</div>
+          <div class="block moe-b"><span class="blk-nm">稀疏 MoE</span><span class="blk-dim">512 专家 top-10 + 1 共享（预览）</span></div>
+        </div>
+        <div class="residual">
+          q/k 经 SiLU + L2Norm，v 经 SiLU；衰减 <code>α=exp[−exp(A)·softplus(·)]</code>、写入门 <code>β=sigmoid</code>，delta 规则更新状态 <code>S_t∈R^{d_k×d_v}</code>。
+          循环状态固定大小，长上下文不增显存；论文内核为 FlashQLA。
+        </div>
+      </div>
+
+      <div class="card">
+        <h3><span class="swatch qsa" style="width:14px;height:14px;border-radius:4px;"></span> QSA 稀疏注意力层 <span class="pill qsa" style="margin-left:auto;">组内 1 层</span></h3>
+        <p class="card-sub">GQA 主注意力 + 块级 indexer，训练时由全注意力经 CPT 替换而来</p>
+        <div class="flow">
+          <div class="block norm-b"><span class="blk-nm">GR 读门控（替代 RMSNorm）</span><span class="blk-dim">4 分支 · 低秩 d/8</span></div>
+          <div class="arrow-d">↓</div>
+          <div class="block qsa-b"><span class="blk-nm">QKV 投影（GQA）</span><span class="blk-dim">Q 24 头 · KV 2 头 · head_dim 256</span></div>
+          <div class="arrow-d">↓</div>
+          <div class="block qsa-b"><span class="blk-nm">Indexer：microblock 池化 r=4 + 块打分</span><span class="blk-dim">MQA 4Q+1K · dim 128</span></div>
+          <div class="arrow-d">↓</div>
+          <div class="block qsa-b"><span class="blk-nm">Top-512 块选择 → 稀疏 softmax</span><span class="blk-dim">预算 2,048 token · 原始 K/V</span></div>
+          <div class="arrow-d">↓</div>
+          <div class="block qsa-b"><span class="blk-nm">partial RoPE + Output Gate</span><span class="blk-dim">rotary 25% · θ=1e7</span></div>
+          <div class="arrow-d">↓</div>
+          <div class="block moe-b"><span class="blk-nm">稀疏 MoE</span><span class="blk-dim">512 专家 top-10 + 1 共享（预览）</span></div>
+        </div>
+        <div class="residual">
+          位置编码在 key 压缩<strong>之后</strong>施加：query 保留 token 位置，压缩 key 取块首位置；<code>mrope_section=[11,11,10]</code>。
+          只有这 1/4 的层产生逐 token KV cache，其余 3/4 是 GDN 固定状态。
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Gated Residual ============ -->
+  <section>
+    <h2>Gated Residual：残差流拆成四条并行门控分支</h2>
+    <p class="sec-desc">
+      传统 Transformer 的单条残差 + 两个 Pre-Norm 被替换为 <strong>4 条并行残差分支</strong>（论文中即 hyper-connection，<code>hc_count=4</code>），
+      注意力与 MoE 子层各有一套 GR 模块：读时按通道做 sigmoid 门控（低秩瓶颈 rank=d/8）再对四分支平均，写时每分支一个数据相关标量 <code>s=2σ(·)</code> 同时注入。
+    </p>
+    <div class="dia">
+      <div class="gr-lanes">
+        <div class="gr-end"><b>隐状态 x</b><span style="color:var(--text-muted);font-size:11.5px;">注意力 / MoE 子层输入</span></div>
+        <div class="gr-lane">
+          <div class="gr-chip"><b>分支 1</b></div>
+          <div class="gr-chip">读门 σ<br/>低秩 d/8</div>
+          <div class="gr-chip">分支态<br/><b>FP8</b> 存储</div>
+          <div class="gr-chip">写门 2σ</div>
+        </div>
+        <div class="gr-lane">
+          <div class="gr-chip"><b>分支 2</b></div>
+          <div class="gr-chip">读门 σ<br/>低秩 d/8</div>
+          <div class="gr-chip">分支态<br/><b>FP8</b> 存储</div>
+          <div class="gr-chip">写门 2σ</div>
+        </div>
+        <div class="gr-lane highway">
+          <div class="gr-chip"><b>分支 3</b><br/>自发 highway</div>
+          <div class="gr-chip">读门 σ<br/>低秩 d/8</div>
+          <div class="gr-chip">平均跨层跳跃<br/><b>10.9 层</b></div>
+          <div class="gr-chip">写门 2σ</div>
+        </div>
+        <div class="gr-lane">
+          <div class="gr-chip"><b>分支 4</b></div>
+          <div class="gr-chip">读门 σ<br/>低秩 d/8</div>
+          <div class="gr-chip">分支态<br/><b>FP8</b> 存储</div>
+          <div class="gr-chip">写门 2σ</div>
+        </div>
+        <div class="gr-end"><b>四分支平均</b><span style="color:var(--text-muted);font-size:11.5px;">送入子层 / 下一组</span></div>
+      </div>
+      <div class="dia-note">
+        论文简化掉了分支混合算子 <code>H_res</code>（少一次残差态读取），也没有人为设计的 highway 初始化——训练后<strong>自然有一条分支承担长程路径</strong>
+        （平均跳跃 10.9 层，其余仅 3.4–3.9 层）。四条分支状态以 <code>FP8</code> 存储，相比 BF16 字节数减半且几乎不掉点；消融中 GR 配置平均分 54.66，对照 Pre-Norm 仅 50.91。
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ N-gram embedding ============ -->
+  <section>
+    <h2>N-gram Embedding：328B 的「记忆」放在主机内存里</h2>
+    <p class="sec-desc">
+      <span class="src-badge off" style="margin:0;">官方</span> Qwen4-Max 另有 <strong>328B</strong> N-gram Embedding 参数，在<strong>第 2 层</strong>注入——
+      选择第 2 层是为了让主机内存预取与第 1 层计算重叠。它把「记忆容量」与「算力参数」解耦：确定性哈希查表、每 token 一次、无矩阵乘，大表常驻主机 RAM 异步搬入，不占显存。
+    </p>
+    <div class="dia">
+      <div class="dia-row">
+        <div class="dia-box ng-bx">
+          <div class="db-nm">前序 token 序列</div>
+          <div class="db-dim">当前 token + 前 1–2 个 token<br/>（2-gram / 3-gram 局部模式）</div>
+        </div>
+        <div class="dia-arrow">→</div>
+        <div class="dia-box ng-bx">
+          <div class="db-nm">确定性多头哈希寻址</div>
+          <div class="db-dim">位置离线预计算 · 无训练参数 · 无需注意力</div>
+        </div>
+        <div class="dia-arrow">→</div>
+        <div class="dia-box ng-bx">
+          <div class="db-nm">N-gram 大表（主机 RAM）</div>
+          <div class="db-dim"><span class="src-badge off" style="margin:0;">官方</span>Max 328B<br/><span class="src-badge prev" style="margin:0;">预览</span>20M 条目 × 2560 维 ≈ 51B · 128 分片</div>
+        </div>
+        <div class="dia-arrow">→</div>
+        <div class="dia-box ng-bx">
+          <div class="db-nm">K/V 投影 + 上下文门控</div>
+          <div class="db-dim">注入第 2 层隐状态 · 查表不低于 4-bit</div>
+        </div>
+      </div>
+      <div class="dia-note">
+        设计灵感来自 Gemma 3n PLE 与 DeepSeek Engram。预览模型中该表占 1-bit 量化包的 <code>39.7%</code>（26.82 GB），近 40% 文件体积是纯 <code>GET_ROWS</code> 数据拷贝、不含任何数学计算；
+        每激活参数服务约 <code>300 token</code>（TPP）。Max 的 328B 为同机制放大版，官方未给表项数/分片数。
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ MoE ============ -->
+  <section>
+    <h2>每层 MoE 前馈（Max 专家数未披露，下图为预览模型口径）</h2>
+    <p class="sec-desc">
+      四层组里每一层注意力后都接同一个稀疏 MoE：路由器对每 token 选 top-10 路由专家，外加 1 个始终激活的共享专家。
+      <strong>512 专家 / top-10 / intermediate 640 是开放预览 <code>qwen4_exp</code> 的配置</strong>；Max 仅披露每 token 总激活 71B（约占 2.4T 的 3%），专家规模待权重开放后确认。
+    </p>
+    <div class="moe-dia">
+      <div class="moe-row">
+        <div class="moe-box" style="flex:0 0 130px;"><div class="mb-nm">Hidden</div><div class="mb-dim">预览 2560</div></div>
+        <div class="moe-box gate"><div class="mb-nm">Router / Gate</div><div class="mb-dim">softmax top-10 · 全局负载均衡 · 路由器仍用 AdamW</div></div>
+      </div>
+      <div class="moe-experts" id="expChips"></div>
+      <div class="moe-row">
+        <div class="moe-box expert"><div class="mb-nm">10 个选中的路由专家（SwiGLU）</div><div class="mb-dim">预览：512 专家 · intermediate 640 · 加权求和</div></div>
+        <div class="moe-box shared" style="flex:0 0 200px;"><div class="mb-nm">1 个共享专家（常驻）</div><div class="mb-dim">每 token 必激活</div></div>
+      </div>
+      <div class="moe-row"><div class="moe-box"><div class="mb-nm">输出（归一化加权求和）</div><div class="mb-dim">回到 GR 四分支写门</div></div></div>
+      <div class="moe-note">
+        <span class="src-badge prev" style="margin:0;">预览</span>每块约 2.52B 专家参数、每 token 仅执行约 54M；48 块合计存储约 121B、执行约 2.6B。
+        <span class="src-badge off" style="margin:0;">官方</span>Max 侧只确认稀疏 MoE 与 71B/token 激活，未给专家数。
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Config table + callouts ============ -->
+  <section class="two-col">
+    <div>
+      <h2>配置参数明细（两级口径）</h2>
+      <p class="sec-desc">
+        绿点 = <span class="src-badge off" style="margin:0;">官方</span>Qwen4-Max 已披露；灰/彩色点 =
+        <span class="src-badge prev" style="margin:0;">预览</span>Qwen3.8-Flash-Next（<code>qwen4_exp</code>）config 与 arXiv:2608.30320 机制值。
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>分组</th><th>参数</th><th style="text-align:right;">值</th></tr></thead>
+          <tbody id="cfgBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div class="callout off">
+        <strong>上线与供给形态</strong><br/>
+        2026-11-16 起在 QwenCloud、阿里云百炼、Qwen Studio、QwenWork、Qoder 等以 API 提供；百炼预览期（11-11 至 11-25）模型 ID
+        <code>qwen4-max-preview</code>，仅 Token Plan。<strong>Max 本体不开放权重</strong>，官方称 Qwen4 系列小尺度模型后续开源。
+        百炼口径：1M 上下文、最大输出 393,216 token，<code>reasoning_effort</code> 支持 low / medium / xhigh（默认 xhigh）。
+      </div>
+      <div class="callout">
+        <strong>328B N-gram 池为什么「便宜」</strong><br/>
+        它不参与矩阵乘、不需要梯度优化器状态（表本身用 Adam、无 weight decay），常驻主机内存并按层 1 计算节奏异步预取，
+        因此几乎不增加 HBM 占用与每 token 算力——容量按内存价格买，激活算力仍只有 71B。
+      </div>
+      <div class="callout gr">
+        <strong>训练侧：Muon + 新 Scaling Law</strong><br/>
+        二维线性层（QKV、GDN 投影、专家 fc1/fc2、N-gram K/V）改用 Muon（Nesterov μ=0.95、8 步 Newton–Schulz 正交化）；
+        embedding、LM Head、MoE 路由器与 GR 低秩矩阵保留 AdamW。取消 batch-size warmup，全程无 loss spike、未用 qk-clip。
+      </div>
+      <div class="callout vis">
+        <strong>原生视觉与 MTP</strong><br/>
+        预览模型视觉塔为 27 块 ViT（1152 宽、patch 16），图文视频共享主干；MTP 仅 1 层草稿头且内部同样使用 QSA，
+        投机步之间复用 top-k 块索引，平均接受长度 4.07（与全注意力 4.06 基本持平）。Max 视觉塔规格未单独披露。
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div><strong>来源：</strong></div>
+    <div>① 阿里云国际新闻稿《Alibaba Unveils Qwen4-Max》(2026-11-16)：2.4T 总参、71B 激活、1M 上下文、原生视觉；</div>
+    <div>② 阿里云百炼文档 <code>qwen4-max-preview</code>：1M 上下文、393,216 最大输出、模态与 reasoning_effort；</div>
+    <div>③ 国内发布报道（智东西/腾讯新闻/华尔街见闻，2026-11-16）：328B N-gram Embedding、GDN+QSA、Gated Residual、第 2 层注入、−25% 激活参数；</div>
+    <div>④ 架构论文《On the Design of Qwen3.8-Next Architecture》(arXiv:2608.30320)：QSA/GR/GDN/PLE/Muon 机制与消融；</div>
+    <div>⑤ Qwen3.8-Flash-Next（<code>qwen4_exp</code>）config 拆解（KGP Talkie、Local AI Zone、hipfire）：48 层、512 专家、indexer 与 hc 参数。</div>
+    <div style="margin-top:8px;">Max 权重与官方 config 尚未发布，本图凡带 <span class="src-badge prev" style="margin:0;">预览</span> 的数字均为同架构机制佐证，不代表 Max 实际配置；开源后将按真实 config 修订。色块采用经 CVD 校验的分类调色板。</div>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- theme ---------- */
+  var root = document.documentElement;
+  var btn = document.getElementById("themeBtn");
+  var icon = document.getElementById("themeIcon");
+  var label = document.getElementById("themeLabel");
+  function applyTheme(t) {
+    root.setAttribute("data-theme", t);
+    icon.textContent = t === "dark" ? "☀️" : "🌙";
+    label.textContent = t === "dark" ? "浅色" : "深色";
+    try { localStorage.setItem("qwenviz-theme", t); } catch (e) {}
+  }
+  var saved = null;
+  try { saved = localStorage.getItem("qwenviz-theme"); } catch (e) {}
+  if (saved) { applyTheme(saved); }
+  else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) { applyTheme("dark"); }
+  btn.addEventListener("click", function () {
+    var cur = root.getAttribute("data-theme") ||
+      (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    applyTheme(cur === "dark" ? "light" : "dark");
+  });
+
+  /* ---------- periodic layer strip (pattern only; Max depth undisclosed) ---------- */
+  var GROUPS = 6;            // schematic; preview model has 12 groups (48 layers)
+  var groupsEl = document.getElementById("groups");
+  var html = "";
+  for (var g = 0; g < GROUPS; g++) {
+    html += '<div class="group">';
+    for (var p = 0; p < 4; p++) {
+      var isQsa = (p === 3);
+      var cls = isQsa ? "qsa" : "gdn";
+      var idx = g * 4 + p;
+      html += '<div class="cell ' + cls + '" tabindex="0" role="button" data-g="' + g +
+        '" data-p="' + p + '" data-type="' + cls + '" aria-label="第 ' + (g + 1) + ' 组第 ' + (p + 1) + ' 层">' +
+        '<span class="glabel">' + idx + '</span></div>';
+    }
+    html += '</div>';
+  }
+  html += '<div class="strip-more" title="周期重复，Max 总组数未披露">…</div>';
+  groupsEl.innerHTML = html;
+
+  var ldTitle = document.getElementById("ldTitle");
+  var ldType = document.getElementById("ldType");
+  var ldMech = document.getElementById("ldMech");
+  var ldCache = document.getElementById("ldCache");
+  var activeCell = null;
+
+  function showLayer(g, p, type) {
+    if (activeCell) activeCell.classList.remove("active");
+    activeCell = groupsEl.querySelector('.cell[data-g="' + g + '"][data-p="' + p + '"]');
+    if (activeCell) activeCell.classList.add("active");
+    ldTitle.textContent = "第 " + (g + 1) + " 个四层组 · 组内第 " + (p + 1) + " 层（模式示意，Max 总层数未披露）";
+    if (type === "qsa") {
+      ldType.innerHTML = '<span class="pill qsa">QSA 稀疏注意力</span> 每组第 4 层，全模型仅 1/4 的层属此类';
+      ldMech.innerHTML = 'GQA 主注意力（预览口径 Q 24 头 / KV 2 头，head_dim 256）+ MQA indexer（4Q+1K，dim 128）：' +
+        'K 按 r=4 池化为 microblock，块级打分后每查询留 top-512 块（2,048 token 预算），softmax 在选中块的原始 K/V 上计算；partial RoPE 25%。';
+      ldCache.innerHTML = '唯一保留逐 token KV 的层：只有这 1/4 的层随上下文产生 KV cache；索引<strong>不跨层共享</strong>，无滑窗分支。';
+    } else {
+      ldType.innerHTML = '<span class="pill gdn">GDN 线性注意力</span> 组内第 ' + (p + 1) + ' / 3 层，全模型 3/4 的层属此类';
+      ldMech.innerHTML = 'Causal Conv1d（kernel=4）→ GatedDeltaNet（预览口径 V 48 头 / K 16 头，dim 128）：' +
+        'q/k 经 SiLU+L2Norm、delta 规则更新固定状态 S，sigmoid 输出门控；历史被持续压缩为「滚动摘要」。';
+      ldCache.innerHTML = '只有固定大小循环状态（conv state + temporal state），<strong>不随序列长度增长</strong>，长上下文显存恒定；论文内核 FlashQLA。';
+    }
+  }
+  groupsEl.addEventListener("mouseover", function (e) {
+    var c = e.target.closest(".cell"); if (c) showLayer(+c.dataset.g, +c.dataset.p, c.dataset.type);
+  });
+  groupsEl.addEventListener("focusin", function (e) {
+    var c = e.target.closest(".cell"); if (c) showLayer(+c.dataset.g, +c.dataset.p, c.dataset.type);
+  });
+  groupsEl.addEventListener("click", function (e) {
+    var c = e.target.closest(".cell"); if (c) showLayer(+c.dataset.g, +c.dataset.p, c.dataset.type);
+  });
+  showLayer(0, 0, "gdn");
+
+  /* ---------- MoE expert chips (preview-model figures) ---------- */
+  var N_EXP = 512, TOPK = 10;
+  var expEl = document.getElementById("expChips");
+  var chips = "";
+  for (var e = 0; e < N_EXP; e++) {
+    chips += '<div class="exp-chip' + (e < TOPK ? ' on' : '') + '" title="专家 ' + e + '">' + e + '</div>';
+  }
+  expEl.innerHTML = chips;
+
+  /* ---------- config table ---------- */
+  var rows = [
+    ["发布","发布日期 / 供给形态","2026-11-16 · 仅 API，权重未开放","off"],
+    ["参数","总参数","2.4T（2.4 万亿）","off"],
+    ["参数","每 token 激活参数","71B（较 Qwen3.8-Max −25%，约 3%）","off"],
+    ["嵌入","N-gram Embedding 池","328B（主机内存卸载，第 2 层注入）","ngram"],
+    ["长度","上下文窗口","1,000,000 (1M) tokens","off"],
+    ["长度","最大输出（百炼预览 API）","393,216 tokens","off"],
+    ["模态","输入模态","文本 / 图像 / 视频（原生视觉）","vis"],
+    ["主干","层周期","3 GDN + 1 QSA，四层重复（总层数未披露）","qsa"],
+    ["残差","Gated Residual","4 并行分支 + 动态读/写门控","gr"],
+    ["推理","reasoning_effort","low / medium / xhigh（默认 xhigh）","off"],
+    ["预览模型","model_type","qwen4_exp（Qwen3.8-Flash-Next）","neu"],
+    ["预览模型","层数 / 分组","48 层 = 12 组 ×（3 GDN + 1 QSA）","neu"],
+    ["预览模型","hidden_size","2,560","neu"],
+    ["MoE","路由专家 / top-k","512 / 10 + 1 共享专家","moe"],
+    ["MoE","专家 intermediate_size","640","moe"],
+    ["GDN","value / key 头 · dim","48 / 16 · 128（conv kernel=4）","gdn"],
+    ["QSA","Q / KV 头 · head_dim","24 / 2（GQA 12:1）· 256","qsa"],
+    ["QSA","indexer 结构","MQA 4Q+1K · head_dim 128","qsa"],
+    ["QSA","压缩率 / 预算","r=4 · 2,048 token = 512 microblock","qsa"],
+    ["QSA","滑窗分支 / 跨层共享","无 / 无（逐层独立选择）","qsa"],
+    ["位置编码","RoPE","partial 0.25 · θ=1e7 · mrope [11,11,10]","qsa"],
+    ["残差","hc_count / 低秩 rank","4 / 320（=d/8）· 分支态 FP8","gr"],
+    ["PLE","N-gram 表（预览）","20M 条目 · 2/3-gram · 128 分片 ≈ 51B","ngram"],
+    ["MTP","推测解码头","1 层（预览约 4B，内部用 QSA）","mtp"],
+    ["视觉","ViT（预览口径）","27 blocks · 宽 1152 · patch 16","vis"],
+    ["词表","vocab_size","248,320","neu"],
+    ["长度","原生 / YaRN 扩展","262,144 → 1,048,576（×4，预览口径）","neu"],
+    ["训练","优化器","Muon 为主；embedding/router/GR 低秩用 AdamW","neu"]
+  ];
+  var dc = {
+    off: "var(--official)", gdn: "var(--gdn)", qsa: "var(--qsa)", moe: "var(--moe)",
+    gr: "var(--gr)", ngram: "var(--ngram)", vis: "var(--vis)", mtp: "var(--mtp)", neu: "var(--neutral)"
+  };
+  var tb = document.getElementById("cfgBody");
+  var th = "";
+  rows.forEach(function (r) {
+    th += '<tr><td><span class="cat-dot" style="background:' + dc[r[3]] + '"></span>' + r[0] +
+      '</td><td class="code">' + r[1] + '</td><td class="val">' + r[2] + '</td></tr>';
+  });
+  tb.innerHTML = th;
+})();
+</script>
+</body>
+</html>

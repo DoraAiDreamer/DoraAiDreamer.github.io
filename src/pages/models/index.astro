@@ -4,6 +4,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 // 新增模型时：把交互 HTML 放入 public/models/，在此数组追加一项即可（按录入时间倒序也可）
 const models = [
   {
+    href: "/models/qwen4-max.html",
+    name: "Qwen4-Max",
+    vendor: "阿里通义",
+    added: "2026-11 录入",
+    tags: ["MoE", "QSA 稀疏注意力", "GDN 线性注意力", "门控残差", "N-gram 记忆", "多模态"],
+    desc: "Qwen4 首发旗舰（仅 API，权重未开放）：2.4T 总参、71B 激活/token（−25%）、另有 328B N-gram 嵌入池挂第 2 层、1M 上下文、原生视觉。主干按「3 GDN 线性 + 1 QSA 稀疏」四层周期重复；QSA 用 MQA indexer 把 K 按 4-token microblock 池化、每查询选 top-512 块（2048 token）在原始 K/V 上做稀疏 softmax，无滑窗；Gated Residual 四分支门控残差（FP8 态）。Max 层数/专家数未披露，机制以同架构开放预览 qwen4_exp（48 层、512 专家 top-10）佐证。",
+  },
+  {
     href: "/models/deepseek-v4.1-flash.html",
     name: "DeepSeek-V4.1-Flash",
     vendor: "深度求索",
