@@ -1,0 +1,48 @@
+---
+// 图2：label-token readout 的单请求数据流（瘦身版：只讲一个请求怎么读出概率，原语与 candidate-path 移出）
+---
+
+<figure>
+  <svg viewBox="0 0 640 248" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="jev-ro-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">一次前向，读出选项上的概率分布</text>
+
+      {/* 左：输入 */}
+      <rect x="20" y="52" width="172" height="132" rx="10" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="106" y="76" font-size="12" font-weight="bold" fill="#0c5f74" text-anchor="middle">输入（64k 窗口内）</text>
+      <text x="34" y="102" font-size="10.5" fill="#334155">state：网页 DOM / 邮件</text>
+      <text x="34" y="120" font-size="10.5" fill="#334155">文本 / 业务 JSON……</text>
+      <text x="34" y="146" font-size="10.5" fill="#334155">questions：类型化问题</text>
+      <text x="34" y="164" font-size="10.5" fill="#334155">同 state 多问题并行评估</text>
+
+      <line x1="196" y1="118" x2="228" y2="118" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#jev-ro-arw)"/>
+
+      {/* 中：骨干 */}
+      <rect x="232" y="74" width="128" height="88" rx="10" fill="#e4f5ec" stroke="#0f9d68" stroke-width="1.6"/>
+      <text x="296" y="110" font-size="12" font-weight="bold" fill="#0a7a50" text-anchor="middle">Transformer</text>
+      <text x="296" y="130" font-size="11" fill="#0a7a50" text-anchor="middle">单次前向</text>
+      <text x="296" y="148" font-size="10.5" fill="#0a7a50" text-anchor="middle">无解码循环</text>
+
+      <line x1="364" y1="118" x2="396" y2="118" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#jev-ro-arw)"/>
+
+      {/* 右：logits 读数 */}
+      <rect x="400" y="52" width="220" height="132" rx="10" fill="#fff" stroke="#94a3b8"/>
+      <text x="510" y="76" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">选项标签 token 的 logits</text>
+
+      <text x="416" y="108" font-size="11" fill="#334155">是</text>
+      <rect x="452" y="97" width="122" height="14" rx="3" fill="#e2e8f0"/>
+      <rect x="452" y="97" width="111" height="14" rx="3" fill="#0f9d68"/>
+      <text x="582" y="108" font-size="10.5" fill="#0a7a50" text-anchor="end">0.91</text>
+
+      <text x="416" y="138" font-size="11" fill="#334155">否</text>
+      <rect x="452" y="127" width="122" height="14" rx="3" fill="#e2e8f0"/>
+      <rect x="452" y="127" width="11" height="14" rx="3" fill="#94a3b8"/>
+      <text x="582" y="138" font-size="10.5" fill="#64748b" text-anchor="end">0.09</text>
+
+      <text x="510" y="168" font-size="10" fill="#64748b" text-anchor="middle">softmax + 拟合温度缩放 → 校准概率</text>
+
+      <text x="320" y="222" font-size="11" fill="#64748b" text-anchor="middle">所有选项在同一次前向里并行打分；读数会偏，校准是否可信要看第 5 章的证据</text>
+    </g>
+  </svg>
+</figure>

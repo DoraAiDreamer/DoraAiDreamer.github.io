@@ -1,0 +1,57 @@
+---
+// 图3：决策模型的静态结构——训练侧与推理侧双泳道（复现方 Lev 设计，非 Jev 官方确认）
+---
+
+<figure>
+  <svg viewBox="0 0 640 372" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="jev-arch-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">决策模型的静态结构：训练侧与推理侧</text>
+
+      {/* 共享骨干 */}
+      <rect x="180" y="148" width="280" height="56" rx="10" fill="#f2f8fa" stroke="#0085a1" stroke-width="1.8"/>
+      <text x="320" y="172" font-size="12.5" font-weight="bold" fill="#0c5f74" text-anchor="middle">因果 Transformer 骨干（与生成式 LLM 同构）</text>
+      <text x="320" y="191" font-size="10.5" fill="#006377" text-anchor="middle">复现路线：Qwen3.5-4B base + 全层 LoRA（Lev：r32，单卡 H100）</text>
+
+      {/* 训练侧泳道 */}
+      <rect x="20" y="44" width="600" height="88" rx="12" fill="#fdf6ec" stroke="#e6a23c" stroke-dasharray="6 4"/>
+      <text x="36" y="64" font-size="11.5" font-weight="bold" fill="#b97a1f">训练侧（一次性）</text>
+      <rect x="36" y="76" width="132" height="42" rx="8" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="102" y="94" font-size="10.5" fill="#b97a1f" text-anchor="middle">训练信号</text>
+      <text x="102" y="110" font-size="10" fill="#b97a1f" text-anchor="middle">交叉熵 + RPS 惩罚</text>
+      <line x1="172" y1="97" x2="196" y2="97" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#jev-arch-arw)"/>
+      <rect x="200" y="76" width="132" height="42" rx="8" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="266" y="94" font-size="10.5" fill="#b97a1f" text-anchor="middle">三类任务头</text>
+      <text x="266" y="110" font-size="10" fill="#b97a1f" text-anchor="middle">Noul / Choice / Score</text>
+      <line x1="336" y1="97" x2="360" y2="97" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#jev-arch-arw)"/>
+      <rect x="364" y="76" width="132" height="42" rx="8" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="430" y="94" font-size="10.5" fill="#b97a1f" text-anchor="middle">留出验证集</text>
+      <text x="430" y="110" font-size="10" fill="#b97a1f" text-anchor="middle">拟合温度 T / Platt</text>
+      <line x1="430" y1="118" x2="430" y2="146" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#jev-arch-arw)"/>
+      <line x1="266" y1="118" x2="266" y2="146" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#jev-arch-arw)"/>
+
+      {/* 推理侧泳道 */}
+      <rect x="20" y="220" width="600" height="96" rx="12" fill="#eef7f2" stroke="#0f9d68" stroke-dasharray="6 4"/>
+      <text x="36" y="240" font-size="11.5" font-weight="bold" fill="#0a7a50">推理侧（每次请求）</text>
+      <rect x="36" y="252" width="124" height="46" rx="8" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="98" y="271" font-size="10.5" fill="#0a7a50" text-anchor="middle">state + 类型化</text>
+      <text x="98" y="287" font-size="10.5" fill="#0a7a50" text-anchor="middle">questions</text>
+      <line x1="164" y1="275" x2="188" y2="275" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#jev-arch-arw)"/>
+      <rect x="192" y="252" width="124" height="46" rx="8" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="254" y="271" font-size="10.5" fill="#0a7a50" text-anchor="middle">单次前向</text>
+      <text x="254" y="287" font-size="10" fill="#0a7a50" text-anchor="middle">无解码循环</text>
+      <line x1="320" y1="275" x2="344" y2="275" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#jev-arch-arw)"/>
+      <rect x="348" y="252" width="124" height="46" rx="8" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="410" y="271" font-size="10.5" fill="#0a7a50" text-anchor="middle">标签 token</text>
+      <text x="410" y="287" font-size="10" fill="#0a7a50" text-anchor="middle">logits 读数</text>
+      <line x1="476" y1="275" x2="500" y2="275" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#jev-arch-arw)"/>
+      <rect x="504" y="252" width="100" height="46" rx="8" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="554" y="271" font-size="10.5" fill="#0a7a50" text-anchor="middle">softmax(z/T)</text>
+      <text x="554" y="287" font-size="10" fill="#0a7a50" text-anchor="middle">校准概率</text>
+      <line x1="320" y1="204" x2="320" y2="220" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#jev-arch-arw)"/>
+
+      <text x="320" y="340" font-size="11" fill="#64748b" text-anchor="middle">与 BERT 式序列分类的差异：类别编码为词表标签 token、集合随请求变化；BERT 式是固定 num_labels 的独立线性头</text>
+      <text x="320" y="358" font-size="10.5" fill="#94a3b8" text-anchor="middle">结构细节来自开源复现 Lev 与第三方拆解，TypeSafe 未公开 Jev 权重与结构论文</text>
+    </g>
+  </svg>
+</figure>

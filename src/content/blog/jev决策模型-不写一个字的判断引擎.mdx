@@ -1,0 +1,351 @@
+---
+title: "Jev 决策模型：不写一个字的判断引擎"
+subtitle: "System One 决策模型的结构、校准训练与 prefill-only 部署"
+date: 2026-11-18
+author: "DoraAiDreamer"
+category: "大模型"
+tags:
+  - "Jev"
+  - "决策模型"
+  - "System One"
+  - "RLCD"
+  - "vLLM"
+  - "模型路由"
+---
+
+import Expand from "../../components/Expand.astro";
+import JevCompareFigure from "../../components/JevCompareFigure.astro";
+import JevReadoutFigure from "../../components/JevReadoutFigure.astro";
+import JevArchFigure from "../../components/JevArchFigure.astro";
+import JevTimelineFigure from "../../components/JevTimelineFigure.astro";
+import JevStackFigure from "../../components/JevStackFigure.astro";
+
+想象一个浏览器 Agent 在含 7 个可点元素的页面上自动操作。一个 30 步的任务，每一步都要回答同一道选择题：下一步点哪个。我们算两笔账，数字全部来自第 6 章引用的官方 cookbook（每组 15 次调用、平均往返）：
+
+- **时间账**：用生成式大模型逐 token 写决策，每步 1.1–13.9 秒，30 步合计约 **33–417 秒**；换成决策模型，每步 0.111–0.114 秒，30 步约 **3.3–3.4 秒**。
+- **成本账（决策模型侧）**：每次调用 0.000043–0.000046 美元，30 次约 **0.0013–0.0014 美元**。生成式对照侧的单次成本单位在公开 cookbook 中没有给全，本文不猜数，只在第 6 章标注待核。
+
+同一个决策，两种答法的差距来自一个根本选择：大模型把判断**写成一段 JSON 再解析**，而 2026 年 9 月发布的 **Jev** 一个字都不生成，一次前向传播直接在选项上读出概率。它把这类模型命名为 **System One（系统一）决策模型**，与逐 token 慢思考的生成式 LLM（System Two）相对。
+
+本文回答六个问题：Jev 的模型结构与生成式 LLM 有何异同；单次前向如何读出类型化概率；RLCD 训练方法凭什么让概率可信；性能与成本数字各自是什么口径；用 vLLM 自托管这类模型与生成式部署差在哪；它的适用边界与故障面在哪里。
+
+阅读门槛：读过[《图解大模型（入门篇）》](/blog/图解大模型-一口气搞懂大模型的骨架/)即可，需要了解自回归解码、logits/softmax、SFT/RLHF；部署章节另需[连续批处理](/blog/连续批处理-每个迭代步重新组批/)、[KV Cache](/blog/pagedattention-给kv-cache装上虚拟内存/)与 [PD 分离](/blog/pd分离-把prefill和decode拆开部署/)的基础。
+
+<Expand title="术语速查（先扫一眼，读完全文再回看）">
+
+- **System One / System Two（系统一/系统二）**：卡尼曼《思考，快与慢》的比喻——系统一快速直觉、系统二缓慢推理。Jev 借作品类名，不是认知科学论断。
+- **state（状态）**：决策模型的输入，字符串、JSON 或数组，如网页 DOM、邮件正文、业务上下文。
+- **Noul / Choice / Score / Box**：四种类型化问题原语——是否判断、单选、量表打分、图像边框定位（Box 为 1.14 新增实验特性）。
+- **label-token readout（标签 token 读出）**：给每个选项分配一个标签 token，一次前向后直接读这些 token 位置上的 logits，不经过解码。
+- **校准（calibration）/ ECE**：报 0.8 的样本集合长期约 80% 发生，概率就是校准的；ECE（期望校准误差）衡量偏离程度。本文的校准指概率刻度，与[《大模型评测》](/blog/大模型评测-分数是怎么来的/)里裁判一致率那个「校准」不是同一个意思。
+- **RLCD 与 proper scoring rule**：RLCD 是面向校准决策的强化学习；proper scoring rule（严格适当评分规则）是一类奖励函数，在它下面如实报告信念是最优策略。
+
+</Expand>
+
+## 1. 背景与定位：一家不造 God 模型的公司
+
+Jev 由旧金山公司 **TypeSafe AI** 推出。公司 2024 年成立，创始人兼 CEO **Diogo Almeida** 是 InstructGPT 论文（arXiv:2203.02155）的第四作者，先后在 OpenAI 后训练团队与 Google Brain 工作 [1]。2026 年 9 月 15 日公司走出隐身模式，同步发布三件套：Jev 模型、RLCD 训练方法与并行采样架构；次日媒体披露其完成 4000 万美元种子轮，DCVC 领投、估值约 2 亿美元 [2]。公司口号是 **Build Prod, Not God**——做生产能用的，不造万能神模型。
+
+名字取自 19 世纪经济学家威廉·斯坦利·杰文斯（William Stanley Jevons）。杰文斯悖论说的是：蒸汽机效率提升让煤更便宜，煤炭总消耗反而上升，因为低价催生了大量新用途。TypeSafe 借此寓意：决策单位成本每降一个数量级，被解锁的判断场景会更多。
+
+用比喻帮助理解：决策降价像电价下降，便宜到一定程度，原来舍不得通电的设备都会接进来。但这个比喻有两条失灵边界：其一，经典悖论依赖需求弹性与新用途涌现，决策降价也可能只**替代**了既有 LLM 调用（替代效应），未必带来总量反增；其二，反弹的前提是 state 组装成本同步下降，而第 9 章会说明，这恰是决策模型落地的主要成本。因此杰文斯寓意是厂商叙事，不是因果结论。
+
+System One 这个品类名同样是比喻，三条围栏需要先讲清：第一，人脑的系统一与系统二共享同一套神经网络，工程上却是两个独立模型、两个计费账户；第二，人类直觉不输出校准概率、没有 schema 约束，Jev 的「系统一」是产品品类名而非脑机制；第三，Jev 没有跨调用的经验记忆，是无状态（stateless）模型，这一点直接预告了第 9 章的序贯决策短板。它对自己的定位是「前沿智能函数调用」：非结构化状态输入，类型化概率决策输出。
+
+## 2. 决策接口：四种类型化原语与双约束窗口
+
+Jev 的请求由一份 state 和一组类型化 questions 组成，问题有四种原语：
+
+| 原语 | 输出 | 约束 | 典型用途 |
+|---|---|---|---|
+| Noul | 是/否两个概率 | 二元 | 欺诈判定、测试是否 flaky |
+| Choice | 选项上的概率分布 | 单选，硬顶 255 项，超限返回 HTTP 400 | 动作选择、意图路由 |
+| Score | 有序量表位置 | 2–10 级，level 之间禁止数值插值 | 相关性评级、风险评分 |
+| Box | 图像边框坐标 | 1.14 新增，依赖图像 Danger-Zone header，实验特性 | 视觉定位 |
+
+请求形状如下（字段名依据官方文档 2026-11 快照整理，生产代码请以 [docs.typesafe.ai](https://docs.typesafe.ai/models) 为准并钉版本号）：
+
+```json
+POST /v1/systemone
+{
+  "model": "jev-latest",
+  "state": { "url": "...", "dom": "..." },
+  "questions": {
+    "is_fraud": { "type": "noul",
+                  "instructions": "这封邮件是欺诈吗？" },
+    "next": { "type": "choice",
+              "criteria": ["点击付款", "关闭页面", "转人工"] }
+  }
+}
+```
+
+三个工程约束值得单独说明。
+
+**上下文是双约束，不是单一窗口。** 每次请求合计（state 加全部 questions）不超过 64k token；单个问题口径（state 加任一单题）不超过 32k；问题数量没有独立上限。262k 长上下文与图像输入分别靠 `TypeSafe-Danger-Zone-Long-Context: true` 和 `TypeSafe-Danger-Zone-Images: true` 两个请求头开通，官方明确标注更慢、准确率更低。线上 `jev-latest` 别名当前指向 1.14（2026-10-14 发布），而第 9 章引用的学术评测钉的是 1.13，两个版本的数字不能混用。
+
+**Choice 和 Score 还会返回一个独立的 confidence 字段。** 它由概率分布的形状确定性导出（Choice 的公式为 (K·max(p)−1)/(K−1)），衡量分布的集中程度，不是第二份正确率预测，也不等于校准概率；Noul 没有这个字段。第 10 章的阈值分流因此分两种：在概率上设阈，还是在 confidence 上设阈。
+
+**结构化错误率为 0 是格式维度的保证。** 返回值只能落在预声明选项上，schema 之外的输出在架构上不存在。但决策正确率（语义维度）没有这种保证——官方 evals 的参考标签本身还是 GPT-6 Astra、Claude Fable 5.1 的模型共识而非人工真值。这两件事不能混为一谈。
+
+## 3. 推理机制：单次前向的 label-token readout
+
+先接入门篇的知识：生成式模型每次前向本来就会产生全词表的 logits，采样器挑一个 token 拼回上下文，再跑下一次前向。Jev 做的事情，是**停在第一步，只取选项那几维**。
+
+具体分三步。第一步，给每个选项映射一个标签 token，比如 Noul 的「是/否」各占一个。第二步，state 与问题进入 Transformer 跑完一次前向，不进入「采样—拼接—再前向」的解码循环，直接读取标签 token 位置上的 logits，所有选项在这一次前向里并行打分。第三步，logits 经 softmax 与拟合温度缩放，输出概率分布。
+
+<JevCompareFigure />
+
+*图 1：同一个决策任务的两条路径。生成式 LLM 把判断写成 JSON 再解析，Jev 直接在选项标签上读 logits；图中数字为官方口径，实验条件见第 6 章。*
+
+<JevReadoutFigure />
+
+*图 2：一次前向读出选项概率的数据流。「读表」比喻的失灵边界是——这张表是模型自己画的，读数会偏，是否可信要看第 5 章的校准证据。*
+
+这与 LLM 的 JSON mode 不是一回事。JSON mode 属于约束解码：自回归循环仍然完整执行，只是每一步把非法续接 token 屏蔽掉，延迟和输出计费照常发生。Jev 路径里根本没有解码阶段。
+
+三个工程后果各有成立条件。延迟上，计算量等价于一次 prefill，与选项数量近似无关；官方口径 70–500 毫秒，第三方实测的中位往返在 335–346 毫秒量级，第 6 章会把厂商口径、第三方往返、本地引擎三类数字分开。计费上，没有输出 token，只按输入计价（0.042 美元/百万 token）。格式保证则来自读出头本身，不依赖提示词或失败重试。
+
+这套机制并不陌生。[《大模型评测》](/blog/大模型评测-分数是怎么来的/)讲过 likelihood 判分：不让模型生成，只比较各选项第一个 token 的对数概率，便宜到能跑几万道题。Jev 做的，是把同一机制从评测协议做成了带 SLA 的独立服务。
+
+## 4. 模型结构：生成式骨干加标签读出头
+
+TypeSafe 没有公开 Jev 的权重与结构论文，这一章的细节主要来自开源复现 **Lev** 与第三方技术拆解 [3]，凡复现方设计均标注，不等于 Jev 官方确认。
+
+<JevArchFigure />
+
+*图 3：训练侧与推理侧的静态组件解剖。图 2 是一个请求的动态数据流，本图是静态结构，两者互补。*
+
+**骨干没有换。** 复现路线是因果 Transformer 文本骨干加全层 LoRA（Lev 用 Qwen3.5-4B base，LoRA rank 32，单卡 H100 训练约 7.8 小时）。LoRA 是一种只训练少量附加参数的微调法，Transformer 层本身与生成式模型同构，没有新发明的网络。
+
+**换的是读出头。** 每个选项保留一个标签 token（复现方记法 `<opt_0 … opt_{K-1}>`），在指定读出位置只取这些 token 的 logits。复现方选择复用原生 LM head 而不是新增冻结的线性探针，理由是 LM head 与全词表（20 万以上）向量共享几何（此点目前只有单一来源）。当选项超过可分配的标签数时，Lev 用一个 candidate-path head 让隐状态直接匹配各选项文本，解除数量上限；Jev 官方接口仍封顶 255。
+
+与 BERT 式序列分类的差异可以用一张小表概括：
+
+| 维度 | BERT 式序列分类 | Jev 式标签读出 |
+|---|---|---|
+| 输出头 | 独立线性分类头 | 复用原生 LM head |
+| 类别集合 | 加载时固定 num_labels | 编码为词表标签，随请求变化 |
+| 改标签 | 重新训练或换头 | 零样本改写选项文本 |
+| vLLM 对应 | pooling `/classify` | generate 上的 `/generative_scoring`（第 7 章） |
+
+多问题请求的处理靠 tree batching，说白话就是同一前缀只算一次、多个问题共享这份计算——它与第 7 章的前缀缓存正好呼应。
+
+## 5. 训练方法：RLCD、校准目标与证据边界
+
+Jev 真正声称的新东西在训练侧：**RLCD**（Reinforcement Learning for Calibrated Decisions，面向校准决策的强化学习）。先看它要解决谁的问题。
+
+RLHF 优化的是标注员偏好，副产品是讨好型输出与过度自信；RLVR（可验证奖励强化学习，DeepSeek-R1 路线）只覆盖答案能被程序判对错的任务，数学题可以、「这封邮件像不像欺诈」不行。RLCD 把奖励信号换成概率的诚实度：模型对一批样本报 0.8，这批样本长期就该有约 80% 真的发生。它的思想内核是 proper scoring rule——在这种评分函数下，如实报告信念的期望得分最高，虚张声势或过度谦虚都会被扣分。
+
+用一个最小数值例子体会。二分类事件发生记 1、不发生记 0，Brier 分数是预测概率与结果的均方误差：事件发生时，报 0.9 的罚分是 (1−0.9)²=0.01，报 0.6 的罚分是 (1−0.6)²=0.16；事件不发生时反过来，报 0.9 罚 0.81、报 0.6 罚 0.36。长期看，贴近真实频率的报价总罚分最低。用比喻帮助理解：这像保险公司给单张保单定价，单张保单赔不赔无法保证，但组合的赔付率会收敛到精算概率；围栏是，校准描述的是集合而非任何单次事件。RLCD 能落地还有一个前提：结果可观测、标签可回流，纯主观任务没有这个信号，这也是官方未公开细节中最关键的缺口。
+
+校准要分两层看。第一层是出厂的头级温度，对保留 logits 做 softmax(z/T)，温度 T 按 choice、noul、score 三类头分别在留出验证集拟合（复现方给出过 0.85、1.5547 等示例值，仅为单来源的示例，不是通用参数）。第二层是应用侧的事后校准，代表方法是 Platt scaling：在 logits 上再拟合一个带斜率与截距的 sigmoid，p′=σ(ax+b)。
+
+第二层不是可有可无。Waterloo 大学的研究（arXiv:2611.11480，2026-11-08）在 TREC 人工标注上测试发现：Jev 评分高于 0.9 的条目，只有 **66%** 真的相关；而且这不是 Jev 独有的问题，同场 FLAN-UL2 只有 64%、MiniLM 42%，原文措辞是「每个模型都过度乐观」。研究还统计到，Jev 在 2786 个条目对上对 1006 对输出了精确的 0 或 1，其中 158 对站错了边——极端自信是过度自信的直接表现。在 DL19（2257 对）上拟合的两参数 Platt 校准，可以迁移到 DL21 并显著修正偏差 [4]。与此对照，大规模评测在 22 个 Choice 数据集、279925 个答案上测得池化 ECE 仅 0.028，说明同分布内开箱校准良好。两份证据合起来的结论是：**跨任务、跨域不保证开箱校准，校准维护是上线后的持续工作。**
+
+证据边界必须讲清楚。截至 2026 年 11 月，TypeSafe 没有发表 RLCD 论文或校准曲线，外界只知道目标层面的描述。社区的 Laya、NanoJev 公开了 proper scoring rule 的 RL 实现，但没有一方声称还原了 RLCD。NanoJev 的消融更耐人寻味：普通交叉熵的 L² 误差 0.00258，反而低于采样式适当奖励策略梯度的 0.00338——不过这个实验跑在合成 MLP 小基准上（已知真实概率、样本量 1536/768/2048），作者自己声明只支持机制正确性、不构成优越性断言。换句话说，「校准必须靠 RL」目前缺乏语言任务级的第三方证据。复现方还提醒两点：池化 ECE 可能掩盖分任务、分上下文长度的校准漂移；温度缩放修不了 one-hot 标签面对不确定性事件的问题，需要软标签。
+
+## 6. 性能与成本：三档口径分开看
+
+Jev 的宣传数字很猛，但不同口径混在一起必然误判。下面按证据等级分三档。
+
+**表 A：厂商自测口径**（来源 TypeSafe 官方博客与文档，对照对象为前沿推理型 LLM）
+
+| 指标 | Jev | 对照 |
+|---|---|---|
+| 单次延迟 | 70–500 毫秒 | 3–329 秒 |
+| 输入价格 | 0.042 美元/百万 token | 常见 LLM 0.2–10 美元/百万 |
+| 输出价格 | 免费（零输出 token） | 输出价通常约输入 5 倍 |
+| 加速比 | 40–200 倍（区间，非单点） | — |
+| 结构化错误 | 0%（架构保证） | 0.58%–45.5% |
+
+**表 B：第三方实测口径**（官方 cookbook，每组 n=15，平均往返，无分位数，禁止外推 P99）
+
+| 调用 | Jev 延迟 | Jev 单次成本 | 对照 LLM 延迟 |
+|---|---|---|---|
+| 14 个 Noul | 111 ms | 0.000043 美元 | 1.1–13.9 秒 |
+| 8 个 Choice | 114 ms | 0.000046 美元 | 同量级区间 |
+
+另有 Near Here 的 50 案例事件验证：Jev 96% 对 Gemini Flash-Lite 86%、Mistral Small 4 的 84%。样本只有 50 个、任务面窄，不能外推；该页面当前有反爬限制，这个数字未能独立复核。
+
+**第三档：社区 demo，证据等级最低。** 千次决策约 0.04 美元、风控管道百封邮件 31 封低置信升级、browser-use/jev-ultrafast 星数 24532（2026-11-16 采集，星数随时间漂移）等说法，流传在 madewithjev、PyPI 包页面与社区博客里，未经独立审计，本文只作定性参考，不引用精确值。
+
+两个反证能防止倍数幻觉。其一，按纯输入价格算，Jev（0.042 美元/百万）对 Haiku 5.5、Flash-Lite 一档（约 0.10 美元/百万）只差约 2.4 倍，40–200 倍的大数字主要来自输出免费与对照模型的长输出；社区对上线上万条帖子的实测，加速中位数约 7 倍而非 200 倍。其二，state 每次请求都要全量重发、全量计费，服务端没有 state 缓存语义；官方 parallel_questions cookbook 实测，同一 state 的 13 个问题合并成一个请求，比分拆请求便宜 12.2 倍、快 11.8 倍。请求体支持 gzip/zstd 压缩、上限 32 MiB、嵌套 64 层。因此成本优势最大的区间是**短 state、高频次、大吞吐**；state 很长时，输入侧计费会吃掉输出免费的好处。
+
+## 7. vLLM 部署差异：两条自托管路径
+
+Jev 类请求只有 prefill、没有 decode，属于 prefill-only 判别式负载。行业论文 ZeRO-Prefill（arXiv:2605.02960；部分文献索引曾记作 MoE-Prefill，发稿前需以 arXiv 版本页为准）在作者的生产集群测得，分类、审核、推荐、验证这类 prefill-only 负载已占全部输入 token 的 65.3%，附录 D.4 把 Jev 列为这类负载的代表；其 AsyncEP 后端在 Qwen3-235B-A22B 上，真实负载取得 1.34–1.37 倍吞吐（四套硬件/精度配置），长上下文合成负载最高 1.59 倍，v3 还提供 prefix-sparse 负载下完全关闭 KV 存储的模式 [5]。专用引擎 PrefillOnly 是另一篇独立论文（arXiv:2505.07203）。
+
+在 vLLM 0.21 里自托管，先要分清两条路径——这是最容易对错对象的地方。
+
+**路径 (a)：pooling runner 上的 `/classify`，对应固定标签的线性分类头。** 用 `runner="pooling"` 启动，未注册的因果模型经 `--convert classify` 自动转成序列分类模型，默认取末 token 隐状态过 softmax（GPT 式 LAST pooling；BERT 式默认 CLS）。它的 num_labels 在加载时固定，是 BERT 式近似，不具备每请求换标签的能力。
+
+```python
+from vllm import LLM
+llm = LLM(model="jason9693/Qwen2.5-1.5B-apeach",
+          runner="pooling")
+(output,) = llm.classify("Hello, my name is")
+probs = output.outputs.probs
+```
+
+**路径 (b)：generate runner 上的 `/generative_scoring`，才是 label-token readout 的原生对应。** 它对 CausalLM 指定 `label_token_ids`，计算这些 token 作为下一词的概率；只有两个标签时，得分等于 P(l0)/(P(l0)+P(l1)) 的归一化。标签由调用方每次请求传入、支持 per-request LoRA，能零样本改选项。实现上它使用 `SamplingParams(max_tokens=1, logprobs=..., logprob_token_ids=...)`——**实际会调度一个输出 token，所以「零输出 token」只对 pooling 路径严格成立**，generative_scoring 不属于零输出。
+
+```bash
+# 路径 (a) 的模型转换启动命令
+vllm serve <model> --convert classify --runner pooling
+```
+
+两条路径的引擎行为有明确差别，下面九条源码级结论（0.21，均标适用路径）：
+
+1. **前缀缓存**：APC 全局默认开启（`vllm/config/cache.py:91`）。序列级 pooling（含 classify）默认 `skip_reading_prefix_cache=False`，可以命中前缀缓存（`vllm/pooling_params.py:123-130`）；token 级任务与 plugin 任务默认跳过（`:92-95`、`:127-128`）。全命中时末 token 仍须重算，且因块对齐（block=16）可能重算整个末块（`vllm/v1/core/kv_cache_manager.py:202-208`）。
+2. **异步调度**：pooling 模型默认关闭 async scheduling，官方注释是当前实现会损害其性能（`vllm/config/vllm.py:844-855`）；这只是 None 时的默认，显式传参可强制开。
+3. **采样器**：pooling 模型不初始化 Sampler 与 StructuredOutputsWorker，末 PP rank 改挂 PoolingRunner（`vllm/v1/worker/gpu/model_runner.py:210-229、308-309`）；generative_scoring 走 generate runner，不受此条约束。
+4. **数值精度**：pooling 头在平台支持时默认 float32，但只是头升精度、权重仍为 bf16，平台不支持则回退，也可用 hf_overrides 关闭（`vllm/config/model.py:2056-2058`）。
+5. **chunked 调度**：默认配置下 pooling 请求同样被切片（默认值在 `vllm/config/scheduler.py:84`，encoder-decoder 在 `:225-228` 被强制关）；显式关闭后超长请求不切片，可能排队无法满足（`vllm/v1/core/sched/scheduler.py:640-647`）。
+6. **输出形态**：pooling 强制 FINAL_ONLY、无流式（`vllm/pooling_params.py:70`），调度器「有输出即停」（`vllm/v1/core/sched/scheduler.py:1354-1357`）。
+7. **原生校准抓手**：classify 内置 Affine Score Calibration，文档自述即 Platt scaling，通过 logit_mean/logit_sigma 配置（`docs/models/pooling_models/classify.md:270-295`），与第 5 章的事后校准闭环。
+8. **性能 caveat**：官方文档明确 pooling 模型「主要为便利而支持，不保证相对 Hugging Face Transformers 有性能优势」，优化追踪 issue #21796（原题为 embedding 任务优化 RFC）。
+9. **单 runner 限制**：一个 vLLM 实例只有一种 runner（ModelConfig.runner_type 单值），generate 与 pooling 不能混部，System 1 与 System 2 必须两套部署。
+
+两张对照表概括部署差异。表一为请求生命周期：
+
+| 维度 | 生成式 LLM | prefill-only 决策负载 |
+|---|---|---|
+| 生命周期 | prefill 加多步 decode | 单次前向即结束 |
+| KV Cache | 随 decode 增长，需分页与抢占 | 生命周期限单次前向，无追加 |
+| 调度 | chunked prefill 与 decode 交织 | 纯 prefill 批处理，大 batch、compute-bound |
+| PagedAttention | decode 期碎片化的核心收益场景 | 无 decode 追加，分页收益弱化 |
+
+表二为引擎能力与运维：
+
+| 维度 | 生成式 LLM | 决策负载 |
+|---|---|---|
+| 前缀缓存 | 默认开，仅利 TTFT | 序列级 classify 默认可命中，token 级跳过 |
+| 异步调度 | 默认启用 | pooling 默认关 |
+| PD 分离 | 拆 prefill/decode 实例 | 无 decode 可拆，方向是 PrefillOnly/ZeRO-Prefill |
+| 计费 | 输出 token 逐字生成并计费 | 概率向量，pooling 路径零输出 |
+| 显存 | 按 gpu_memory_utilization 预留 | 同样预留整块 KV pool，不会自动省，需手动下调利用率 |
+| 可观测性 | TTFT/TPOT/ITL 体系完整 | 这些指标在纯 prefill 下语义错位，看 prefill/cached token 统计与端到端、排队时间 |
+| 成熟度 | 主线，优化充分 | 0.21 属便利路径，性能承诺弱 |
+
+自托管还有一个反直觉数据：Lev 的 4B 模型在 Modal H100 上的端到端延迟为 414–654 毫秒，反而慢于 Jev 托管 API 的 335–346 毫秒——复现方解释 4B 规模下前向受 kernel launch 开销而非算术约束。自托管不必然省延迟，决策前要自测。
+
+中国大陆的可达性需要单独说明。api.typesafe.ai 在受限地区返回 HTTP 451，响应体明示地区不可用；官方没有公布封禁清单，多方资料指中国大陆无法直连。可选路线分三层：直连（另有 per-org 限流，2026 年 9 月观测值为 25 万 token/s、1200 req/min，超限 429、过载 529，SDK 默认指数退避）；OpenRouter 等转售网关（多一跳网络与服务条款，不解决网络可达性本身）；自托管 Lev、reflex 或 APUS 系项目，但没有任何一个声称还原 RLCD，校准要按第 5 章自己做。
+
+## 8. 生态与复现：时间线与国产路线
+
+<JevTimelineFigure />
+
+*图 4：2026 年 9–11 月的关键节点。架构在一周内即被多个项目复刻，实际门槛在训练数据、校准工程与生态集成。*
+
+开源复现里信息最完整的是 Lev：Apache-2.0 协议、Qwen3.5-4B 加 LoRA，label-token readout、candidate-path head、温度校准这些工程细节主要通过它公开。它的成绩有两个时点的口径，不能混用：早期 Interfaze 技术文报告 S1Bench（3880 项）68.9%、ECE 0.115；现 README 为 13 个子集上 74.3%、ECE 0.097。它与 Jev 官方的差距说明：架构可以一周复刻，训练数据与工程 know-how 才是门槛。
+
+国产路线以 APUS（麒麟合盛）为代表，两个项目要严格区分底座规格。其一是 2026 年 9 月 19 日开源的 fast-browser-use（MIT），本地 Qwen3.5-9B 驱动浏览器决策，另支持 Qwen3.5-35B-A3B；发布期媒体在 Apple M2 Pro 上测得维基检索中位约 18 秒、表单与导航约 3 秒、单任务 4 次打分、零云端调用，而项目现 README 的基准硬件是 RTX PRO 6000 Blackwell，对应数字为 4.055 秒与 2.488 秒——两个时点都成立，引用时必须挂采集日期。Apple Silicon 上的实用形态是 MLX 4-bit（权重大约 5.95 GB），不宜笼统说纯 CPU 轻量。其二是 Reflex 生态：社区 reflex 模型的底座是 Qwen3.5-4B（学术论文引用的也是 reflex 4B），APUS-Reflex-Agent 仓库本身是可接入决策服务的 harness，不是「4.5B 微调模型」，流传的 2–3 倍提速在现仓库无据，本文不采用。
+
+工程生态的代表是 PyPI 上的 jev-harness：零依赖、以 MCP server 形式接入编码 Agent，承担测试闸门、死循环阻断、模型路由等职责。它的默认升级阈值 skip_llm_threshold 为 0.65，官方 jaggedness 文档的示例阈值则是 0.5——两个真实锚点都说明阈值没有推荐默认值。它在重试耗尽后默认 fail-open，返回的答案带 is_mock 与 degraded_reason 标记，也提供 fail-closed 开关；包页面自标节省数字为启发式估算（estimates_are_heuristic），引用其省钱倍数时必须带这个标记。
+
+## 9. 学术评测与适用边界
+
+「Jev 是不是只是零样本分类器」是社区最大的争议。机制上，它与判别式文本分类一脉相承，Glean 等厂商称之为零样本分类器的复兴。但工程差异有四点：标签用自然语言描述、零样本可改；输出校准概率而非硬分类；同一 state 并行回答多个不同类型问题；周围长出了 Agent harness 生态。更准确的定位是：它没有发明新的神经元，而是把判别式模型包装成了 Agent 时代的基础设施组件。RLCD 是否构成训练范式创新，在论文公开之前存疑。
+
+大规模学术评测（arXiv:2609.37647，波恩大学与 Lamarr Institute，37 个数据集、346009 个请求、总成本低于 10 美元，评测对象钉版 jev-1.13.0，对照 Qwen3.8-27B 与 Gemma-4-E4B，代码与原始响应存 Zenodo）给出了迄今最完整的边界图 [6]。
+
+强项集中在主旨判断：IMDB 96.5%、SST-2 96.4%、HellaSwag 95.5%、ARC-Easy 99.3%、ARC-Challenge 97.7%；Belebele 的 86.7% 是 122 种语言、109800 题的聚合值（英文单语 97.2%），引用时不能与英文成绩并列比较。37 个数据集中，Jev 在 27 个上胜过 Qwen、在全部 37 个上胜过 Gemma。
+
+弱项与适用边界同样清晰。低资源语言、细粒度噪声标签、法律判决、评分式文本评估明显偏弱。序贯决策是结构性短板，ALFWorld 未见任务完成率 35%（Qwen 54.5%）、TextWorld 42%（51.1%）、BabyAI-Text 21%、Blackjack 最优动作 90%。这里要纠正一个流行的错误归因：评测协议并非没给历史——Table 8 中 ALFWorld 与 TextWorld 的 state 含完整命令与反馈历史，BabyAI-Text 用 Carta 等人的提示词、只保留最近三次观测的滑动窗口（原文描述为请求里装着三个相同观测），FrozenLake 与 Blackjack 则只有位置或手牌状态、没有历史字段。即便在注入完整历史的环境里，Jev 的循环抑制仍然薄弱：ALFWorld 步准确率仅 17.9%，而其平均首选概率高达 0.43，ALFWorld ECE 0.247（各任务 ECE 不同，FrozenLake 为 0.395），重复动作率 44.7%（Qwen 27.2%）；加 BALROG 指令后 BabyAI 从 20.8% 升到 25.6%，但 McNemar 检验 p=0.065，5% 水平下不显著，循环依旧。FrozenLake 上的失败形态，论文原句是不擅长在随机动态下推演动作后果：步准确率 29.9% 贴近均匀策略的 28.0%，成功率 13.4% 对照最优策略 74.8%——长于选择、短于推演。二分类概率还需要逐应用调阈值，UNFAIR-ToS 上阈值标定把 micro-F1 从 0.50 拉到 0.75。另有一个悬案：MMLU 计算类问题成绩异常偏高，探针排除了选项位置作弊，却不能排除记忆过的问答对。
+
+第二篇论文（arXiv:2610.02076，标题只有 LLM-as-Jev；注意 LLM2Jev 是 Yinsongxu 的独立社区系统，在该文附录 J 的 Table 15 里仅作 76.2% 的对照基线，不是论文别名）问了个釜底抽薪的问题：现有 LLM 不微调能不能直接这么用 [7]。方法是不改架构与分词器，直接读括号数字标识符的 next-token 概率。冻结的 Qwen3.5-4B 在 JevBench 231 个公开实例上答对 188 个（81.4%），与同骨干专用模型 SemIf 的本地复现 80.5% 同档（附录 J 引用的官方榜单位为 81.0%，带星号标注）；LoRA rank 16 加 KL 锚点微调后到 84.0%。论文的原话口径是：4B 全参微调在 JevBench 上反而只有 80.1%，低于免训练的 81.4%，微调增益集中在弱任务与 0.6B 小模型，通用能力均值上最大 +1.7（Reason-30k，p=0.03；MMStar 上的增益全部不显著）。结论是决策能力并非某家私有的架构魔法，专用模型的差异化落在校准目标、类型化接口与生态集成。
+
+官方文档自己也承认了三类 jaggedness 缺陷，选型前必须知道：选项顺序偏差（模型倾向排在前面的选项，建议打乱复测）；state 内提示注入（默认不把 state 内容视为敌意，恶意网页可以搬动答案，这对路由与护栏场景是直接安全风险）；计数、日期比较与多层间接指代不可靠。
+
+把这些收敛成一张准入清单，五个条件同时满足才划算：答案空间可枚举且不超过 255；任务是语义判断而非精确计算；环境状态能被代码符号化组装；不需要书面理由；调用高频且对延迟、成本敏感。反向成本是 state 构建的工程化投入——「省了 token 的钱，多写了状态组装的代码」，低频一次性任务通常不经济。
+
+## 10. 工程落地：System 1 把关，System 2 兜底
+
+<JevStackFigure />
+
+*图 5：分层决策架构。「闸门」比喻的失灵边界是闸门会误放也会误拦，阈值只是示例，故障面要单独评估。*
+
+标准模式是：观测被组装成 state，Jev 做前置决策，置信度达到业务标定阈值就执行确定性工具调用，不足则升级给生成式 LLM，LLM 的结论与新观测一起写回 state，进入下一轮。阈值有两种设法——在概率上设阈，还是在第 2 章的 confidence 字段上设阈，两者数学含义不同，要按业务数据分箱、看 ECE 后再定。
+
+「闸门」比喻的围栏前面已经给过，工程上还有三条硬提醒。第一，单步概率不能相乘当作路径成功率，多步联合概率的衰减可以参考[《大模型评测》](/blog/大模型评测-分数是怎么来的/)里 pass^n 的推导（0.5 的四次方只剩 6.25%），而第 9 章的序贯 ECE 0.247 说明连单步校准在序贯设定下都会失效。第二，fail-open 意味着供应商故障时安全门静默降级为启发式规则，风控、护栏类场景应当显式选择 fail-closed，并把 429、529、451 三类故障码纳入演练。第三，state 质量决定模型上限，提示注入防护是上游的责任，不能默认决策模型自带。
+
+这个分层与站内两篇文章是同一思想的不同切面：[投机解码](/blog/投机解码-小模型打草稿大模型一次批改/)是推理阶段的大小模型协同，[思维链](/blog/思维链-大模型为什么要先想再答/)解释了 System 2 为什么贵——每一步思考都是一次前向；本文的分层是决策阶段的便宜模型与昂贵模型协同。三者省的都是多余的 System 2 算力。选型时按五个维度判断：
+
+| 信号 | 倾向决策模型 | 倾向生成式 LLM |
+|---|---|---|
+| 答案形态 | 可枚举选项加概率 | 开放文本、理由、代码 |
+| 任务性质 | 语义判断、模式识别 | 多步推理、精确计算 |
+| 频次与 SLA | 高频、毫秒级 | 低频、秒级可接受 |
+| 历史依赖 | 历史可编码进 state | 需要长链条回溯 |
+| 失败代价 | 可分流、可升级 | 单次即高风险 |
+
+## 11. 结语
+
+三条判断可以确定下来。第一，Jev 把「判断」从对话接口里拆了出来，形态化为带类型、带校准概率、带 SLA 的工程组件。第二，它不替代多步推理，序贯决策与随机环境推演是明确的硬伤。第三，校准不是开箱属性，同分布内可以良好、跨任务就需要 Platt scaling 这样的二次拟合，上线流程里必须有逐应用校准集、阈值标定与复测。
+
+杰文斯悖论能否在决策模型上兑现——判断成本下降后，软件里的微小决策会不会被大规模重写——取决于 state 组装、校准维护与分层治理这三项工程成本能否持续下降。这是一个开放问题，本文不做预测式断言。
+
+<Expand title="Q1：Jev 和 function calling、JSON mode 差在哪？">
+function calling 仍是自回归生成：模型逐 token 写出工具名与参数 JSON，再由框架解析，延迟与输出费用随文本增长，格式靠提示词或约束解码保证。JSON mode 只屏蔽非法续接，解码循环还在。Jev 没有解码阶段，工具或动作就是预声明选项，一次前向读出概率，结构正确性由架构保证。一个是让会说话的模型学填表，一个是直接训练只做填表的模型。
+</Expand>
+
+<Expand title="Q2：vLLM 的 /classify 与 /generative_scoring，哪条才是 label-token readout？">
+/generative_scoring。它在 generate runner 上对 label_token_ids 算下一词概率，标签随请求传入、支持 per-request LoRA，但会调度一个输出 token。/classify 属于 pooling runner，是末 token 隐状态过固定 num_labels 线性头的 BERT 式分类，标签不能随请求换。「零输出 token」只对 pooling 路径严格成立。
+</Expand>
+
+<Expand title="Q3：不想用官方 API，自己能复刻吗？">
+能，有两条成熟路线。免训练路线照 LLM-as-Jev 论文：冻结 Qwen3.5-4B 这类开源模型，直接读标签标识符的 next-token 概率，JevBench 上 81.4%。微调路线参考 Lev（Qwen3.5-4B 加 LoRA，Apache-2.0）或 APUS fast-browser-use（Qwen3.5-9B，MIT，可纯本地），微调要加 KL 锚点保护通用能力。两条路线都不包含 RLCD，校准需自行拟合。
+</Expand>
+
+<Expand title="Q4：返回的置信度能直接当真实概率用吗？">
+同分布、单步任务上，校准概率可以作为分流依据，但阈值必须用自己业务的数据重新标定。跨任务会过度自信（DL21 上高于 0.9 的判定仅 66% 命中），序贯设定下校准进一步失效且系统性偏自信，不能把多步概率相乘当路径成功率。另外校准是群体指标：所有报 0.8 的样本整体约 80% 命中，不代表任何单次事件有 80% 的保证。
+</Expand>
+
+<Expand title="Q5：和 BERT 那代文本分类器是什么关系？">
+血缘上就是判别式分类的现代版本：读 logits、softmax 出分布，BERT 时代一模一样。差异在四点：标签用自然语言描述、零样本可改；输出做了温度与事后校准；一次请求并行回答多类型问题；面向 Agent 的类型化接口与 harness 生态。真正未经证实的新东西是 RLCD——NanoJev 的消融显示，在合成基准上普通交叉熵可能一样好。
+</Expand>
+
+<Expand title="Q6：Jev 有哪些明确的「不能做」？">
+不能生成任何文本，理由、摘要、代码都不行；生产环境不能直接读图像视频，视觉状态要上游转成文本（Box 仍是 Danger-Zone 实验特性）；Choice 封顶 255 项；不擅长精确计算、法律判决、细粒度噪声标签与评分式文本评估；低资源语言性能陡降；自身无跨调用记忆，序贯任务依赖外部把历史写进 state，而评测证明即便写了完整历史，循环抑制仍然薄弱；262k 长上下文同样处于实验阶段。
+</Expand>
+
+## 参考资料
+
+**论文（arXiv 编号均已核对）**
+
+1. Ouyang et al., [Training language models to follow instructions with human feedback (InstructGPT)](https://arxiv.org/abs/2203.02155)（2022）
+2. TypeSafe AI, [Introducing System One Models & Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev)（2026-09-15）；融资佐证见 Forkast 与 The Register 报道
+3. Interfaze, [Jev, now open source: Lev](https://interfaze.ai/blog/jev-now-open-source-lev)（2026-09-24）；Victor Dibia, [How Jev works: calibrated decision models](https://victordibia.com/papers/jev.pdf)
+4. Zhuang et al., [Beyond Ranking: Are Decision Models Calibrated Relevance Scorers?](https://arxiv.org/abs/2611.11480)（arXiv:2611.11480，2026-11-08）
+5. [ZeRO-Prefill: Zero Redundancy Overheads in MoE Prefill Serving](https://arxiv.org/abs/2605.02960)（arXiv:2605.02960）；[PrefillOnly: An Inference Engine for Prefill-only Workloads](https://arxiv.org/abs/2505.07203)（arXiv:2505.07203）
+6. Deußer et al., [Evaluating and Benchmarking the System One Model Jev](https://arxiv.org/abs/2609.37647)（arXiv:2609.37647，37 数据集 / 346009 请求）
+7. Li & Wagle, [LLM-as-Jev: LLMs Are Already Jev-Style Decision Models—When and How to Fine-Tune Them](https://arxiv.org/abs/2610.02076)（arXiv:2610.02076）
+
+**官方文档与产品资料（2026-11 快照，以官方文档为准）**
+
+- TypeSafe 文档：[Models](https://docs.typesafe.ai/models)、[Confidence](https://docs.typesafe.ai/confidence)、[Model Jaggedness](https://docs.typesafe.ai/model-jaggedness)、错误码与请求限制
+- Spice AI, [What is TypeSafe Jev? System One Decision Model](https://spice.ai/learn/typesafe-jev)（API 与定价梳理）
+- vLLM 0.21 本地文档：`docs/models/pooling_models/{README,classify}.md`、`docs/serving/openai_compatible_server.md`（generative_scoring）及对应源码
+
+**国产复现与中文报道**
+
+- 新华网，[APUS 开源 Jev 跨平台复现：国产模型实现秒级决策](http://www3.xinhuanet.com/tech/20260921/8f1c9bd6a9254e629383f1ac51e0d27d/c.html)（2026-09-21）
+- 央广网，[Jev 模型是什么？APUS 交出全球首批跨平台开源复现](http://tech.cnr.cn/techph/20260920/t20260920_527819594.shtml)（2026-09-20）
+- 智东西，[国产开源破局，类 Jev 模型接管 Agent 调度](https://aichip001.com/p/600750.html)（2026-10-14）
+- 阿里云开发者社区，[爆火 Jev 模型到底强在哪：性能实测、API 调用与项目落地全指南](https://developer.aliyun.com/article/1772857)、[什么是 Jev 模型：一个「拒绝生成文字」的 AI](https://developer.aliyun.com/article/1766084)
+- 东方财富证券，[计算机行业点评：Jev 模型——给 Agent 装上「小脑」](https://pdf.dfcfw.com/pdf/H3_AP202609221829760930_1.pdf)
+
+**社区实测与争议（证据等级低于前两组）**
+
+- JevWiki, [Jev vs LLM JSON mode / structured outputs](https://jevwiki.ai/wiki/syntheses/jev-vs-llm-structured-outputs.md)（cookbook 实测）
+- [争议与冷静评估：Jev 与决策模型](https://jev.meetcoding.cn/ecosystem/debate)（六大质疑与 RLCD 消融）
+- Glean, [Jev 与零样本分类器的复活](https://www.glean.com/jp/blog/jev-zero-shot-classifier)
+- PyPI, [jev-harness：编码 Agent 的确定性决策层](https://pypi.org/project/jev-harness/)
+- madewithjev, [Jev 模型路由与工具路由构建案例](https://madewithjev.com/categories/routing-and-models)
+
+**站内延伸**
+
+- 前置：[图解大模型：一口气搞懂大模型的骨架](/blog/图解大模型-一口气搞懂大模型的骨架/)（自回归、logits、SFT/RLHF）
+- 同源机制：[大模型评测：分数是怎么来的](/blog/大模型评测-分数是怎么来的/)（likelihood 判分、pass^n、校准一词的另一含义）
+- 分工对照：[投机解码：小模型打草稿，大模型一次批改](/blog/投机解码-小模型打草稿大模型一次批改/)、[思维链：大模型为什么要先「想」再答](/blog/思维链-大模型为什么要先想再答/)
+- 部署基础：[连续批处理：每个迭代步重新组批](/blog/连续批处理-每个迭代步重新组批/)、[ChunkedPrefill：把长 Prompt 切成节拍器能消化的小块](/blog/chunkedprefill-把长prompt切成节拍器能消化的小块/)、[PD 分离：把 Prefill 和 Decode 拆开部署](/blog/pd分离-把prefill和decode拆开部署/)、[一次推理的旅程：Prefill 与 Decode](/blog/一次推理的旅程-prefill与decode/)

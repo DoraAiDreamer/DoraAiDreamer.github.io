@@ -1,0 +1,55 @@
+---
+// 图1：同一个决策任务，生成式 LLM 的自回归路径 vs Jev 的单次前向路径
+---
+
+<figure>
+  <svg viewBox="0 0 640 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="jev-cmp-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">同一个决策：LLM 写文章，Jev 读表头</text>
+
+      {/* 上半：LLM 自回归 */}
+      <text x="16" y="78" font-size="12.5" font-weight="bold" fill="#334155">生成式 LLM</text>
+      <rect x="92" y="52" width="124" height="44" rx="8" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="154" y="70" font-size="11" fill="#334155" text-anchor="middle">状态 + 问题</text>
+      <text x="154" y="86" font-size="10" fill="#64748b" text-anchor="middle">自然语言提示</text>
+      <line x1="216" y1="74" x2="232" y2="74" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#jev-cmp-arw)"/>
+      <rect x="236" y="52" width="120" height="44" rx="8" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="296" y="70" font-size="11" fill="#b97a1f" text-anchor="middle">骨干 N 次前向</text>
+      <text x="296" y="86" font-size="10" fill="#b97a1f" text-anchor="middle">逐 token 自回归解码</text>
+      <line x1="356" y1="74" x2="372" y2="74" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#jev-cmp-arw)"/>
+      <rect x="376" y="52" width="140" height="44" rx="8" fill="#fdf0e0" stroke="#e6a23c"/>
+      <text x="446" y="70" font-size="11" fill="#b97a1f" text-anchor="middle">生成 JSON 文本</text>
+      <text x="446" y="86" font-size="10" fill="#b97a1f" text-anchor="middle">格式可能坏、要重试</text>
+      <line x1="516" y1="74" x2="530" y2="74" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#jev-cmp-arw)"/>
+      <rect x="534" y="52" width="92" height="44" rx="8" fill="#fbe3e3" stroke="#e67e7e" stroke-width="1.5"/>
+      <text x="580" y="70" font-size="11" fill="#b14a4a" text-anchor="middle">解析</text>
+      <text x="580" y="86" font-size="10" fill="#b14a4a" text-anchor="middle">才拿到判定</text>
+      <text x="320" y="120" font-size="11" fill="#64748b" text-anchor="middle">3–329 秒/次 · 输出 token 照常计费 · 结构化输出错误率 0.58%–45.5%（均为官方口径，条件见正文）</text>
+
+      {/* 分隔线 */}
+      <line x1="20" y1="146" x2="620" y2="146" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="5 5"/>
+
+      {/* 下半：Jev 单次前向 */}
+      <text x="16" y="202" font-size="12.5" font-weight="bold" fill="#334155">Jev 决策模型</text>
+      <rect x="92" y="176" width="124" height="44" rx="8" fill="#f2f8fa" stroke="#0085a1"/>
+      <text x="154" y="194" font-size="11" fill="#334155" text-anchor="middle">state + 类型化问题</text>
+      <text x="154" y="210" font-size="10" fill="#64748b" text-anchor="middle">字符串 / JSON / 数组</text>
+      <line x1="216" y1="198" x2="232" y2="198" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#jev-cmp-arw)"/>
+      <rect x="236" y="176" width="120" height="44" rx="8" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="296" y="194" font-size="11" fill="#0a7a50" text-anchor="middle">骨干 1 次前向</text>
+      <text x="296" y="210" font-size="10" fill="#0a7a50" text-anchor="middle">不生成任何 token</text>
+      <line x1="356" y1="198" x2="372" y2="198" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#jev-cmp-arw)"/>
+      <rect x="376" y="176" width="140" height="44" rx="8" fill="#e4f5ec" stroke="#0f9d68"/>
+      <text x="446" y="194" font-size="11" fill="#0a7a50" text-anchor="middle">选项 label 上的 logits</text>
+      <text x="446" y="210" font-size="10" fill="#0a7a50" text-anchor="middle">所有选项并行打分</text>
+      <line x1="516" y1="198" x2="530" y2="198" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#jev-cmp-arw)"/>
+      <rect x="534" y="176" width="92" height="44" rx="8" fill="#e4f5ec" stroke="#0f9d68" stroke-width="1.5"/>
+      <text x="580" y="194" font-size="11" fill="#0a7a50" text-anchor="middle">温度校准</text>
+      <text x="580" y="210" font-size="10" fill="#0a7a50" text-anchor="middle">直接出概率</text>
+      <text x="320" y="244" font-size="11" fill="#64748b" text-anchor="middle">70–500 毫秒/次（官方口径）· 零输出 token（不计费）· 输出在 schema 之外数学上不可能</text>
+
+      <text x="320" y="280" font-size="11.5" fill="#0c5f74" text-anchor="middle">差别不在模型大小，在输出头：一个把判断「写出来再解析」，一个直接在选项上「读表」</text>
+    </g>
+  </svg>
+</figure>

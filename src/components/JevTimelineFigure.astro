@@ -1,0 +1,35 @@
+---
+// 图4：Jev 发布两个月的生态时间线（2026-09 → 2026-11），7 个主节点
+---
+
+<figure>
+  <svg viewBox="0 0 640 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <text x="320" y="24" font-size="14" font-weight="bold" fill="#0c5f74" text-anchor="middle">两个月，从闭源发布到开源复现与学术评测</text>
+
+      {/* 主轴 */}
+      <line x1="40" y1="150" x2="612" y2="150" stroke="#94a3b8" stroke-width="1.6"/>
+      {[
+        {x: 56,  up: true,  date: '9/15', t: ['Jev 发布', 'RLCD 方法', '四千万美元融资']},
+        {x: 146, up: false, date: '9/17', t: ['HF 首个复刻', 'Qwen-2.5-1B', 'RLCD 微调']},
+        {x: 236, up: true,  date: '9/19', t: ['APUS 开源', 'fast-browser', '-use 本地 9B']},
+        {x: 326, up: false, date: '9/24', t: ['Lev 开源', 'Apache-2.0', '4B 架构公开']},
+        {x: 416, up: true,  date: '9/29', t: ['学术评测', '37 数据集', '论文 v1 到 v2']},
+        {x: 506, up: false, date: '10/14', t: ['Jev 1.14', '新增 Box', '262k 实验']},
+        {x: 596, up: true,  date: '11/08', t: ['校准论文', '过度自信证据', 'Platt 修正']},
+      ].map((n) => (
+        <g>
+          <circle cx={n.x} cy="150" r="5.5" fill="#0085a1"/>
+          <line x1={n.x} y1={n.up ? 144 : 156} x2={n.x} y2={n.up ? 120 : 180} stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="3 3"/>
+          <rect x={n.x - 44} y={n.up ? 46 : 182} width="88" height="72" rx="8" fill={n.up ? '#f2f8fa' : '#fdf6ec'} stroke={n.up ? '#0085a1' : '#e6a23c'} stroke-width="1.3"/>
+          <text x={n.x} y={n.up ? 64 : 200} font-size="11" font-weight="bold" fill={n.up ? '#0c5f74' : '#b97a1f'} text-anchor="middle">{n.date}</text>
+          {n.t.map((line, i) => (
+            <text x={n.x} y={n.up ? 82 + i * 15 : 218 + i * 15} font-size="9.5" fill="#334155" text-anchor="middle">{line}</text>
+          ))}
+        </g>
+      ))}
+
+      <text x="320" y="284" font-size="11" fill="#64748b" text-anchor="middle">架构在一周内即被多个项目复刻，实际门槛在训练数据、校准工程与生态集成（日期为公开报道时点）</text>
+    </g>
+  </svg>
+</figure>
